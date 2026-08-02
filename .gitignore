@@ -1,0 +1,35 @@
+# ===== Trellis runtime / local state =====
+.trellis/.developer
+.trellis/.current-task
+.trellis/.runtime/
+.trellis/.ralph-state.json
+.trellis/.agents/
+.trellis/.agent-log
+.trellis/.session-id
+.trellis/.plan-log
+.trellis/workspace/
+.trellis/tasks/
+.trellis/archive/
+
+# ===== Editor / OS =====
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*~
+.idea/
+.vscode/
+*.code-workspace
+
+# ===== Logs / temp =====
+*.log
+*.tmp
+*.new
+.tmp/
+
+# ===== Node / build caches =====
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
