@@ -569,6 +569,7 @@
                 --emh-primary-hover: #4338ca;
                 --emh-primary-soft: rgba(79, 70, 229, 0.08);
                 --emh-primary-softer: rgba(79, 70, 229, 0.05);
+                --emh-on-primary: #ffffff;
                 /* 中性灰阶（oklch 微调，避免纯灰发闷） */
                 --emh-text: #18181b;
                 --emh-text-secondary: #52525b;
@@ -592,6 +593,7 @@
                 --emh-success-soft: rgba(5, 150, 105, 0.1);
                 --emh-warning: #d97706;
                 --emh-warning-soft: rgba(217, 119, 6, 0.1);
+                --emh-on-solid: #ffffff;
                 /* 按钮灰阶 */
                 --emh-btn-bg: rgba(24, 24, 27, 0.05);
                 --emh-btn-hover: rgba(24, 24, 27, 0.09);
@@ -601,12 +603,14 @@
                 --emh-radius: 12px;
                 --emh-radius-sm: 8px;
                 --emh-glass: rgba(255, 255, 255, 0.72);
+                --emh-font-mono: 'SF Mono', 'Consolas', 'Menlo', ui-monospace, monospace;
             }
             :root.emh-theme-dark {
                 --emh-primary: #a5b4fc;
                 --emh-primary-hover: #c7d2fe;
                 --emh-primary-soft: rgba(165, 180, 252, 0.1);
                 --emh-primary-softer: rgba(165, 180, 252, 0.06);
+                --emh-on-primary: #18181b;
                 --emh-text: #f4f4f5;
                 --emh-text-secondary: #a1a1aa;
                 --emh-text-muted: #71717a;
@@ -627,6 +631,7 @@
                 --emh-success-soft: rgba(52, 211, 153, 0.12);
                 --emh-warning: #fbbf24;
                 --emh-warning-soft: rgba(251, 191, 36, 0.12);
+                --emh-on-solid: #18181b;
                 --emh-btn-bg: rgba(161, 161, 170, 0.12);
                 --emh-btn-hover: rgba(161, 161, 170, 0.2);
                 --emh-btn-active: rgba(161, 161, 170, 0.28);
@@ -640,6 +645,7 @@
                     --emh-primary-hover: #c7d2fe;
                     --emh-primary-soft: rgba(165, 180, 252, 0.1);
                     --emh-primary-softer: rgba(165, 180, 252, 0.06);
+                    --emh-on-primary: #18181b;
                     --emh-text: #f4f4f5;
                     --emh-text-secondary: #a1a1aa;
                     --emh-text-muted: #71717a;
@@ -660,6 +666,7 @@
                     --emh-success-soft: rgba(52, 211, 153, 0.12);
                     --emh-warning: #fbbf24;
                     --emh-warning-soft: rgba(251, 191, 36, 0.12);
+                    --emh-on-solid: #18181b;
                     --emh-btn-bg: rgba(161, 161, 170, 0.12);
                     --emh-btn-hover: rgba(161, 161, 170, 0.2);
                     --emh-btn-active: rgba(161, 161, 170, 0.28);
@@ -673,7 +680,7 @@
                 display: inline-flex; align-items: center; gap: 8px;
                 padding: 10px 20px; border-radius: 999px;
                 background: var(--emh-primary);
-                color: #fff; border: 1px solid transparent;
+                color: var(--emh-on-primary); border: 1px solid transparent;
                 cursor: pointer; font-size: 14px; font-weight: 600;
                 letter-spacing: 0.1px;
                 box-shadow: 0 4px 16px var(--emh-primary-soft), var(--emh-shadow-md);
@@ -689,7 +696,7 @@
             .emh-javgg-controls {
                 margin-top: 6px; display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center;
                 margin-left: 10px; vertical-align: middle; padding: 4px 6px;
-                background-color: var(--emh-btn-bg); border-radius: 8px;
+                background-color: var(--emh-btn-bg); border-radius: var(--emh-radius-sm);
             }
             .emh-javgg-controls a {
                 padding: 3px 10px; border-radius: 6px; font-size: 12px; font-weight: 500;
@@ -709,34 +716,58 @@
             }
             .btn:active { transform: scale(0.92); }
             .my-btn-primary { background: var(--emh-primary-soft); color: var(--emh-primary); }
-            .my-btn-primary:hover { background: var(--emh-primary); color: #fff; box-shadow: 0 2px 8px var(--emh-primary-soft); }
+            .my-btn-primary:hover { background: var(--emh-primary); color: var(--emh-on-primary); box-shadow: 0 2px 8px var(--emh-primary-soft); }
             .my-btn-success { background: var(--emh-success-soft); color: var(--emh-success); }
-            .my-btn-success:hover { background: var(--emh-success); color: #fff; }
+            .my-btn-success:hover { background: var(--emh-success); color: var(--emh-on-solid); }
             .my-btn-danger { background: var(--emh-danger-soft); color: var(--emh-danger); }
-            .my-btn-danger:hover { background: var(--emh-danger); color: #fff; }
+            .my-btn-danger:hover { background: var(--emh-danger); color: var(--emh-on-solid); }
             .btn-outline { background: var(--emh-surface); color: var(--emh-text-secondary); border-color: var(--emh-border); }
             .btn-outline:hover { background: var(--emh-btn-hover); color: var(--emh-text); border-color: var(--emh-border-strong); }
             .emh-code-status-indicator {
                 width: 16px; height: 16px; border-radius: 50%; cursor: pointer; margin-right: 8px;
-                transition: all 0.2s ease; position: relative; border: 1px solid rgba(0,0,0,0.1);
+                transition: transform 0.2s ease, box-shadow 0.2s ease; position: relative;
+                border: 1px solid var(--emh-border);
                 display: inline-block; vertical-align: middle;
             }
-            .emh-code-status-indicator:hover { transform: scale(1.2); box-shadow: 0 0 5px rgba(0,0,0,0.2); }
+            .emh-code-status-indicator:hover { transform: scale(1.2); box-shadow: var(--emh-shadow-sm); }
             .emh-code-status-indicator[data-status="favorite"] { background-color: var(--emh-danger); }
             .emh-code-status-indicator[data-status="watched"] { background-color: var(--emh-success); }
             .emh-code-status-indicator[data-status="unmarked"] { background-color: var(--emh-text-muted); }
             #custom-toast-container { position: fixed; top: 70px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
-            .custom-toast { padding: 10px 16px; border-radius: 10px; color: #fff; box-shadow: var(--emh-shadow-md); transition: opacity 0.3s ease, transform 0.3s ease; opacity: 0; transform: translateX(120%); font-size: 13px; font-weight: 500; display: flex; align-items: center; line-height: 1.4; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+            .custom-toast {
+                padding: 10px 16px; border-radius: 10px; color: var(--emh-on-solid);
+                box-shadow: var(--emh-shadow-md);
+                transition: opacity 0.3s ease, transform 0.3s ease;
+                opacity: 0; transform: translateX(120%);
+                font-size: 13px; font-weight: 500; display: flex; align-items: center;
+                line-height: 1.4; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            }
             .custom-toast.show { opacity: 1; transform: translateX(0); }
             .custom-toast::before { margin-right: 8px; font-weight: bold; }
             .custom-toast-success { background: var(--emh-success); }
             .custom-toast-success::before { content: "✓"; }
             .custom-toast-error { background: var(--emh-danger); }
             .custom-toast-error::before { content: "✕"; }
-            .custom-toast-info { background: var(--emh-primary); }
+            .custom-toast-info { background: var(--emh-primary); color: var(--emh-on-primary); }
             .custom-toast-info::before { content: "ℹ"; }
-            .custom-toast-warning { background: var(--emh-warning); color: #fff; }
+            .custom-toast-warning { background: var(--emh-warning); color: var(--emh-on-solid); }
             .custom-toast-warning::before { content: "⚠"; }
+            @media (prefers-reduced-motion: reduce) {
+                .emh-code-manager-toggle,
+                .emh-code-manager-toggle:hover,
+                .emh-code-manager-toggle:active,
+                .btn,
+                .btn:active,
+                .emh-javgg-controls a,
+                .emh-code-status-indicator,
+                .custom-toast {
+                    transition: none !important;
+                    animation: none !important;
+                    transform: none !important;
+                }
+                .custom-toast { opacity: 1; transform: none; }
+                .custom-toast.show { opacity: 1; transform: none; }
+            }
         `;
         document.head.appendChild(style);
     }
@@ -1023,8 +1054,10 @@
                                                 <span class="emh-magnet-item-text">${displayM.length > 60 ? displayM.slice(0, 60) + '…' : displayM}</span>
                                                 <span class="emh-magnet-item-ops">
                                                     <button class="emh-magnet-op" title="复制该磁力" onClick=${() => onCopyMagnetItem(item.code, mid)}>📋</button>
-                                                    <button class="emh-magnet-op" title="修改该磁力" onClick=${() => onEditMagnetItem(item.code, mid)}>✏️</button>
-                                                    <button class="emh-magnet-op emh-magnet-op-del" title="删除该磁力" onClick=${() => onRemoveMagnet(item.code, mid)}>🗑️</button>
+                                                    ${!inTrash ? html`
+                                                        <button class="emh-magnet-op" title="修改该磁力" onClick=${() => onEditMagnetItem(item.code, mid)}>✏️</button>
+                                                        <button class="emh-magnet-op emh-magnet-op-del" title="删除该磁力" onClick=${() => onRemoveMagnet(item.code, mid)}>🗑️</button>
+                                                    ` : null}
                                                 </span>
                                             </li>
                                         `;
@@ -1032,14 +1065,18 @@
                                 </ul>
                                 <span class="emh-magnet-actions">
                                     <button class="btn btn-outline emh-magnet-btn" onClick=${() => onCopyMagnet(item.code)}>📋 复制全部</button>
-                                    <button class="btn btn-outline emh-magnet-btn" onClick=${() => onSearchMagnet(item.code)}>🔍 搜索</button>
+                                    ${!inTrash ? html`
+                                        <button class="btn btn-outline emh-magnet-btn" onClick=${() => onSearchMagnet(item.code)}>🔍 搜索</button>
+                                    ` : null}
                                 </span>
                             ` : html`
                                 <span class="emh-detail-value emh-detail-empty">暂无磁力链接</span>
-                                <span class="emh-magnet-actions">
-                                    <button class="btn btn-outline emh-magnet-btn" onClick=${() => onSearchMagnet(item.code)}>🔍 搜索磁力</button>
-                                    <button class="btn btn-outline emh-magnet-btn" onClick=${() => onEditMagnet(item.code)}>✏️ 手动添加</button>
-                                </span>
+                                ${!inTrash ? html`
+                                    <span class="emh-magnet-actions">
+                                        <button class="btn btn-outline emh-magnet-btn" onClick=${() => onSearchMagnet(item.code)}>🔍 搜索磁力</button>
+                                        <button class="btn btn-outline emh-magnet-btn" onClick=${() => onEditMagnet(item.code)}>✏️ 手动添加</button>
+                                    </span>
+                                ` : null}
                             `}
                         </div>
                         ${deleted ? html`
@@ -1121,13 +1158,14 @@
                 unfavorite: (code) => { CODE_LIBRARY.markItem(code, 'unmarked'); UTILS.showToast(`番号 ${code} 已取消关注`, 'success'); },
                 editRemark: (code) => {
                     const cur = CODE_LIBRARY.getItem(code);
+                    if (!cur) { UTILS.showToast('回收站条目请先恢复再编辑', 'warning'); return; }
                     PanelStore.set({ prompt: {
                         title: `编辑备注 (${code})`,
-                        initial: (cur && (cur.remarks || cur.remark)) || '',
+                        initial: (cur.remarks || cur.remark) || '',
                         placeholder: '输入备注内容',
                         onSubmit: (remark) => {
                             if (remark !== null) {
-                                CODE_LIBRARY.markItem(code, (cur && cur.status) || 'unmarked', undefined, remark);
+                                CODE_LIBRARY.markItem(code, cur.status || 'unmarked', undefined, remark);
                                 UTILS.showToast('备注已更新', 'success');
                             }
                         }
@@ -1135,7 +1173,8 @@
                 },
                 editMagnet: (code) => {
                     const cur = CODE_LIBRARY.getItem(code);
-                    const curMag = CODE_LIBRARY.normMagnets(cur && cur.magnet);
+                    if (!cur) { UTILS.showToast('回收站条目请先恢复再编辑', 'warning'); return; }
+                    const curMag = CODE_LIBRARY.normMagnets(cur.magnet);
                     PanelStore.set({ prompt: {
                         title: `编辑磁力链接 (${code})`,
                         initial: curMag.map(e => CODE_LIBRARY.magnetValue(e)).join('\n'),
@@ -1143,7 +1182,7 @@
                         onSubmit: (magnet) => {
                             if (magnet !== null) {
                                 const arr = CODE_LIBRARY.normMagnets(String(magnet).split('\n'));
-                                CODE_LIBRARY.markItem(code, (cur && cur.status) || 'unmarked', undefined, undefined, arr);
+                                CODE_LIBRARY.markItem(code, cur.status || 'unmarked', undefined, undefined, arr);
                                 UTILS.showToast('磁力链接已保存', 'success');
                             }
                         }
@@ -1151,7 +1190,8 @@
                 },
                 editMagnetItem: (code, idOrIdx) => {
                     const cur = CODE_LIBRARY.getItem(code);
-                    const arr = CODE_LIBRARY.normMagnets(cur && cur.magnet);
+                    if (!cur) { UTILS.showToast('回收站条目请先恢复再编辑', 'warning'); return; }
+                    const arr = CODE_LIBRARY.normMagnets(cur.magnet);
                     // 按 id 定位；若无 id（旧数据）回退按索引
                     const findIdx = (target) => {
                         const t = String(target);
@@ -1170,7 +1210,7 @@
                         onSubmit: (magnet) => {
                             if (magnet !== null && magnet.trim()) {
                                 const newArr = arr.map((e, i) => i === idx ? { ...e, value: magnet.trim() } : e);
-                                CODE_LIBRARY.markItem(code, (cur && cur.status) || 'unmarked', undefined, undefined, newArr);
+                                CODE_LIBRARY.markItem(code, cur.status || 'unmarked', undefined, undefined, newArr);
                                 UTILS.showToast('磁力已修改', 'success');
                             }
                         }
@@ -1178,7 +1218,8 @@
                 },
                 removeMagnet: (code, idOrIdx) => {
                     const cur = CODE_LIBRARY.getItem(code);
-                    const arr = CODE_LIBRARY.normMagnets(cur && cur.magnet);
+                    if (!cur) { UTILS.showToast('回收站条目请先恢复再编辑', 'warning'); return; }
+                    const arr = CODE_LIBRARY.normMagnets(cur.magnet);
                     const t = String(idOrIdx);
                     const idx = arr.findIndex(e => {
                         const eid = CODE_LIBRARY.magnetId(e);
@@ -1187,12 +1228,13 @@
                     if (idx === -1 || !arr[idx]) return;
                     PanelStore.set({ confirm: { message: `确定删除磁力 #${idx + 1} 吗？`, danger: 'soft', onConfirm: () => {
                         const newArr = arr.filter((_, i) => i !== idx);
-                        CODE_LIBRARY.markItem(code, (cur && cur.status) || 'unmarked', undefined, undefined, newArr);
+                        CODE_LIBRARY.markItem(code, cur.status || 'unmarked', undefined, undefined, newArr);
                         UTILS.showToast('磁力已删除', 'success');
                     } } });
                 },
                 searchMagnet: (code) => {
-                    // 从 1cili 拉取磁力搜索结果列表
+                    // 从 1cili 拉取磁力搜索结果列表；回收站条目禁止写入
+                    if (!CODE_LIBRARY.getItem(code)) { UTILS.showToast('回收站条目请先恢复再搜索磁力', 'warning'); return; }
                     PanelStore.set({ magnetSearch: { code, loading: true, results: [], error: '' } });
                     const url = `https://1cili.com/search?q=${encodeURIComponent(code)}`;
                     const done = (results, error) => {
@@ -1233,8 +1275,10 @@
                             const magnet = input ? (input.value || '').trim() : '';
                             if (magnet) {
                                 const cur = CODE_LIBRARY.getItem(code);
+                                // 回收站条目禁止 markItem，避免静默重建主库条目
+                                if (!cur) { UTILS.showToast('回收站条目请先恢复再添加磁力', 'warning'); return; }
                                 // 提取影片信息（标题）填入备注
-                                let remark = (cur && (cur.remarks || cur.remark)) || '';
+                                let remark = (cur.remarks || cur.remark) || '';
                                 const infoDd = Array.prototype.slice.call(doc.querySelectorAll('.torrent-info dt') || [])
                                     .find(dt => (dt.textContent || '').includes('影片信息'));
                                 const titleText = infoDd && infoDd.nextElementSibling
@@ -1252,7 +1296,7 @@
                                     UTILS.showToast('该磁力已存在', 'info');
                                 } else {
                                     const newArr = [...existingMagnets, magnet]; // normMagnets 在 markItem 内统一转对象数组
-                                    CODE_LIBRARY.markItem(code, (cur && cur.status) || 'unmarked', undefined, remark, newArr);
+                                    CODE_LIBRARY.markItem(code, cur.status || 'unmarked', undefined, remark, newArr);
                                     UTILS.showToast('磁力链接已添加' + (titleText ? '，并填入影片信息' : ''), 'success');
                                 }
                                 PanelStore.set({ magnetSearch: null });
@@ -1362,8 +1406,9 @@
                         UTILS.showToast(`批量完成：${okCount}/${processed} 个番号${skipCount ? `，${skipCount} 个已有磁力已跳过` : ''}${failCount ? `，${failCount} 个失败` : ''}`, okCount === processed ? 'success' : 'warning');
                     })();
                 },
+                resolveItem: (code) => CODE_LIBRARY.getItem(code) || CODE_LIBRARY.trash.items.find(i => i.code.toUpperCase() === String(code).toUpperCase()) || null,
                 copyMagnetItem: (code, idOrIdx) => {
-                    const item = CODE_LIBRARY.getItem(code);
+                    const item = actions.resolveItem(code);
                     const magnets = CODE_LIBRARY.normMagnets(item && item.magnet);
                     const t = String(idOrIdx);
                     const entry = magnets.find(e => {
@@ -1384,7 +1429,7 @@
                     }
                 },
                 copyMagnet: (code) => {
-                    const item = CODE_LIBRARY.getItem(code);
+                    const item = actions.resolveItem(code);
                     const magnets = CODE_LIBRARY.normMagnets(item && item.magnet);
                     if (!magnets.length) { UTILS.showToast('该番号暂无磁力链接', 'warning'); return; }
                     const text = magnets.map(e => CODE_LIBRARY.magnetValue(e)).join('\n');
@@ -1724,6 +1769,7 @@
                         transition: right 0.3s cubic-bezier(0.25,0.8,0.25,1);
                         display: flex; flex-direction: column;
                         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                        font-size: 13px; color: var(--emh-text);
                         border-radius: 16px 0 0 16px;
                         overflow: hidden;
                     }
@@ -1738,7 +1784,7 @@
                     @keyframes emh-fade-in { from { opacity: 0; } to { opacity: 1; } }
                     .emh-panel-header {
                         display: flex; justify-content: space-between; align-items: center;
-                        padding: 16px 22px 14px;
+                        padding: 16px 20px 14px;
                         background: var(--emh-glass);
                         -webkit-backdrop-filter: blur(16px) saturate(160%);
                         backdrop-filter: blur(16px) saturate(160%);
@@ -1749,7 +1795,7 @@
                     .emh-panel-logo { font-size: 18px; line-height: 1; }
                     .emh-panel-close {
                         background: var(--emh-btn-bg); border: none; font-size: 18px; cursor: pointer; color: var(--emh-text-secondary);
-                        width: 30px; height: 30px; border-radius: 8px; transition: all 0.15s; line-height: 1;
+                        width: 30px; height: 30px; border-radius: var(--emh-radius-sm); transition: background 0.15s, color 0.15s; line-height: 1;
                         display: inline-flex; align-items: center; justify-content: center;
                     }
                     .emh-panel-close:hover { background: var(--emh-danger-soft); color: var(--emh-danger); }
@@ -1758,23 +1804,23 @@
                     .emh-panel-tabs button.active .emh-tab-count { background: var(--emh-primary-soft); color: var(--emh-primary); }
                     .emh-panel-tabs { display: flex; background: var(--emh-surface); border-bottom: 1px solid var(--emh-border); padding: 0 12px; }
                     .emh-panel-tabs button {
-                        background: none; border: none; padding: 11px 16px; font-size: 13px; font-weight: 500;
+                        background: none; border: none; padding: 11px 14px; font-size: 13px; font-weight: 500;
                         cursor: pointer; color: var(--emh-text-secondary); position: relative; transition: color 0.15s;
                         letter-spacing: 0.1px;
                     }
                     .emh-panel-tabs button:hover { color: var(--emh-primary); }
-                    .emh-panel-tabs button.active { color: var(--emh-primary); font-weight: 700; }
+                    .emh-panel-tabs button.active { color: var(--emh-primary); font-weight: 600; }
                     .emh-panel-tabs button.active::after {
-                        content: ''; position: absolute; bottom: 0; left: 14px; right: 14px;
+                        content: ''; position: absolute; bottom: 0; left: 12px; right: 12px;
                         height: 2.5px; background: var(--emh-primary); border-radius: 2px;
                     }
-                    .emh-panel-search { padding: 14px 18px 12px; background: var(--emh-surface); border-bottom: 1px solid var(--emh-border); }
+                    .emh-panel-search { padding: 14px 20px 12px; background: var(--emh-surface); border-bottom: 1px solid var(--emh-border); }
                     .emh-search-wrapper { position: relative; display: flex; }
                     .emh-search-wrapper input {
                         flex: 1; padding: 9px 36px 9px 14px; border: 1px solid var(--emh-border);
                         border-radius: 10px; outline: none; font-size: 13px; letter-spacing: 0.1px;
                         transition: border-color 0.15s, box-shadow 0.15s, background 0.15s; background: var(--emh-bg);
-                        font-family: inherit; box-shadow: inset 0 1px 2px rgba(0,0,0,0.03);
+                        font-family: inherit; box-shadow: inset 0 1px 2px rgba(0,0,0,0.03); color: var(--emh-text);
                     }
                     .emh-search-wrapper input:hover { border-color: var(--emh-border-strong); }
                     .emh-search-wrapper input:focus { border-color: var(--emh-primary); box-shadow: 0 0 0 3px var(--emh-focus-ring); background: var(--emh-surface); }
@@ -1782,8 +1828,8 @@
                     .emh-search-clear {
                         position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
                         background: var(--emh-btn-bg); border: none; color: var(--emh-text-muted); font-size: 14px;
-                        cursor: pointer; width: 20px; height: 20px; border-radius: 50%; line-height: 1;
-                        display: none; transition: all 0.15s; align-items: center; justify-content: center;
+                        cursor: pointer; width: 22px; height: 22px; border-radius: 50%; line-height: 1;
+                        display: none; transition: background 0.15s, color 0.15s; align-items: center; justify-content: center;
                     }
                     .emh-search-clear:hover { background: var(--emh-btn-hover); color: var(--emh-text); }
                     .emh-search-clear.visible { display: inline-flex; }
@@ -1793,34 +1839,51 @@
                         padding: 4px 12px; border-radius: 999px; cursor: pointer;
                         font-size: 12px; font-weight: 500; color: var(--emh-text-secondary);
                         background: var(--emh-surface); border: 1px solid var(--emh-border);
-                        transition: all 0.15s ease; user-select: none;
+                        transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+                        user-select: none;
                     }
                     .emh-filter-tag:hover { border-color: var(--emh-primary); color: var(--emh-primary); background: var(--emh-primary-softer); }
-                    .emh-filter-tag.active { background: var(--emh-primary); color: #fff; border-color: var(--emh-primary); box-shadow: 0 2px 8px var(--emh-primary-soft); }
+                    .emh-filter-tag.active {
+                        background: var(--emh-primary); color: var(--emh-on-primary);
+                        border-color: var(--emh-primary); box-shadow: 0 2px 8px var(--emh-primary-soft);
+                    }
                     .emh-list-header {
-                        display: flex; align-items: center; padding: 8px 18px;
+                        display: flex; align-items: center; padding: 8px 20px;
                         background: var(--emh-bg); border-bottom: 1px solid var(--emh-border);
                         font-size: 11px; font-weight: 600; color: var(--emh-text-muted);
                         text-transform: uppercase; letter-spacing: 0.5px;
                     }
                     .emh-col-code { flex: 1; padding-left: 8px; }
                     .emh-col-status { width: 64px; text-align: center; }
-                    .emh-col-actions { width: 120px; text-align: right; }
+                    .emh-col-actions { width: 80px; text-align: right; }
                     .emh-checkbox-wrap { display: inline-flex; align-items: center; }
                     .emh-checkbox-wrap input[type="checkbox"] { width: 15px; height: 15px; cursor: pointer; accent-color: var(--emh-primary); }
-                    .emh-panel-content { flex: 1; overflow-y: auto; padding: 10px; background: var(--emh-bg); scrollbar-width: thin; scrollbar-color: var(--emh-border-strong) transparent; }
+                    .emh-panel-content {
+                        flex: 1; overflow-y: auto; padding: 10px 14px;
+                        background: var(--emh-bg); scrollbar-width: thin;
+                        scrollbar-color: var(--emh-border-strong) transparent;
+                    }
                     .emh-panel-content::-webkit-scrollbar { width: 6px; }
                     .emh-panel-content::-webkit-scrollbar-thumb { background: var(--emh-border-strong); border-radius: 3px; }
                     .emh-panel-content::-webkit-scrollbar-track { background: transparent; }
-                    .emh-panel-actions, .emh-panel-multi-actions { padding: 12px 18px; display: flex; gap: 8px; border-top: 1px solid var(--emh-border); background: var(--emh-glass); -webkit-backdrop-filter: blur(16px) saturate(160%); backdrop-filter: blur(16px) saturate(160%); }
-                    .emh-panel-actions .btn, .emh-panel-multi-actions .btn { flex: 1; margin-left: 0; justify-content: center; padding: 8px 12px; }
-                    .emh-panel-actions .emh-btn-add { flex: 1.4; font-size: 14px; box-shadow: 0 2px 8px var(--emh-primary-soft); }
-                    .emh-panel-multi-actions { align-items: center; flex-wrap: wrap; }
-                    .emh-panel-multi-actions .btn { flex: 1 1 auto; min-width: 60px; padding: 8px 8px; }
+                    .emh-panel-actions, .emh-panel-multi-actions {
+                        padding: 12px 20px; display: flex; gap: 10px; align-items: stretch;
+                        border-top: 1px solid var(--emh-border);
+                        background: var(--emh-glass);
+                        -webkit-backdrop-filter: blur(16px) saturate(160%);
+                        backdrop-filter: blur(16px) saturate(160%);
+                    }
+                    .emh-panel-actions .btn, .emh-panel-multi-actions .btn {
+                        flex: 1; margin-left: 0; justify-content: center;
+                        padding: 9px 12px; min-height: 36px;
+                    }
+                    .emh-panel-actions .emh-btn-add { flex: 1.4; font-size: 13px; box-shadow: 0 2px 8px var(--emh-primary-soft); }
+                    .emh-panel-multi-actions { align-items: center; flex-wrap: wrap; gap: 8px; }
+                    .emh-panel-multi-actions .btn { flex: 1 1 auto; min-width: 60px; padding: 8px 10px; min-height: 34px; }
                     .emh-panel-multi-actions .emh-selected-count { flex: 1 1 100%; text-align: center; margin-bottom: 2px; }
                     .emh-item {
-                        display: flex; align-items: center; padding: 9px 14px;
-                        border: 1px solid var(--emh-border); border-radius: 10px; margin-bottom: 5px;
+                        display: flex; align-items: center; gap: 6px; padding: 10px 14px;
+                        border: 1px solid var(--emh-border); border-radius: 10px; margin-bottom: 6px;
                         background: var(--emh-surface); box-shadow: var(--emh-shadow-sm);
                         transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease, background 0.15s ease;
                     }
@@ -1830,43 +1893,44 @@
                     .emh-item.selected { background: var(--emh-primary-soft); border-color: var(--emh-primary); box-shadow: 0 0 0 1px var(--emh-focus-ring); }
                     .emh-item-code {
                         font-weight: 600; color: var(--emh-text); font-size: 13px;
-                        font-family: 'SF Mono', 'Consolas', 'Menlo', monospace; letter-spacing: 0.1px;
+                        font-family: var(--emh-font-mono); letter-spacing: 0.1px;
                         font-variant-numeric: tabular-nums;
                         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
                     }
                     .emh-item-remarks {
-                        font-size: 11px; color: var(--emh-text-muted);
+                        font-size: 12px; color: var(--emh-text-muted);
                         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
                         margin-top: 2px; letter-spacing: 0.1px; max-width: 100%;
                     }
                     .emh-item-actions {
-                        display: inline-flex; align-items: center; gap: 0;
-                        padding: 2px; border-radius: 8px;
-                        background: var(--emh-btn-bg); border: 1px solid var(--emh-border);
+                        display: inline-flex; align-items: center; gap: 2px;
+                        padding: 2px; border-radius: var(--emh-radius-sm);
+                        background: var(--emh-surface-raised); border: 1px solid var(--emh-border);
                         opacity: 0; transform: translateX(6px);
                         transition: opacity 0.18s ease, transform 0.18s ease;
+                        box-shadow: var(--emh-shadow-sm);
                     }
                     .emh-item:hover .emh-item-actions { opacity: 1; transform: translateX(0); }
                     .emh-item-actions button {
                         background: none; border: none; cursor: pointer; padding: 0;
-                        width: 28px; height: 26px; border-radius: 6px;
-                        font-size: 13px; opacity: 0.6; transition: all 0.15s ease; line-height: 1;
+                        width: 28px; height: 28px; min-width: 28px; min-height: 28px; border-radius: 6px;
+                        font-size: 13px; opacity: 0.75; transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+                        line-height: 1;
                         display: inline-flex; align-items: center; justify-content: center;
                         color: var(--emh-text-secondary);
                     }
-                    .emh-item-actions button + button { margin-left: 1px; }
-                    .emh-item-actions button:hover { opacity: 1; background: var(--emh-surface-raised); transform: scale(1.08); box-shadow: var(--emh-shadow-sm); }
+                    .emh-item-actions button:hover { opacity: 1; background: var(--emh-btn-hover); transform: scale(1.06); box-shadow: var(--emh-shadow-sm); }
                     .emh-item-actions button.emh-act-favorite:hover { background: var(--emh-danger-soft); color: var(--emh-danger); }
                     .emh-item-actions button.emh-act-watched:hover { background: var(--emh-success-soft); color: var(--emh-success); }
                     .emh-item-actions button.emh-act-delete:hover { background: var(--emh-danger-soft); color: var(--emh-danger); }
                     .emh-item-actions button.emh-act-unfav:hover { background: var(--emh-warning-soft); color: var(--emh-warning); }
                     .emh-item-actions button.emh-act-restore:hover { background: var(--emh-primary-soft); color: var(--emh-primary); }
                     .emh-item-actions button.emh-act-purge:hover { background: var(--emh-danger-soft); color: var(--emh-danger); }
-                    .emh-item > .emh-checkbox-wrap { width: 22px; flex-shrink: 0; margin-right: 4px; }
+                    .emh-item > .emh-checkbox-wrap { width: 22px; flex-shrink: 0; }
                     .emh-item > .emh-col-code { flex: 1; min-width: 0; padding-left: 2px; overflow: hidden; }
                     .emh-item > .emh-col-status { width: 64px; text-align: center; flex-shrink: 0; }
-                    .emh-item > .emh-col-actions { width: 120px; text-align: right; flex-shrink: 0; display: flex; justify-content: flex-end; }
-                    .emh-panel-content.multi-select .emh-item > .emh-col-actions { width: 0; }
+                    .emh-item > .emh-col-actions { width: 80px; text-align: right; flex-shrink: 0; display: flex; justify-content: flex-end; }
+                    .emh-panel-content.multi-select .emh-item > .emh-col-actions { width: 0; overflow: hidden; }
                     .emh-panel-content.multi-select .emh-list-header .emh-col-actions { display: none; }
                     .emh-status-tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 9px; border-radius: 999px; line-height: 1.7; white-space: nowrap; letter-spacing: 0.1px; border: 1px solid transparent; }
                     .emh-status-tag.unmarked { background: var(--emh-btn-bg); color: var(--emh-text-secondary); border-color: var(--emh-border); }
@@ -1886,16 +1950,21 @@
                         background: var(--emh-overlay); display: none; justify-content: center; align-items: center;
                         z-index: 10014; backdrop-filter: blur(2px);
                     }
-                    .emh-panel-modal-content { background: var(--emh-surface); padding: 24px; border-radius: 14px; width: 80%; max-width: 320px; text-align: center; box-shadow: var(--emh-shadow-lg); }
+                    .emh-panel-modal-content {
+                        background: var(--emh-surface); padding: 24px; border-radius: var(--emh-radius);
+                        width: 80%; max-width: 320px; text-align: center;
+                        box-shadow: var(--emh-shadow-lg); border: 1px solid var(--emh-border);
+                    }
                     .emh-panel-modal-content h3 { margin: 0 0 18px 0; color: var(--emh-text); font-size: 15px; font-weight: 600; line-height: 1.5; }
                     .emh-prompt-input {
                         width: 100%; box-sizing: border-box; padding: 9px 12px;
-                        border: 1px solid var(--emh-border); border-radius: 8px; font-size: 14px;
+                        border: 1px solid var(--emh-border); border-radius: var(--emh-radius-sm); font-size: 13px;
                         outline: none; transition: border-color 0.15s, box-shadow 0.15s;
                         font-family: inherit; color: var(--emh-text); background: var(--emh-bg);
                     }
                     .emh-prompt-input:focus { border-color: var(--emh-primary); box-shadow: 0 0 0 3px var(--emh-focus-ring); background: var(--emh-surface); }
                     .emh-panel-modal-buttons { display: flex; justify-content: center; gap: 12px; margin-top: 18px; }
+                    .emh-panel-modal-buttons .btn { margin-left: 0; min-height: 36px; }
                     .emh-selected-count { align-self: center; font-size: 12px; font-weight: 600; color: var(--emh-primary); letter-spacing: 0.2px; white-space: nowrap; }
                     .emh-detail-backdrop {
                         position: absolute; top: 0; left: 0; right: 0; bottom: 0;
@@ -1905,24 +1974,30 @@
                     .emh-detail-drawer {
                         position: absolute; top: 0; right: 0; width: 360px; height: 100%;
                         background: var(--emh-surface); z-index: 10013;
-                        box-shadow: -4px 0 20px rgba(0,0,0,0.12);
+                        box-shadow: var(--emh-shadow-lg);
                         animation: emh-detail-in 0.3s cubic-bezier(0.25,0.8,0.25,1);
                         display: flex; flex-direction: column;
                         border-radius: 16px 0 0 16px;
+                        border-left: 1px solid var(--emh-border);
                         overflow: hidden;
+                        font-family: inherit;
                     }
                     @keyframes emh-detail-in { from { transform: translateX(360px); } to { transform: translateX(0); } }
                     .emh-detail-header {
                         display: flex; justify-content: space-between; align-items: center;
-                        padding: 16px 18px; border-bottom: 1px solid var(--emh-border);
+                        padding: 16px 20px; border-bottom: 1px solid var(--emh-border);
+                        background: var(--emh-glass);
+                        -webkit-backdrop-filter: blur(16px) saturate(160%);
+                        backdrop-filter: blur(16px) saturate(160%);
                     }
                     .emh-detail-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
                     .emh-detail-code {
                         font-weight: 700; color: var(--emh-text); font-size: 16px;
-                        font-family: 'Consolas', 'Menlo', monospace; letter-spacing: 0.3px;
+                        font-family: var(--emh-font-mono); letter-spacing: 0.1px;
+                        font-variant-numeric: tabular-nums;
                         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
                     }
-                    .emh-detail-body { flex: 1; overflow-y: auto; padding: 16px 18px; }
+                    .emh-detail-body { flex: 1; overflow-y: auto; padding: 16px 20px; background: var(--emh-bg); }
                     .emh-detail-field {
                         display: flex; flex-direction: column; gap: 4px; padding: 10px 0;
                         border-bottom: 1px solid var(--emh-border);
@@ -1932,7 +2007,7 @@
                         font-size: 11px; font-weight: 600; color: var(--emh-text-muted);
                         text-transform: uppercase; letter-spacing: 0.5px;
                     }
-                    .emh-detail-value { font-size: 14px; color: var(--emh-text); line-height: 1.5; word-break: break-all; }
+                    .emh-detail-value { font-size: 13px; color: var(--emh-text); line-height: 1.5; word-break: break-all; }
                     .emh-detail-empty { color: var(--emh-text-muted); }
                     .emh-magnet-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
                     .emh-magnet-btn { padding: 4px 10px; font-size: 12px; margin-left: 0; }
@@ -1950,17 +2025,17 @@
                     }
                     .emh-batch-progress-info { display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: var(--emh-text-muted); }
                     .emh-batch-progress-pct { font-weight: 700; color: var(--emh-primary); }
-                    .emh-batch-current { margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: var(--emh-bg); border: 1px solid var(--emh-border); font-size: 13px; color: var(--emh-text); word-break: break-all; }
+                    .emh-batch-current { margin: 8px 0; padding: 8px 10px; border-radius: var(--emh-radius-sm); background: var(--emh-bg); border: 1px solid var(--emh-border); font-size: 13px; color: var(--emh-text); word-break: break-all; }
                     .emh-batch-stats { display: flex; gap: 12px; justify-content: center; margin-top: 4px; font-size: 12px; color: var(--emh-text-muted); }
                     .emh-batch-stat-fail { color: var(--emh-danger); }
-                    .emh-magnet-loading { padding: 24px 0; text-align: center; color: var(--emh-text-muted); font-size: 14px; }
-                    .emh-magnet-error { padding: 24px 0; text-align: center; color: var(--emh-danger); font-size: 14px; }
+                    .emh-magnet-loading { padding: 24px 0; text-align: center; color: var(--emh-text-muted); font-size: 13px; }
+                    .emh-magnet-error { padding: 24px 0; text-align: center; color: var(--emh-danger); font-size: 13px; }
                     .emh-magnet-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; max-height: 45vh; }
                     .emh-magnet-item {
                         display: flex; align-items: center; justify-content: space-between; gap: 10px;
-                        padding: 9px 12px; margin-bottom: 4px; border-radius: 8px;
+                        padding: 9px 12px; margin-bottom: 4px; border-radius: var(--emh-radius-sm);
                         background: var(--emh-bg); border: 1px solid var(--emh-border);
-                        cursor: pointer; transition: all 0.15s ease;
+                        cursor: pointer; transition: border-color 0.15s ease, background 0.15s ease;
                     }
                     .emh-magnet-item:hover { border-color: var(--emh-primary); background: var(--emh-primary-soft); }
                     .emh-magnet-item-title {
@@ -1981,18 +2056,18 @@
                     .emh-magnet-item-text {
                         flex: 1; min-width: 0; font-size: 11px; color: var(--emh-text);
                         word-break: break-all; line-height: 1.5;
-                        font-family: 'Consolas', 'Menlo', monospace;
+                        font-family: var(--emh-font-mono);
                     }
                     .emh-magnet-item-ops { flex-shrink: 0; display: inline-flex; gap: 2px; align-items: center; }
                     .emh-magnet-op {
                         background: none; border: none; cursor: pointer; padding: 3px 5px;
                         border-radius: 5px; font-size: 12px; line-height: 1;
-                        color: var(--emh-text-muted); transition: all 0.15s ease; opacity: 0.7;
+                        color: var(--emh-text-muted); transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease; opacity: 0.7;
                     }
                     .emh-magnet-op:hover { opacity: 1; background: var(--emh-btn-hover); color: var(--emh-primary); }
                     .emh-magnet-op-del:hover { background: var(--emh-danger-soft); color: var(--emh-danger); }
                     .emh-detail-meta {
-                        padding: 10px 18px;
+                        padding: 10px 20px;
                         font-size: 11px; color: var(--emh-text-muted);
                         border-top: 1px dashed var(--emh-border);
                         line-height: 1.8;
@@ -2001,21 +2076,47 @@
                     }
                     .emh-detail-meta-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
                     .emh-detail-tag {
-                        font-size: 10px; padding: 1px 7px; border-radius: 999px;
+                        font-size: 11px; padding: 1px 7px; border-radius: 999px;
                         background: var(--emh-btn-bg); color: var(--emh-text-secondary);
                     }
                     .emh-detail-actions {
-                        padding: 14px 18px; border-top: 1px solid var(--emh-border);
+                        padding: 14px 20px; border-top: 1px solid var(--emh-border);
                         display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
-                        background: var(--emh-surface);
+                        background: var(--emh-glass);
+                        -webkit-backdrop-filter: blur(16px) saturate(160%);
+                        backdrop-filter: blur(16px) saturate(160%);
                     }
-                    .emh-detail-actions .btn { margin-left: 0; justify-content: center; width: 100%; }
+                    .emh-detail-actions .btn { margin-left: 0; justify-content: center; width: 100%; min-height: 36px; }
                     .emh-detail-danger {
-                        padding: 12px 18px 16px; border-top: 1px solid var(--emh-danger-soft);
+                        padding: 12px 20px 16px; border-top: 1px solid var(--emh-danger-soft);
                         display: flex; gap: 8px; background: var(--emh-danger-soft);
                     }
-                    .emh-detail-danger .btn { margin-left: 0; justify-content: center; width: 100%; color: var(--emh-danger); }
+                    .emh-detail-danger .btn { margin-left: 0; justify-content: center; width: 100%; color: var(--emh-danger); min-height: 36px; }
                     @media (max-width: 576px) { .emh-code-manager-panel { width: 100%; right: -100%; border-radius: 0; } }
+                    @media (prefers-reduced-motion: reduce) {
+                        .emh-code-manager-panel,
+                        .emh-panel-backdrop,
+                        .emh-item,
+                        .emh-item:hover,
+                        .emh-item-actions,
+                        .emh-item:hover .emh-item-actions,
+                        .emh-item-actions button,
+                        .emh-item-actions button:hover,
+                        .emh-filter-tag,
+                        .emh-panel-tabs button,
+                        .emh-search-wrapper input,
+                        .emh-detail-drawer,
+                        .emh-detail-backdrop,
+                        .emh-magnet-item,
+                        .emh-batch-progress-bar {
+                            transition: none !important;
+                            animation: none !important;
+                        }
+                        .emh-item:hover { transform: none; }
+                        .emh-item-actions { opacity: 1; transform: none; }
+                        .emh-item-actions button:hover { transform: none; }
+                        .emh-panel-content .emh-item { animation: none; }
+                    }
                 `;
                 document.head.appendChild(styleElement);
             }
