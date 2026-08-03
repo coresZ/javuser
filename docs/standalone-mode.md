@@ -74,11 +74,16 @@ window.__EMH_SRC = __EMH_MAIN__.toString() + "\n;try { emhMain(); } catch (e) { 
 
 `injectStandaloneStyles()`（`bootPanel` 中按标志注入）：
 
-- 隐藏 toggle 按钮与面板 backdrop；面板 `position: fixed; inset: 0; padding-right: min(560px, 46vw)`（左列）
-- `.emh-detail-drawer` → `position: fixed; right: 0; width: min(560px, 46vw)`（右列常驻；冲突属性加 `!important`，因为组件样式在 `bootPanel` 中晚于 standalone 样式注入，避免被同优先级后置规则覆盖）
+- 隐藏 toggle 按钮与面板 backdrop；面板 `position: fixed; inset: 0; padding-right: min(580px, 47vw)`（左列）
+- `.emh-detail-drawer` → `position: fixed; right: 0; width: min(580px, 47vw)`（右列常驻）
 - 隐藏主面板关闭按钮（保留详情关闭）；隐藏详情 backdrop
+- **层次优化**（standalone 双栏）：
+  - 左右顶栏统一 52px 高、同背景（去毛玻璃）、hairline 下边框 —— 顶栏协调
+  - 背景统一：左右栏同为 `--emh-bg`，右栏用 hairline 边框 + 阴影作分隔
+  - 详情主次：**Hero 标题**（大字）→ **meta 行**（创建/更新时间上移置顶）→ **信息卡片**（备注+标签）→ **磁力卡片**（列表+宫格+操作）；standalone 下隐藏底部 meta
 - `bootPanel` 完成后自动 `CodeManagerPanel.showPanel()`
 - 主从联动：standalone 下 `selectedIndex` 变化 → 自动 `openDetail`（右侧展示详情）
+- 冲突属性与 `createStyles()`（晚注入）加 `!important` 保证覆盖
 
 ### 生命周期
 

@@ -1576,18 +1576,59 @@ __emhPost({ type: 'init', id: 0 });
             #emh-code-manager-toggle, .emh-panel-backdrop { display: none !important; }
             #emh-code-manager-panel {
                 position: fixed; inset: 0; width: auto; height: 100vh;
-                border-radius: 0; border-left: none; padding-right: min(560px, 46vw);
+                border-radius: 0; border-left: none;
+                padding-right: min(580px, 47vw);
+                background: var(--emh-bg);
             }
+            /* 顶栏协调：左右栏等高等同背景，消除玻璃毛玻璃割裂 */
+            /* 注：以下 padding/font-size 与 createStyles 同优先级且晚注入，
+               必须 !important 才能覆盖（与 background/backdrop 同理） */
+            .emh-panel-header, .emh-detail-header {
+                height: 52px; padding: 0 16px !important; box-sizing: border-box;
+                background: var(--emh-bg) !important;
+                border-bottom: 1px solid var(--emh-border) !important;
+                -webkit-backdrop-filter: none !important;
+                backdrop-filter: none !important;
+            }
+            .emh-panel-header h2 { font-size: 14px !important; }
+            .emh-detail-code { font-size: 15px !important; }
             .emh-panel-header .emh-panel-close { display: none !important; }
             .emh-detail-backdrop { display: none !important; }
             /* 组件样式（CodeManagerPanel.createStyles）在 bootPanel 中晚于本样式注入，
                同优先级时后注入者胜出，故对冲突属性加 !important 保证双栏覆盖生效 */
+            /* 右栏：与左栏同基底，hairline 边框 + 阴影作分隔 */
             .emh-detail-drawer {
                 position: fixed !important; top: 0; right: 0; bottom: 0;
-                width: min(560px, 46vw) !important; border-radius: 0 !important;
-                border-left: 1px solid var(--emh-border);
-                box-shadow: -12px 0 32px rgba(0, 0, 0, 0.25) !important;
+                width: min(580px, 47vw) !important;
+                background: var(--emh-bg) !important;
+                border-radius: 0 !important;
+                border-left: 1px solid var(--emh-border) !important;
+                box-shadow: -16px 0 40px rgba(0, 0, 0, 0.35) !important;
                 animation: none !important;
+            }
+            /* 详情主次：Hero 标题 → meta 行 → 信息/磁力卡片 */
+            .emh-detail-body.standalone { padding: 14px 16px 20px; }
+            .emh-detail-body.standalone .emh-detail-hero {
+                padding: 0 0 12px; margin: 2px 0 10px;
+                border-bottom: 1px solid var(--emh-border);
+            }
+            .emh-detail-body.standalone .emh-detail-hero .emh-detail-label { display: none; }
+            .emh-detail-body.standalone .emh-detail-hero .emh-detail-value {
+                font-size: 19px; font-weight: 700; color: var(--emh-text); line-height: 1.35;
+            }
+            .emh-detail-body.standalone .emh-detail-section {
+                background: var(--emh-surface); border: 1px solid var(--emh-border);
+                border-radius: 12px; padding: 10px 14px; margin-bottom: 12px;
+            }
+            .emh-detail-body.standalone .emh-detail-section .emh-detail-field {
+                padding: 9px 0; border-bottom: 1px solid var(--emh-border);
+            }
+            .emh-detail-body.standalone .emh-detail-section .emh-detail-field:last-child { border-bottom: none; }
+            .emh-detail-body.standalone .emh-detail-meta-line {
+                display: flex; flex-wrap: wrap; gap: 14px;
+                font-size: 11px; color: var(--emh-text-muted);
+                padding: 0 2px 12px; margin-bottom: 12px;
+                border-bottom: 1px dashed var(--emh-border);
             }
         `;
         document.head.appendChild(style);
@@ -1954,6 +1995,115 @@ __emhPost({ type: 'init', id: 0 });
                 if (typeof input === 'number') { tagList.push(String(input)); return; }
                 if (typeof input === 'object' && input.value != null) extract(input.value);
             })(item.tags);
+
+            // standalone 双栏下重构详情层次：Hero 标题 → meta 行 → 信息/磁力卡片
+            const standalone = !!window.__EMH_STANDALONE;
+            const metaLine = html`<div class="emh-detail-meta-line">${metaParts.join(' · ')}</div>`;
+            const metaBottom = html`
+                <div class="emh-detail-meta">
+                    ${metaParts.length ? html`<div>${metaParts.join(' · ')}</div>` : ''}
+                </div>
+            `;
+            const titleBlock = (item.title && typeof item.title === 'string' && item.title !== item.code) ? html`
+                <div class="emh-detail-field ${standalone ? 'emh-detail-hero' : ''}">
+                    <span class="emh-detail-label">标题</span>
+                    <span class="emh-detail-value">${item.title}</span>
+                </div>
+            ` : null;
+            const remarksBlock = html`
+                <div class="emh-detail-field">
+                    <span class="emh-detail-label">备注</span>
+                    <span class="emh-detail-value ${item.remarks ? '' : 'emh-detail-empty'}">${typeof item.remarks === 'string' && item.remarks ? item.remarks : '暂无备注'}</span>
+                </div>
+            `;
+            const tagsBlock = html`
+                <div class="emh-detail-field">
+                    <span class="emh-detail-label">标签</span>
+                    <div class="emh-detail-tags">
+                        ${tagList.length ? tagList.map(t => html`<span class="emh-detail-tag">#${t}</span>`) : html`<span class="emh-detail-value emh-detail-empty">暂无标签</span>`}
+                        ${!inTrash ? html`
+                            <button class="emh-magnet-op emh-tag-edit" title="编辑标签" aria-label="编辑标签" onClick=${() => onEditTags(item.code)}>
+                                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+            const infoBlock = html`${remarksBlock}${tagsBlock}`;
+            const magnetBlock = html`
+                <div class="emh-detail-field">
+                    <span class="emh-detail-label">磁力链接 ${magnets.length ? `(${magnets.length})` : ''}</span>
+                    ${magnets.length ? html`
+                        <ul class="emh-magnet-list">
+                            ${magnets.map((m, idx) => {
+                                const mid = CODE_LIBRARY.magnetId(m) || ('idx-' + idx);
+                                const mvalue = CODE_LIBRARY.magnetValue(m);
+                                const displayM = CODE_LIBRARY.magnetName(m);
+                                const pv = CODE_LIBRARY.sanitizeMagnetPreview(m.preview);
+                                const hasCache = !!(pv && Array.isArray(pv.screenshots) && pv.screenshots.length);
+                                const shotCount = hasCache ? pv.screenshots.length : 0;
+                                return html`
+                                    <li key=${mid} class="emh-magnet-item-static" title="${mvalue}">
+                                        <span class="emh-magnet-item-idx">#${idx + 1}</span>
+                                        <span class="emh-magnet-item-text">${displayM.length > 60 ? displayM.slice(0, 60) + '…' : displayM}</span>
+                                        <span class="emh-magnet-item-ops">
+                                            <button class="emh-magnet-op emh-magnet-op-preview ${hasCache ? 'has-cache' : ''}"
+                                                title=${hasCache ? `预览截图（已缓存 ${shotCount} 张，右键强制刷新）` : '预览截图'}
+                                                onClick=${(e) => onPreviewMagnet(item.code, mid, { force: !!(e && e.shiftKey) })}
+                                                onContextMenu=${(e) => { e.preventDefault(); onPreviewMagnet(item.code, mid, { force: true }); }}>
+                                                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>${hasCache ? html`<span class="emh-magnet-preview-badge">${shotCount}</span>` : ''}
+                                            </button>
+                                            <button class="emh-magnet-op" title="复制该磁力" onClick=${() => onCopyMagnetItem(item.code, mid)}>
+                                                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                            </button>
+                                            ${!inTrash ? html`
+                                                <button class="emh-magnet-op" title="修改该磁力" onClick=${() => onEditMagnetItem(item.code, mid)}>
+                                                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                                                </button>
+                                                <button class="emh-magnet-op emh-magnet-op-del" title="删除该磁力" onClick=${() => onRemoveMagnet(item.code, mid)}>
+                                                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                                                </button>
+                                            ` : null}
+                                        </span>
+                                        ${hasCache ? html`
+                                            <div class="emh-preview-grid">
+                                                ${pv.screenshots.slice(0, 24).map((s, si) => html`
+                                                    <button type="button" class="emh-preview-cell" data-idx=${si}
+                                                        title=${(s.time != null ? '跳转到 ' + UTILS.formatTime(s.time) + ' 的截图' : '查看截图')}
+                                                        onClick=${() => onPreviewMagnetAt(item.code, mid, si)}>
+                                                        <span class="emh-preview-thumb" data-src="${s.screenshot}"></span>
+                                                        ${s.time != null ? html`<span class="emh-preview-time">${UTILS.formatTime(s.time)}</span>` : ''}
+                                                    </button>
+                                                `)}
+                                            </div>
+                                        ` : ''}
+                                    </li>
+                                `;
+                            })}
+                        </ul>
+                        <span class="emh-magnet-actions">
+                            <button class="btn btn-outline emh-magnet-btn" onClick=${() => onCopyMagnet(item.code)}>${ICON.copy} 复制全部</button>
+                            ${!inTrash ? html`
+                                <button class="btn btn-outline emh-magnet-btn" onClick=${() => onSearchMagnet(item.code)}>${ICON.search} 搜索</button>
+                            ` : null}
+                        </span>
+                    ` : html`
+                        <span class="emh-detail-value emh-detail-empty">暂无磁力链接</span>
+                        ${!inTrash ? html`
+                            <span class="emh-magnet-actions">
+                                <button class="btn btn-outline emh-magnet-btn" onClick=${() => onSearchMagnet(item.code)}>${ICON.search} 搜索磁力</button>
+                                <button class="btn btn-outline emh-magnet-btn" onClick=${() => onEditMagnet(item.code)}>${ICON.edit} 手动添加</button>
+                            </span>
+                        ` : null}
+                    `}
+                </div>
+            `;
+            const deletedBlock = deleted ? html`
+                <div class="emh-detail-field">
+                    <span class="emh-detail-label">删除时间</span>
+                    <span class="emh-detail-value">${deleted}</span>
+                </div>
+            ` : null;
             return html`
                 <div class="emh-detail-backdrop" onClick=${onClose}></div>
                 <div class="emh-detail-drawer">
@@ -1964,104 +2114,14 @@ __emhPost({ type: 'init', id: 0 });
                         </div>
                         <button class="emh-panel-close" title="关闭 (Esc)" onClick=${onClose}>×</button>
                     </div>
-                    <div class="emh-detail-body" ref=${drawerBodyRef}>
-                        ${item.title && typeof item.title === 'string' && item.title !== item.code ? html`
-                            <div class="emh-detail-field">
-                                <span class="emh-detail-label">标题</span>
-                                <span class="emh-detail-value">${item.title}</span>
-                            </div>
-                        ` : null}
-                        <div class="emh-detail-field">
-                            <span class="emh-detail-label">备注</span>
-                            <span class="emh-detail-value ${item.remarks ? '' : 'emh-detail-empty'}">${typeof item.remarks === 'string' && item.remarks ? item.remarks : '暂无备注'}</span>
-                        </div>
-                        <div class="emh-detail-field">
-                            <span class="emh-detail-label">标签</span>
-                            <div class="emh-detail-tags">
-                                ${tagList.length ? tagList.map(t => html`<span class="emh-detail-tag">#${t}</span>`) : html`<span class="emh-detail-value emh-detail-empty">暂无标签</span>`}
-                                ${!inTrash ? html`
-                                    <button class="emh-magnet-op emh-tag-edit" title="编辑标签" aria-label="编辑标签" onClick=${() => onEditTags(item.code)}>
-                                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
-                                    </button>
-                                ` : ''}
-                            </div>
-                        </div>
-                        <div class="emh-detail-field">
-                            <span class="emh-detail-label">磁力链接 ${magnets.length ? `(${magnets.length})` : ''}</span>
-                            ${magnets.length ? html`
-                                <ul class="emh-magnet-list">
-                                    ${magnets.map((m, idx) => {
-                                        const mid = CODE_LIBRARY.magnetId(m) || ('idx-' + idx);
-                                        const mvalue = CODE_LIBRARY.magnetValue(m);
-                                        const displayM = CODE_LIBRARY.magnetName(m);
-                                        const pv = CODE_LIBRARY.sanitizeMagnetPreview(m.preview);
-                                        const hasCache = !!(pv && Array.isArray(pv.screenshots) && pv.screenshots.length);
-                                        const shotCount = hasCache ? pv.screenshots.length : 0;
-                                        return html`
-                                            <li key=${mid} class="emh-magnet-item-static" title="${mvalue}">
-                                                <span class="emh-magnet-item-idx">#${idx + 1}</span>
-                                                <span class="emh-magnet-item-text">${displayM.length > 60 ? displayM.slice(0, 60) + '…' : displayM}</span>
-                                                <span class="emh-magnet-item-ops">
-                                                    <button class="emh-magnet-op emh-magnet-op-preview ${hasCache ? 'has-cache' : ''}"
-                                                        title=${hasCache ? `预览截图（已缓存 ${shotCount} 张，右键强制刷新）` : '预览截图'}
-                                                        onClick=${(e) => onPreviewMagnet(item.code, mid, { force: !!(e && e.shiftKey) })}
-                                                        onContextMenu=${(e) => { e.preventDefault(); onPreviewMagnet(item.code, mid, { force: true }); }}>
-                                                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>${hasCache ? html`<span class="emh-magnet-preview-badge">${shotCount}</span>` : ''}
-                                                    </button>
-                                                    <button class="emh-magnet-op" title="复制该磁力" onClick=${() => onCopyMagnetItem(item.code, mid)}>
-                                                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                                                    </button>
-                                                    ${!inTrash ? html`
-                                                        <button class="emh-magnet-op" title="修改该磁力" onClick=${() => onEditMagnetItem(item.code, mid)}>
-                                                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
-                                                        </button>
-                                                        <button class="emh-magnet-op emh-magnet-op-del" title="删除该磁力" onClick=${() => onRemoveMagnet(item.code, mid)}>
-                                                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                                                        </button>
-                                                    ` : null}
-                                                </span>
-                                                ${hasCache ? html`
-                                                    <div class="emh-preview-grid">
-                                                        ${pv.screenshots.slice(0, 24).map((s, si) => html`
-                                                            <button type="button" class="emh-preview-cell" data-idx=${si}
-                                                                title=${(s.time != null ? '跳转到 ' + UTILS.formatTime(s.time) + ' 的截图' : '查看截图')}
-                                                                onClick=${() => onPreviewMagnetAt(item.code, mid, si)}>
-                                                                <span class="emh-preview-thumb" data-src="${s.screenshot}"></span>
-                                                                ${s.time != null ? html`<span class="emh-preview-time">${UTILS.formatTime(s.time)}</span>` : ''}
-                                                            </button>
-                                                        `)}
-                                                    </div>
-                                                ` : ''}
-                                            </li>
-                                        `;
-                                    })}
-                                </ul>
-                                <span class="emh-magnet-actions">
-                                    <button class="btn btn-outline emh-magnet-btn" onClick=${() => onCopyMagnet(item.code)}>${ICON.copy} 复制全部</button>
-                                    ${!inTrash ? html`
-                                        <button class="btn btn-outline emh-magnet-btn" onClick=${() => onSearchMagnet(item.code)}>${ICON.search} 搜索</button>
-                                    ` : null}
-                                </span>
-                            ` : html`
-                                <span class="emh-detail-value emh-detail-empty">暂无磁力链接</span>
-                                ${!inTrash ? html`
-                                    <span class="emh-magnet-actions">
-                                        <button class="btn btn-outline emh-magnet-btn" onClick=${() => onSearchMagnet(item.code)}>${ICON.search} 搜索磁力</button>
-                                        <button class="btn btn-outline emh-magnet-btn" onClick=${() => onEditMagnet(item.code)}>${ICON.edit} 手动添加</button>
-                                    </span>
-                                ` : null}
-                            `}
-                        </div>
-                        ${deleted ? html`
-                            <div class="emh-detail-field">
-                                <span class="emh-detail-label">删除时间</span>
-                                <span class="emh-detail-value">${deleted}</span>
-                            </div>
-                        ` : null}
+                    <div class="emh-detail-body ${standalone ? 'standalone' : ''}" ref=${drawerBodyRef}>
+                        ${titleBlock}
+                        ${standalone && metaParts.length ? metaLine : ''}
+                        ${standalone ? html`<div class="emh-detail-section">${infoBlock}</div>` : infoBlock}
+                        ${standalone ? html`<div class="emh-detail-section">${magnetBlock}</div>` : magnetBlock}
+                        ${deletedBlock}
                     </div>
-                    <div class="emh-detail-meta">
-                        ${metaParts.length ? html`<div>${metaParts.join(' · ')}</div>` : ''}
-                    </div>
+                    ${standalone ? '' : metaBottom}
                     <div class="emh-detail-actions">
                         ${!inTrash ? html`
                             <button class="btn btn-outline" onClick=${() => onEdit(item.code)}>${ICON.edit} 编辑备注</button>
@@ -2796,7 +2856,7 @@ __emhPost({ type: 'init', id: 0 });
                         <div class="emh-panel-backdrop" onClick=${actions.hidePanel}></div>
                         <div id="emh-code-manager-panel" class="emh-code-manager-panel visible">
                         <div class="emh-panel-header">
-                            <h2><span class="emh-panel-logo"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span> 管理中心 <span class="emh-header-count">${items.length > 0 ? `(${items.length})` : ''}</span></h2>
+                            <h2><span class="emh-panel-logo"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span> ${window.__EMH_STANDALONE ? '番号库' : '管理中心'} <span class="emh-header-count">${items.length > 0 ? `(${items.length})` : ''}</span></h2>
                             <div class="emh-panel-controls">
                                 <button class="emh-theme-toggle" title="更多选项" onClick=${actions.toggleMenu}>
                                     <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
