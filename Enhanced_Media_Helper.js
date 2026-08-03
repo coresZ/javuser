@@ -65,9 +65,9 @@
             trashStorageKey: 'emh_code_trash',
             trashRetentionDays: 7,
             statusColors: {
-                unmarked: '#909090',
-                favorite: '#ff4757',
-                watched: '#2ed573'
+                unmarked: '#6b7280',
+                favorite: '#f87171',
+                watched: '#34d399'
             }
         },
         magnetPreview: {
@@ -491,6 +491,74 @@
                 const u = new URL(url.trim());
                 return u.protocol === 'https:' || u.protocol === 'http:';
             } catch (_) { return false; }
+        },
+        formatTime: (sec) => {
+            const s = Number(sec);
+            if (!Number.isFinite(s) || s < 0) return '';
+            const h = Math.floor(s / 3600);
+            const m = Math.floor((s % 3600) / 60);
+            const ss = Math.floor(s % 60);
+            return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}` : `${m}:${String(ss).padStart(2, '0')}`;
+        }
+    };
+
+    // 磁力宫格缩略图懒加载（IntersectionObserver）
+    const LAZY = {
+        _io: null,
+        get io() {
+            if (!this._io && typeof IntersectionObserver !== 'undefined') {
+                this._io = new IntersectionObserver((entries) => {
+                    for (const en of entries) {
+                        if (!en.isIntersecting) continue;
+                        const el = en.target;
+                        const src = el.getAttribute('data-src');
+                        if (src) el.style.backgroundImage = 'url("' + src + '")';
+                        this._io.unobserve(el);
+                    }
+                }, { rootMargin: '240px' });
+            }
+            return this._io;
+        },
+        observe(el) {
+            if (el.dataset.lazy) return;
+            el.dataset.lazy = '1';
+            if (!this.io) {
+                const src = el.getAttribute('data-src');
+                if (src) el.style.backgroundImage = 'url("' + src + '")';
+                return;
+            }
+            this.io.observe(el);
+        }
+    };
+
+    // 通用内联 SVG 图标（线性描边，跟随 currentColor）
+    const ICONS = {
+        grid: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>'
+    };
+
+    // ===== 主题管理（深色优先默认 · data-emh-theme 属性驱动） =====
+    const THEME = {
+        KEY: 'emh_ui_theme',
+        ORDER: ['dark', 'light', 'system'],
+        get: function() {
+            let t = 'dark';
+            try {
+                const saved = typeof GM_getValue === 'function' ? GM_getValue(this.KEY) : null;
+                if (saved === 'dark' || saved === 'light' || saved === 'system') t = saved;
+            } catch (e) {}
+            return t;
+        },
+        apply: function(theme) {
+            document.documentElement.setAttribute('data-emh-theme', theme);
+        },
+        set: function(theme) {
+            if (!['dark', 'light', 'system'].includes(theme)) theme = 'dark';
+            this.apply(theme);
+            try { if (typeof GM_setValue === 'function') GM_setValue(this.KEY, theme); } catch (e) {}
+        },
+        next: function() {
+            const cur = this.get();
+            return this.ORDER[(this.ORDER.indexOf(cur) + 1) % this.ORDER.length];
         }
     };
 
@@ -547,6 +615,7 @@
                     #emh-magnet-lb-img {
                         max-width: 100%; max-height: 100%; object-fit: contain;
                         border-radius: 4px; box-shadow: 0 8px 32px rgba(0,0,0,0.45); background: #111;
+                        transition: opacity 0.25s ease;
                     }
                     #emh-magnet-lb-img.is-loading { opacity: 0.35; }
                     .emh-lb-btn {
@@ -554,16 +623,19 @@
                         width: 44px; height: 44px; border: none; border-radius: 50%;
                         background: rgba(255,255,255,0.12); color: #fff; font-size: 28px;
                         line-height: 1; cursor: pointer; display: flex; align-items: center;
-                        justify-content: center; z-index: 2;
+                        justify-content: center; z-index: 2; transition: background 0.15s, opacity 0.15s;
                     }
                     .emh-lb-btn:hover { background: rgba(255,255,255,0.22); }
                     .emh-lb-btn:disabled { opacity: 0.25; cursor: default; }
+                    #emh-magnet-lb-close:focus-visible,
+                    .emh-lb-btn:focus-visible { outline: 2px solid rgba(255,255,255,0.7); outline-offset: 2px; }
                     #emh-magnet-lb-prev { left: 12px; }
                     #emh-magnet-lb-next { right: 12px; }
                     #emh-magnet-lb-close {
                         position: absolute; top: 12px; right: 12px; width: 40px; height: 40px;
                         border: none; border-radius: 50%; background: rgba(255,255,255,0.12);
                         color: #fff; font-size: 24px; cursor: pointer; z-index: 3; line-height: 1;
+                        transition: background 0.15s;
                     }
                     #emh-magnet-lb-close:hover { background: rgba(255,255,255,0.22); }
                     #emh-magnet-lb-counter {
@@ -582,10 +654,29 @@
                         position: absolute; bottom: 14px; right: 16px;
                         color: rgba(255,255,255,0.45); font-size: 11px; z-index: 2; pointer-events: none;
                     }
+                    #emh-magnet-lb-thumbs {
+                        position: absolute; bottom: 46px; left: 50%; transform: translateX(-50%);
+                        display: flex; gap: 6px; max-width: 72%; overflow-x: auto;
+                        padding: 6px 8px; border-radius: 10px;
+                        background: rgba(0,0,0,0.45); z-index: 2;
+                        scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.3) transparent;
+                    }
+                    #emh-magnet-lb-thumbs::-webkit-scrollbar { height: 4px; }
+                    #emh-magnet-lb-thumbs::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 2px; }
+                    .emh-lb-thumb {
+                        flex-shrink: 0; width: 56px; height: 36px; padding: 0; border: none; cursor: pointer;
+                        border-radius: 4px; overflow: hidden; opacity: 0.55; transition: opacity 0.15s, box-shadow 0.15s;
+                        background: #111;
+                    }
+                    .emh-lb-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+                    .emh-lb-thumb:hover { opacity: 0.85; }
+                    .emh-lb-thumb.active { opacity: 1; box-shadow: 0 0 0 2px var(--emh-primary); }
+                    .emh-lb-thumb:focus-visible { outline: 2px solid rgba(255,255,255,0.7); outline-offset: 1px; }
                     @media (max-width: 640px) {
                         #emh-magnet-lb-stage { padding: 44px 52px 52px; }
                         .emh-lb-btn { width: 38px; height: 38px; font-size: 24px; }
                         #emh-magnet-lb-hint { display: none; }
+                        #emh-magnet-lb-thumbs { display: none; }
                     }
                 `;
                 document.head.appendChild(st);
@@ -603,6 +694,7 @@
                     <img id="emh-magnet-lb-img" alt="Screenshot" referrerpolicy="no-referrer" />
                     <button type="button" class="emh-lb-btn" id="emh-magnet-lb-next" aria-label="下一张">›</button>
                     <div id="emh-magnet-lb-counter"></div>
+                    <div id="emh-magnet-lb-thumbs"></div>
                     <div id="emh-magnet-lb-hint">← → 切换 · Esc 关闭</div>
                 </div>
             `;
@@ -614,7 +706,8 @@
                 next: root.querySelector('#emh-magnet-lb-next'),
                 close: root.querySelector('#emh-magnet-lb-close'),
                 counter: root.querySelector('#emh-magnet-lb-counter'),
-                meta: root.querySelector('#emh-magnet-lb-meta')
+                meta: root.querySelector('#emh-magnet-lb-meta'),
+                thumbs: root.querySelector('#emh-magnet-lb-thumbs')
             };
             this._els.prev.addEventListener('click', (e) => { e.stopPropagation(); this.step(-1); });
             this._els.next.addEventListener('click', (e) => { e.stopPropagation(); this.step(1); });
@@ -654,6 +747,7 @@
                 img.classList.remove('is-loading');
                 img.removeAttribute('src');
                 img.alt = 'Screenshot';
+                if (this._els.thumbs) this._els.thumbs.innerHTML = '';
                 return;
             }
             const idx = this._index;
@@ -687,6 +781,24 @@
                     pre.src = this._urls[n];
                 }
             });
+            if (this._els.thumbs) {
+                const thumbs = this._els.thumbs;
+                thumbs.innerHTML = '';
+                this._urls.forEach((u, i) => {
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.className = 'emh-lb-thumb' + (i === idx ? ' active' : '');
+                    b.title = '跳转到截图 ' + (i + 1);
+                    const im = new Image();
+                    im.referrerPolicy = 'no-referrer';
+                    im.alt = '';
+                    im.src = u;
+                    b.appendChild(im);
+                    b.addEventListener('click', (e) => { e.stopPropagation(); this._index = i; this._update(); });
+                    thumbs.appendChild(b);
+                });
+                thumbs.scrollLeft = Math.max(0, idx * 62 - thumbs.clientWidth / 2);
+            }
         },
 
         open: function(urls, startIndex, metaText) {
@@ -720,6 +832,7 @@
             this._els.img.classList.remove('is-loading');
             this._els.counter.textContent = '';
             this._els.meta.textContent = '';
+            if (this._els.thumbs) this._els.thumbs.innerHTML = '';
         },
 
         step: function(delta) {
@@ -1047,116 +1160,127 @@
         const style = document.createElement('style');
         style.id = id;
         style.textContent = `
-            :root {
-                /* 品牌 accent — 靛蓝，浅色档 */
-                --emh-primary: #4f46e5;
-                --emh-primary-hover: #4338ca;
-                --emh-primary-soft: rgba(79, 70, 229, 0.08);
-                --emh-primary-softer: rgba(79, 70, 229, 0.05);
+            :root,
+            :root[data-emh-theme="dark"] {
+                /* Linear 系 — 深色默认（暖黑基底） */
+                --emh-primary: #5e6ad2;
+                --emh-primary-hover: #6673e0;
+                --emh-primary-soft: rgba(94, 106, 210, 0.14);
+                --emh-primary-softer: rgba(94, 106, 210, 0.08);
                 --emh-on-primary: #ffffff;
-                /* 中性灰阶（oklch 微调，避免纯灰发闷） */
+                /* 中性灰阶 */
+                --emh-text: #f7f8f8;
+                --emh-text-secondary: #9ca3af;
+                --emh-text-muted: #6b7280;
+                --emh-border: rgba(255, 255, 255, 0.06);
+                --emh-border-strong: rgba(255, 255, 255, 0.12);
+                --emh-bg: #08090a;
+                --emh-surface: #16171c;
+                --emh-surface-raised: #26272e;
+                /* 极淡阴影（无发光/无彩色） */
+                --emh-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+                --emh-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.25);
+                --emh-shadow-lg:
+                    0 0 0 1px rgba(255, 255, 255, 0.06),
+                    0 24px 48px -12px rgba(0, 0, 0, 0.5),
+                    0 8px 16px -8px rgba(0, 0, 0, 0.4);
+                /* 语义状态色 */
+                --emh-danger: #f87171;
+                --emh-danger-soft: rgba(248, 113, 113, 0.14);
+                --emh-success: #34d399;
+                --emh-success-soft: rgba(52, 211, 153, 0.14);
+                --emh-warning: #fbbf24;
+                --emh-warning-soft: rgba(251, 191, 36, 0.14);
+                --emh-on-solid: #18181b;
+                /* 按钮灰阶 */
+                --emh-btn-bg: rgba(255, 255, 255, 0.06);
+                --emh-btn-hover: rgba(255, 255, 255, 0.12);
+                --emh-btn-active: rgba(255, 255, 255, 0.18);
+                --emh-focus-ring: rgba(94, 106, 210, 0.35);
+                --emh-overlay: rgba(0, 0, 0, 0.6);
+                --emh-radius: 12px;
+                --emh-radius-sm: 6px;
+                --emh-glass: rgba(22, 23, 28, 0.8);
+                --emh-ease: cubic-bezier(0.22, 1, 0.36, 1);
+                --emh-font-mono: 'JetBrains Mono', 'SF Mono', 'Consolas', Menlo, ui-monospace, monospace;
+            }
+            :root[data-emh-theme="light"] {
+                --emh-primary: #5e6ad2;
+                --emh-primary-hover: #4f5cc8;
+                --emh-primary-soft: rgba(94, 106, 210, 0.1);
+                --emh-primary-softer: rgba(94, 106, 210, 0.06);
+                --emh-on-primary: #ffffff;
                 --emh-text: #18181b;
                 --emh-text-secondary: #52525b;
                 --emh-text-muted: #a1a1aa;
-                --emh-border: #e4e4e7;
-                --emh-border-strong: #d4d4d8;
+                --emh-border: rgba(0, 0, 0, 0.08);
+                --emh-border-strong: rgba(0, 0, 0, 0.14);
                 --emh-bg: #fafafa;
                 --emh-surface: #ffffff;
-                --emh-surface-raised: #ffffff;
-                /* 分层阴影 */
+                --emh-surface-raised: #f4f4f5;
                 --emh-shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.04);
                 --emh-shadow-md: 0 2px 8px rgba(24, 24, 27, 0.06), 0 1px 2px rgba(24, 24, 27, 0.04);
                 --emh-shadow-lg:
                     0 0 0 1px rgba(24, 24, 27, 0.04),
                     0 24px 48px -12px rgba(24, 24, 27, 0.18),
                     0 8px 16px -8px rgba(24, 24, 27, 0.12);
-                /* 语义色 */
                 --emh-danger: #dc2626;
-                --emh-danger-soft: rgba(220, 38, 38, 0.08);
+                --emh-danger-soft: rgba(220, 38, 38, 0.1);
                 --emh-success: #059669;
-                --emh-success-soft: rgba(5, 150, 105, 0.1);
+                --emh-success-soft: rgba(5, 150, 105, 0.12);
                 --emh-warning: #d97706;
-                --emh-warning-soft: rgba(217, 119, 6, 0.1);
+                --emh-warning-soft: rgba(217, 119, 6, 0.12);
                 --emh-on-solid: #ffffff;
-                /* 按钮灰阶 */
                 --emh-btn-bg: rgba(24, 24, 27, 0.05);
                 --emh-btn-hover: rgba(24, 24, 27, 0.09);
                 --emh-btn-active: rgba(24, 24, 27, 0.13);
-                --emh-focus-ring: rgba(79, 70, 229, 0.25);
-                --emh-overlay: rgba(24, 24, 27, 0.32);
+                --emh-focus-ring: rgba(94, 106, 210, 0.3);
+                --emh-overlay: rgba(24, 24, 27, 0.35);
                 --emh-radius: 12px;
-                --emh-radius-sm: 8px;
+                --emh-radius-sm: 6px;
                 --emh-glass: rgba(255, 255, 255, 0.72);
-                --emh-font-mono: 'SF Mono', 'Consolas', 'Menlo', ui-monospace, monospace;
+                --emh-ease: cubic-bezier(0.22, 1, 0.36, 1);
+                --emh-font-mono: 'JetBrains Mono', 'SF Mono', 'Consolas', Menlo, ui-monospace, monospace;
             }
-            :root.emh-theme-dark {
-                --emh-primary: #a5b4fc;
-                --emh-primary-hover: #c7d2fe;
-                --emh-primary-soft: rgba(165, 180, 252, 0.1);
-                --emh-primary-softer: rgba(165, 180, 252, 0.06);
-                --emh-on-primary: #18181b;
-                --emh-text: #f4f4f5;
-                --emh-text-secondary: #a1a1aa;
-                --emh-text-muted: #71717a;
-                --emh-border: #27272a;
-                --emh-border-strong: #3f3f46;
-                --emh-bg: #18181b;
-                --emh-surface: #1f1f23;
-                --emh-surface-raised: #26262b;
-                --emh-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-                --emh-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.32), 0 1px 2px rgba(0, 0, 0, 0.24);
-                --emh-shadow-lg:
-                    0 0 0 1px rgba(255, 255, 255, 0.05),
-                    0 24px 48px -12px rgba(0, 0, 0, 0.5),
-                    0 8px 16px -8px rgba(0, 0, 0, 0.4);
-                --emh-danger: #f87171;
-                --emh-danger-soft: rgba(248, 113, 113, 0.12);
-                --emh-success: #34d399;
-                --emh-success-soft: rgba(52, 211, 153, 0.12);
-                --emh-warning: #fbbf24;
-                --emh-warning-soft: rgba(251, 191, 36, 0.12);
-                --emh-on-solid: #18181b;
-                --emh-btn-bg: rgba(161, 161, 170, 0.12);
-                --emh-btn-hover: rgba(161, 161, 170, 0.2);
-                --emh-btn-active: rgba(161, 161, 170, 0.28);
-                --emh-focus-ring: rgba(165, 180, 252, 0.3);
-                --emh-overlay: rgba(0, 0, 0, 0.55);
-                --emh-glass: rgba(24, 24, 27, 0.7);
-            }
-            @media (prefers-color-scheme: dark) {
-                :root:not(.emh-theme-light) {
-                    --emh-primary: #a5b4fc;
-                    --emh-primary-hover: #c7d2fe;
-                    --emh-primary-soft: rgba(165, 180, 252, 0.1);
-                    --emh-primary-softer: rgba(165, 180, 252, 0.06);
-                    --emh-on-primary: #18181b;
-                    --emh-text: #f4f4f5;
-                    --emh-text-secondary: #a1a1aa;
-                    --emh-text-muted: #71717a;
-                    --emh-border: #27272a;
-                    --emh-border-strong: #3f3f46;
-                    --emh-bg: #18181b;
-                    --emh-surface: #1f1f23;
-                    --emh-surface-raised: #26262b;
-                    --emh-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-                    --emh-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.32), 0 1px 2px rgba(0, 0, 0, 0.24);
+            /* 主题跟随系统（浅色系统）— 仅当用户选择 system 时生效，默认深色优先 */
+            @media (prefers-color-scheme: light) {
+                :root[data-emh-theme="system"] {
+                    --emh-primary: #5e6ad2;
+                    --emh-primary-hover: #4f5cc8;
+                    --emh-primary-soft: rgba(94, 106, 210, 0.1);
+                    --emh-primary-softer: rgba(94, 106, 210, 0.06);
+                    --emh-on-primary: #ffffff;
+                    --emh-text: #18181b;
+                    --emh-text-secondary: #52525b;
+                    --emh-text-muted: #a1a1aa;
+                    --emh-border: rgba(0, 0, 0, 0.08);
+                    --emh-border-strong: rgba(0, 0, 0, 0.14);
+                    --emh-bg: #fafafa;
+                    --emh-surface: #ffffff;
+                    --emh-surface-raised: #f4f4f5;
+                    --emh-shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.04);
+                    --emh-shadow-md: 0 2px 8px rgba(24, 24, 27, 0.06), 0 1px 2px rgba(24, 24, 27, 0.04);
                     --emh-shadow-lg:
-                        0 0 0 1px rgba(255, 255, 255, 0.05),
-                        0 24px 48px -12px rgba(0, 0, 0, 0.5),
-                        0 8px 16px -8px rgba(0, 0, 0, 0.4);
-                    --emh-danger: #f87171;
-                    --emh-danger-soft: rgba(248, 113, 113, 0.12);
-                    --emh-success: #34d399;
-                    --emh-success-soft: rgba(52, 211, 153, 0.12);
-                    --emh-warning: #fbbf24;
-                    --emh-warning-soft: rgba(251, 191, 36, 0.12);
-                    --emh-on-solid: #18181b;
-                    --emh-btn-bg: rgba(161, 161, 170, 0.12);
-                    --emh-btn-hover: rgba(161, 161, 170, 0.2);
-                    --emh-btn-active: rgba(161, 161, 170, 0.28);
-                    --emh-focus-ring: rgba(165, 180, 252, 0.3);
-                    --emh-overlay: rgba(0, 0, 0, 0.55);
-                    --emh-glass: rgba(24, 24, 27, 0.7);
+                        0 0 0 1px rgba(24, 24, 27, 0.04),
+                        0 24px 48px -12px rgba(24, 24, 27, 0.18),
+                        0 8px 16px -8px rgba(24, 24, 27, 0.12);
+                    --emh-danger: #dc2626;
+                    --emh-danger-soft: rgba(220, 38, 38, 0.1);
+                    --emh-success: #059669;
+                    --emh-success-soft: rgba(5, 150, 105, 0.12);
+                    --emh-warning: #d97706;
+                    --emh-warning-soft: rgba(217, 119, 6, 0.12);
+                    --emh-on-solid: #ffffff;
+                    --emh-btn-bg: rgba(24, 24, 27, 0.05);
+                    --emh-btn-hover: rgba(24, 24, 27, 0.09);
+                    --emh-btn-active: rgba(24, 24, 27, 0.13);
+                    --emh-focus-ring: rgba(94, 106, 210, 0.3);
+                    --emh-overlay: rgba(24, 24, 27, 0.35);
+                    --emh-radius: 12px;
+                    --emh-radius-sm: 6px;
+                    --emh-glass: rgba(255, 255, 255, 0.72);
+                    --emh-ease: cubic-bezier(0.22, 1, 0.36, 1);
+                    --emh-font-mono: 'JetBrains Mono', 'SF Mono', 'Consolas', Menlo, ui-monospace, monospace;
                 }
             }
             .emh-code-manager-toggle {
@@ -1177,6 +1301,7 @@
                 box-shadow: 0 6px 20px var(--emh-primary-soft), var(--emh-shadow-md);
             }
             .emh-code-manager-toggle:active { transform: scale(0.96); }
+            .emh-code-manager-toggle:focus-visible { outline: 2px solid var(--emh-on-primary); outline-offset: 2px; }
             .emh-javgg-controls {
                 margin-top: 6px; display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center;
                 margin-left: 10px; vertical-align: middle; padding: 4px 6px;
@@ -1191,7 +1316,7 @@
             .btn {
                 appearance: none; -webkit-appearance: none;
                 display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-                padding: 8px 14px; margin-left: 10px; border-radius: 9px;
+                padding: 8px 14px; border-radius: 9px;
                 text-decoration: none; font-size: 13px; font-weight: 600;
                 transition: background-color 0.15s ease-in-out, color 0.15s ease-in-out, transform 0.1s ease-in-out, border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
                 cursor: pointer; border: 1px solid transparent; white-space: nowrap;
@@ -1199,6 +1324,7 @@
                 color: var(--emh-text);
             }
             .btn:active { transform: scale(0.92); }
+            .btn:focus-visible { outline: 2px solid var(--emh-primary); outline-offset: 2px; }
             .my-btn-primary { background: var(--emh-primary-soft); color: var(--emh-primary); }
             .my-btn-primary:hover { background: var(--emh-primary); color: var(--emh-on-primary); box-shadow: 0 2px 8px var(--emh-primary-soft); }
             .my-btn-success { background: var(--emh-success-soft); color: var(--emh-success); }
@@ -1217,25 +1343,23 @@
             .emh-code-status-indicator[data-status="favorite"] { background-color: var(--emh-danger); }
             .emh-code-status-indicator[data-status="watched"] { background-color: var(--emh-success); }
             .emh-code-status-indicator[data-status="unmarked"] { background-color: var(--emh-text-muted); }
-            #custom-toast-container { position: fixed; top: 70px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+            #custom-toast-container { position: fixed; top: 70px; right: 20px; z-index: 10060; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; pointer-events: none; }
             .custom-toast {
-                padding: 10px 16px; border-radius: 10px; color: var(--emh-on-solid);
-                box-shadow: var(--emh-shadow-md);
+                padding: 10px 16px; border-radius: 12px; color: var(--emh-on-solid);
+                box-shadow: var(--emh-shadow-md); max-width: min(320px, calc(100vw - 40px));
+                text-align: left; pointer-events: auto;
                 transition: opacity 0.3s ease, transform 0.3s ease;
                 opacity: 0; transform: translateX(120%);
                 font-size: 13px; font-weight: 500; display: flex; align-items: center;
                 line-height: 1.4; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             }
             .custom-toast.show { opacity: 1; transform: translateX(0); }
-            .custom-toast::before { margin-right: 8px; font-weight: bold; }
+            .custom-toast.leaving { opacity: 0; transform: translateX(120%); }
+            .custom-toast svg { margin-right: 8px; flex-shrink: 0; }
             .custom-toast-success { background: var(--emh-success); }
-            .custom-toast-success::before { content: "✓"; }
             .custom-toast-error { background: var(--emh-danger); }
-            .custom-toast-error::before { content: "✕"; }
             .custom-toast-info { background: var(--emh-primary); color: var(--emh-on-primary); }
-            .custom-toast-info::before { content: "ℹ"; }
             .custom-toast-warning { background: var(--emh-warning); color: var(--emh-on-solid); }
-            .custom-toast-warning::before { content: "⚠"; }
             @media (prefers-reduced-motion: reduce) {
                 .emh-code-manager-toggle,
                 .emh-code-manager-toggle:hover,
@@ -1251,6 +1375,7 @@
                 }
                 .custom-toast { opacity: 1; transform: none; }
                 .custom-toast.show { opacity: 1; transform: none; }
+                .custom-toast.leaving { opacity: 0; transform: none; }
             }
         `;
         document.head.appendChild(style);
@@ -1263,7 +1388,7 @@
         const btn = document.createElement('button');
         btn.id = 'emh-code-manager-toggle';
         btn.className = 'emh-code-manager-toggle';
-        btn.textContent = '📋 番号库';
+        btn.innerHTML = ICONS.grid + '<span>番号库</span>';
         btn.title = '管理番号库';
         btn.addEventListener('click', clickHandler);
         document.body.appendChild(btn);
@@ -1292,6 +1417,8 @@
                 magnetSearch: null,
                 batchProgress: null,
                 toasts: [],
+                selectedIndex: -1,
+                helpOpen: false,
                 lastSyncTimestamp: null,
                 revision: 0
             },
@@ -1308,6 +1435,24 @@
 
         const STATUS_TEXT = { favorite: '关注', watched: '已看', unmarked: '未标记' };
 
+        const ICON_TOAST = {
+            success: html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
+            error: html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
+            warning: html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+            info: html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`
+        };
+
+        const EMPTY_ICONS = {
+            library: html`<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>`,
+            favorite: html`<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`,
+            watched: html`<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`,
+            trash: html`<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
+            time: html`<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
+            has: html`<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`,
+            none: html`<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>`,
+            search: html`<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`
+        };
+
         // 监听外部 toast 事件，桥接到组件状态
         window.addEventListener('emh_toast', function handler(e) {
             const { message, type } = e.detail || {};
@@ -1315,9 +1460,13 @@
             const id = Date.now() + Math.random().toString(36).slice(2, 7);
             const toasts = [...PanelStore.state.toasts, { id, message, type: type || 'info' }].slice(-5);
             PanelStore.set({ toasts });
+            // 两阶段退场：先进入 leaving 过渡，再移除
+            setTimeout(() => {
+                PanelStore.set({ toasts: PanelStore.state.toasts.map(t => t.id === id ? { ...t, leaving: true } : t) });
+            }, 3000);
             setTimeout(() => {
                 PanelStore.set({ toasts: PanelStore.state.toasts.filter(t => t.id !== id) });
-            }, 3000);
+            }, 3300);
         });
 
         function ToastContainer() {
@@ -1326,7 +1475,10 @@
             return html`
                 <div id="custom-toast-container">
                     ${st.toasts.map(t => html`
-                        <div key=${t.id} class="custom-toast custom-toast-${t.type} show">${t.message}</div>
+                        <div key=${t.id} class="custom-toast custom-toast-${t.type} show ${t.leaving ? 'leaving' : ''}" role="status">
+                            ${ICON_TOAST[t.type] || ICON_TOAST.info}
+                            <span>${t.message}</span>
+                        </div>
                     `)}
                 </div>
             `;
@@ -1366,7 +1518,7 @@
             return html`
                 <div class="emh-panel-modal" style="display:flex;">
                     <div class="emh-panel-modal-content emh-magnet-modal-content">
-                        <h3>🔍 磁力搜索结果：${magnetSearch.code}</h3>
+                        <h3><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> 磁力搜索结果：${magnetSearch.code}</h3>
                         ${magnetSearch.loading ? html`
                             <div class="emh-magnet-loading">加载中...</div>
                         ` : magnetSearch.error ? html`
@@ -1400,7 +1552,7 @@
             return html`
                 <div class="emh-panel-modal" style="display:flex;">
                     <div class="emh-panel-modal-content emh-batch-modal-content">
-                        <h3>🔁 批量获取磁力</h3>
+                        <h3><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> 批量获取磁力</h3>
                         <div class="emh-batch-progress">
                             <div class="emh-batch-progress-track">
                                 <div class="emh-batch-progress-bar" style="width:${pct}%"></div>
@@ -1427,9 +1579,39 @@
             `;
         }
 
-        function ItemRow({ item, view, multi, selected, onToggle, onOpenDetail, onFav, onWatch, onUnfav, onDelete, onRestore, onPurge }) {
+        function HelpModal({ onClose }) {
+            const shortcuts = [
+                ['↑ ↓ · Home · End', '在列表中选择番号'],
+                ['Enter', '打开选中番号详情'],
+                ['Esc', '关闭 / 逐层返回'],
+                ['/', '聚焦搜索'],
+                ['n', '新建番号'],
+                ['Del', '移入回收站'],
+                ['⌘C / Ctrl+C', '复制磁力'],
+                ['r', '刷新预览（详情内）'],
+                ['?', '本帮助']
+            ];
             return html`
-                <div class="emh-item ${item.status} ${selected ? 'selected' : ''}" data-code="${item.code}"
+                <div class="emh-panel-modal" style="display:flex;" onClick=${onClose}>
+                    <div class="emh-panel-modal-content emh-help-modal-content" onClick=${e => e.stopPropagation()}>
+                        <h3><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6.01" y2="8"/><line x1="10" y1="8" x2="10.01" y2="8"/><line x1="14" y1="8" x2="14.01" y2="8"/><line x1="18" y1="8" x2="18.01" y2="8"/><line x1="6" y1="12" x2="6.01" y2="12"/><line x1="10" y1="12" x2="10.01" y2="12"/><line x1="14" y1="12" x2="14.01" y2="12"/><line x1="18" y1="12" x2="18.01" y2="12"/><line x1="6" y1="16" x2="18" y2="16"/></svg> 键盘快捷键</h3>
+                        <ul class="emh-help-list">
+                            ${shortcuts.map(s => html`
+                                <li key=${s[0]}><span class="emh-kbd-chip">${s[0]}</span><span class="emh-help-desc">${s[1]}</span></li>
+                            `)}
+                        </ul>
+                        <div class="emh-panel-modal-buttons">
+                            <button class="btn btn-outline emh-panel-modal-cancel" onClick=${onClose}>关闭</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function ItemRow({ item, view, multi, selected, kbdSel, onToggle, onOpenDetail, onFav, onWatch, onUnfav, onDelete, onRestore, onPurge }) {
+            return html`
+                <div class="emh-item ${item.status} ${selected ? 'selected' : ''} ${kbdSel ? 'kbd-sel' : ''}" data-code="${item.code}"
+                     aria-selected=${kbdSel || undefined}
                      onClick=${multi ? () => onToggle(item.code) : null}>
                     <label class="emh-checkbox-wrap" style=${multi ? '' : 'visibility:hidden;'}>
                         <input type="checkbox" checked=${selected}
@@ -1496,7 +1678,13 @@
             `;
         }
 
-        function DetailDrawer({ item, inTrash, onClose, onEdit, onEditMagnet, onEditMagnetItem, onRemoveMagnet, onCopyMagnet, onCopyMagnetItem, onPreviewMagnet, onSearchMagnet, onFav, onWatch, onUnfav, onDelete, onRestore, onPurge }) {
+        function DetailDrawer({ item, inTrash, onClose, onEdit, onEditMagnet, onEditMagnetItem, onRemoveMagnet, onCopyMagnet, onCopyMagnetItem, onPreviewMagnet, onPreviewMagnetAt, onSearchMagnet, onFav, onWatch, onUnfav, onDelete, onRestore, onPurge }) {
+            const drawerBodyRef = useRef(null);
+            // 宫格缩略图懒加载
+            useEffect(() => {
+                if (!drawerBodyRef.current) return;
+                drawerBodyRef.current.querySelectorAll('.emh-preview-thumb[data-src]').forEach(el => LAZY.observe(el));
+            });
             if (!item) return null;
             const created = item.createdDate ? new Date(item.createdDate).toLocaleString() : '';
             const modified = item.modifiedDate ? new Date(item.modifiedDate).toLocaleString() : '';
@@ -1513,7 +1701,7 @@
                         </div>
                         <button class="emh-panel-close" title="关闭 (Esc)" onClick=${onClose}>×</button>
                     </div>
-                    <div class="emh-detail-body">
+                    <div class="emh-detail-body" ref=${drawerBodyRef}>
                         ${item.title && typeof item.title === 'string' && item.title !== item.code ? html`
                             <div class="emh-detail-field">
                                 <span class="emh-detail-label">标题</span>
@@ -1544,14 +1732,32 @@
                                                         title=${hasCache ? `预览截图（已缓存 ${shotCount} 张，右键强制刷新）` : '预览截图'}
                                                         onClick=${(e) => onPreviewMagnet(item.code, mid, { force: !!(e && e.shiftKey) })}
                                                         onContextMenu=${(e) => { e.preventDefault(); onPreviewMagnet(item.code, mid, { force: true }); }}>
-                                                        👁${hasCache ? html`<span class="emh-magnet-preview-badge">${shotCount}</span>` : ''}
+                                                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>${hasCache ? html`<span class="emh-magnet-preview-badge">${shotCount}</span>` : ''}
                                                     </button>
-                                                    <button class="emh-magnet-op" title="复制该磁力" onClick=${() => onCopyMagnetItem(item.code, mid)}>📋</button>
+                                                    <button class="emh-magnet-op" title="复制该磁力" onClick=${() => onCopyMagnetItem(item.code, mid)}>
+                                                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                                    </button>
                                                     ${!inTrash ? html`
-                                                        <button class="emh-magnet-op" title="修改该磁力" onClick=${() => onEditMagnetItem(item.code, mid)}>✏️</button>
-                                                        <button class="emh-magnet-op emh-magnet-op-del" title="删除该磁力" onClick=${() => onRemoveMagnet(item.code, mid)}>🗑️</button>
+                                                        <button class="emh-magnet-op" title="修改该磁力" onClick=${() => onEditMagnetItem(item.code, mid)}>
+                                                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                                                        </button>
+                                                        <button class="emh-magnet-op emh-magnet-op-del" title="删除该磁力" onClick=${() => onRemoveMagnet(item.code, mid)}>
+                                                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                                                        </button>
                                                     ` : null}
                                                 </span>
+                                                ${hasCache ? html`
+                                                    <div class="emh-preview-grid">
+                                                        ${pv.screenshots.slice(0, 24).map((s, si) => html`
+                                                            <button type="button" class="emh-preview-cell" data-idx=${si}
+                                                                title=${(s.time != null ? '跳转到 ' + UTILS.formatTime(s.time) + ' 的截图' : '查看截图')}
+                                                                onClick=${() => onPreviewMagnetAt(item.code, mid, si)}>
+                                                                <span class="emh-preview-thumb" data-src="${s.screenshot}"></span>
+                                                                ${s.time != null ? html`<span class="emh-preview-time">${UTILS.formatTime(s.time)}</span>` : ''}
+                                                            </button>
+                                                        `)}
+                                                    </div>
+                                                ` : ''}
                                             </li>
                                         `;
                                     })}
@@ -1624,6 +1830,7 @@
             const [, forceUpdate] = useReducer(x => x + 1, 0);
             const headRef = useRef(null);
             const searchRef = useRef(null);
+            const contentRef = useRef(null);
 
             useEffect(() => {
                 const unsub = PanelStore.subscribe(() => forceUpdate());
@@ -1633,9 +1840,9 @@
             const st = PanelStore.get();
 
             const actions = {
-                hidePanel: () => PanelStore.set({ visible: false, multiSelectMode: false, selectedItems: [] }),
-                setFilter: (f) => PanelStore.set({ currentFilter: f, timeFilter: f === 'all' ? st.timeFilter : '', multiSelectMode: false, selectedItems: [] }),
-                toggleMulti: () => PanelStore.set({ multiSelectMode: !st.multiSelectMode, selectedItems: [] }),
+                hidePanel: () => PanelStore.set({ visible: false, multiSelectMode: false, selectedItems: [], helpOpen: false }),
+                setFilter: (f) => PanelStore.set({ currentFilter: f, timeFilter: f === 'all' ? st.timeFilter : '', multiSelectMode: false, selectedItems: [], selectedIndex: -1 }),
+                toggleMulti: () => PanelStore.set({ multiSelectMode: !st.multiSelectMode, selectedItems: [], selectedIndex: -1 }),
                 toggleItem: (code) => {
                     const sel = st.selectedItems.includes(code)
                         ? st.selectedItems.filter(c => c !== code)
@@ -1922,6 +2129,24 @@
                     const mval = CODE_LIBRARY.magnetValue(entry);
                     MAGNET_PREVIEW.fetchAndCache(code, mid, mval, opts || {});
                 },
+                previewMagnetAt: (code, idOrIdx, shotIdx) => {
+                    // 宫格点击：直接打开已缓存截图的灯箱（指定起始索引），不触发新请求
+                    const item = actions.resolveItem(code);
+                    if (!item) return;
+                    const magnets = CODE_LIBRARY.normMagnets(item.magnet);
+                    const t = String(idOrIdx);
+                    let idx = magnets.findIndex((e, i) => {
+                        const eid = CODE_LIBRARY.magnetId(e);
+                        return (eid && String(eid) === t) || String(i) === t;
+                    });
+                    if (idx < 0 && /^\d+$/.test(t)) idx = Number(t);
+                    if (idx < 0 || idx >= magnets.length) return;
+                    const pv = CODE_LIBRARY.sanitizeMagnetPreview(magnets[idx].preview);
+                    if (!pv || !Array.isArray(pv.screenshots) || !pv.screenshots.length) return;
+                    const urls = pv.screenshots.map(s => s.screenshot || s.url || '').filter(Boolean);
+                    const meta = [pv.name, pv.fileType || pv.type, UTILS.formatBytes(pv.size)].filter(Boolean).join(' · ');
+                    MAGNET_PREVIEW.open(urls, Number.isFinite(Number(shotIdx)) ? Number(shotIdx) : 0, meta);
+                },
                 copyMagnetItem: (code, idOrIdx) => {
                     const item = actions.resolveItem(code);
                     const magnets = CODE_LIBRARY.normMagnets(item && item.magnet);
@@ -2045,20 +2270,95 @@
                     const item = CODE_LIBRARY.getItem(code) || CODE_LIBRARY.trash.items.find(i => i.code.toUpperCase() === code.toUpperCase());
                     if (item) PanelStore.set({ detail: code });
                 },
-                closeDetail: () => PanelStore.set({ detail: null })
+                closeDetail: () => PanelStore.set({ detail: null }),
+                toggleTheme: () => { THEME.set(THEME.next()); PanelStore.set({}); },
+                toggleHelp: () => PanelStore.set({ helpOpen: !PanelStore.state.helpOpen }),
+                kbdStep: (delta) => {
+                    const len = items.length;
+                    if (!len) return;
+                    const cur = st.selectedIndex < 0 ? (delta > 0 ? -1 : 0) : st.selectedIndex;
+                    PanelStore.set({ selectedIndex: Math.max(0, Math.min(len - 1, cur + delta)) });
+                },
+                kbdJump: (i) => {
+                    if (!items.length) return;
+                    PanelStore.set({ selectedIndex: Math.max(0, Math.min(items.length - 1, i)) });
+                },
+                kbdOpen: () => {
+                    const it = items[st.selectedIndex];
+                    if (it) actions.openDetail(it.code);
+                },
+                kbdDelete: () => {
+                    if (st.currentFilter === 'trash') return;
+                    const it = items[st.selectedIndex];
+                    if (it) actions.deleteToTrash(it.code);
+                },
+                kbdCopy: () => {
+                    const it = items[st.selectedIndex];
+                    if (it) actions.copyMagnet(it.code);
+                },
+                kbdRefreshPreview: () => {
+                    const code = st.detail;
+                    if (!code) return;
+                    const item = actions.resolveItem(code);
+                    if (!item) return;
+                    const magnets = CODE_LIBRARY.normMagnets(item.magnet);
+                    if (!magnets.length) return;
+                    const entry = magnets[0];
+                    const mid = CODE_LIBRARY.magnetId(entry) || '0';
+                    actions.previewMagnet(code, mid, { force: true });
+                }
             };
 
+            const kbdRef = useRef(null);
+            kbdRef.current = (e) => {
+                if (!st.visible) return;
+                // 灯箱打开时由 MAGNET_PREVIEW 处理键盘，不劫持
+                if (MAGNET_PREVIEW._open) return;
+                const key = e.key;
+                if (key === 'Escape') {
+                    if (st.helpOpen) { e.preventDefault(); actions.toggleHelp(); return; }
+                    if (st.prompt) { e.preventDefault(); actions.cancelPrompt(); return; }
+                    if (st.confirm) { e.preventDefault(); actions.cancelConfirm(); return; }
+                    if (st.magnetSearch) { e.preventDefault(); actions.closeMagnetSearch(); return; }
+                    if (st.detail) { e.preventDefault(); actions.closeDetail(); return; }
+                    e.preventDefault(); actions.hidePanel(); return;
+                }
+                // 文本输入焦点时不劫持快捷键
+                const ae = document.activeElement;
+                if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+                if (key === '?') { e.preventDefault(); actions.toggleHelp(); return; }
+                if (st.helpOpen || st.prompt || st.confirm || st.magnetSearch || st.batchProgress) return;
+                if (st.detail) {
+                    if (key === 'r' || key === 'R') { e.preventDefault(); actions.kbdRefreshPreview(); }
+                    return;
+                }
+                if (key === '/') { e.preventDefault(); if (searchRef.current) searchRef.current.focus(); return; }
+                if (key === 'n' || key === 'N') { e.preventDefault(); actions.addCode(); return; }
+                if (key === 'ArrowDown') { e.preventDefault(); actions.kbdStep(1); return; }
+                if (key === 'ArrowUp') { e.preventDefault(); actions.kbdStep(-1); return; }
+                if (key === 'Home') { e.preventDefault(); actions.kbdJump(0); return; }
+                if (key === 'End') { e.preventDefault(); actions.kbdJump(items.length - 1); return; }
+                if (key === 'Enter') {
+                    // 面板内交互控件（按钮/链接/下拉）聚焦时，Enter 交由原生激活，避免劫持导致按钮失效
+                    if (ae && (ae.tagName === 'BUTTON' || ae.tagName === 'A' || ae.tagName === 'SELECT') && ae.closest && ae.closest('.emh-code-manager-panel')) return;
+                    e.preventDefault(); actions.kbdOpen(); return;
+                }
+                if (key === 'Delete' || key === 'Backspace') {
+                    // 仅在确有选中行（且非回收站视图）时劫持，避免无谓吞掉浏览器默认行为
+                    if (st.selectedIndex >= 0 && st.currentFilter !== 'trash' && items[st.selectedIndex]) { e.preventDefault(); actions.kbdDelete(); }
+                    return;
+                }
+                if ((e.metaKey || e.ctrlKey) && (key === 'c' || key === 'C')) {
+                    // 仅在确有选中行时劫持复制
+                    if (st.selectedIndex >= 0 && items[st.selectedIndex]) { e.preventDefault(); actions.kbdCopy(); }
+                    return;
+                }
+            };
             useEffect(() => {
-                const onKey = (e) => {
-                    if (e.key !== 'Escape' || !st.visible) return;
-                    // 灯箱打开时由 MAGNET_PREVIEW 处理 Esc，不关闭详情/面板
-                    if (MAGNET_PREVIEW._open) return;
-                    if (st.detail) { actions.closeDetail(); return; }
-                    actions.hidePanel();
-                };
+                const onKey = (e) => { if (kbdRef.current) kbdRef.current(e); };
                 document.addEventListener('keydown', onKey);
                 return () => document.removeEventListener('keydown', onKey);
-            }, [st.visible, st.detail]);
+            }, []);
 
             useEffect(() => {
                 document.body.style.overflow = st.visible ? 'hidden' : '';
@@ -2090,15 +2390,33 @@
             const q = st.searchQuery.toLowerCase();
             if (q) items = items.filter(i => i.code.toLowerCase().includes(q) || (typeof i.remarks === 'string' && i.remarks.toLowerCase().includes(q)));
 
+            // 键盘选中索引随列表变化收敛到有效范围（须在 items 计算之后）
+            useEffect(() => {
+                if (items.length === 0) {
+                    if (st.selectedIndex !== -1) PanelStore.set({ selectedIndex: -1 });
+                } else if (st.selectedIndex >= items.length) {
+                    PanelStore.set({ selectedIndex: items.length - 1 });
+                }
+            }, [items.length, st.selectedIndex]);
+
+            // 键盘选中项滚动到可视区（用 scrollTop，不用 scrollIntoView）
+            useEffect(() => {
+                if (st.selectedIndex < 0 || !contentRef.current) return;
+                const el = contentRef.current.querySelectorAll('.emh-item[data-code]')[st.selectedIndex];
+                if (!el) return;
+                const cont = contentRef.current;
+                cont.scrollTop = Math.max(0, el.offsetTop - cont.clientHeight / 2);
+            }, [st.selectedIndex]);
+
             let emptyMsg = '番号库为空，点击"添加"开始';
-            let emptyIcon = '📋';
-            if (st.currentFilter === 'favorite') { emptyMsg = '暂无关注番号'; emptyIcon = '❤️'; }
-            else if (st.currentFilter === 'watched') { emptyMsg = '暂无已看记录'; emptyIcon = '✅'; }
-            else if (st.currentFilter === 'trash') { emptyMsg = '回收站为空'; emptyIcon = '🗑️'; }
-            if (st.timeFilter) { emptyMsg = st.timeFilter === 'today' ? '今天暂无新增' : '该时间段内无记录'; emptyIcon = '📅'; }
-            if (st.magnetFilter === 'has') { emptyMsg = '没有有磁力的番号'; emptyIcon = '🧲'; }
-            else if (st.magnetFilter === 'none') { emptyMsg = '没有无磁力的番号'; emptyIcon = '📭'; }
-            if (q) { emptyMsg = `未找到匹配 "${st.searchQuery}" 的番号`; emptyIcon = '🔍'; }
+            let emptyIcon = 'library';
+            if (st.currentFilter === 'favorite') { emptyMsg = '暂无关注番号'; emptyIcon = 'favorite'; }
+            else if (st.currentFilter === 'watched') { emptyMsg = '暂无已看记录'; emptyIcon = 'watched'; }
+            else if (st.currentFilter === 'trash') { emptyMsg = '回收站为空'; emptyIcon = 'trash'; }
+            if (st.timeFilter) { emptyMsg = st.timeFilter === 'today' ? '今天暂无新增' : '该时间段内无记录'; emptyIcon = 'time'; }
+            if (st.magnetFilter === 'has') { emptyMsg = '没有有磁力的番号'; emptyIcon = 'has'; }
+            else if (st.magnetFilter === 'none') { emptyMsg = '没有无磁力的番号'; emptyIcon = 'none'; }
+            if (q) { emptyMsg = `未找到匹配 "${st.searchQuery}" 的番号`; emptyIcon = 'search'; }
 
             useEffect(() => {
                 if (!headRef.current) return;
@@ -2131,8 +2449,14 @@
                         <div class="emh-panel-backdrop" onClick=${actions.hidePanel}></div>
                         <div id="emh-code-manager-panel" class="emh-code-manager-panel visible">
                         <div class="emh-panel-header">
-                            <h2><span class="emh-panel-logo">🗂️</span> 管理中心 <span class="emh-header-count">${items.length > 0 ? `(${items.length})` : ''}</span></h2>
+                            <h2><span class="emh-panel-logo"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span> 管理中心 <span class="emh-header-count">${items.length > 0 ? `(${items.length})` : ''}</span></h2>
                             <div class="emh-panel-controls">
+                                <button class="emh-theme-toggle" title="快捷键帮助 (? )" onClick=${actions.toggleHelp}>
+                                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                                </button>
+                                <button class="emh-theme-toggle" title="切换主题（当前：${THEME.get() === 'dark' ? '深色' : THEME.get() === 'light' ? '浅色' : '跟随系统'}）" onClick=${actions.toggleTheme}>
+                                    ${THEME.get() === 'dark' ? html`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>` : THEME.get() === 'light' ? html`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>` : html`<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`}
+                                </button>
                                 <button class="emh-panel-close" title="关闭 (Esc)" onClick=${actions.hidePanel}>×</button>
                             </div>
                         </div>
@@ -2159,8 +2483,7 @@
                                           onClick=${() => PanelStore.set({ timeFilter: '7d' })}>7天</span>
                                     <span class="emh-filter-tag ${st.timeFilter === '30d' ? 'active' : ''}"
                                           onClick=${() => PanelStore.set({ timeFilter: '30d' })}>30天</span>
-                                </div>
-                                <div class="emh-filter-row">
+                                    <span class="emh-filter-divider"></span>
                                     <span class="emh-filter-tag ${st.magnetFilter === '' ? 'active' : ''}"
                                           onClick=${() => PanelStore.set({ magnetFilter: '' })}>磁力不限</span>
                                     <span class="emh-filter-tag ${st.magnetFilter === 'has' ? 'active' : ''}"
@@ -2176,17 +2499,18 @@
                                 <span class="emh-col-status">状态</span>
                                 <span class="emh-col-actions">操作</span>
                             </div>
-                            <div class="emh-panel-content ${st.multiSelectMode ? 'multi-select' : ''}">
-                                ${items.length > 0 ? items.map(item => html`
+                            <div class="emh-panel-content ${st.multiSelectMode ? 'multi-select' : ''}" ref=${contentRef}>
+                                ${items.length > 0 ? items.map((item, idx) => html`
                                     <${ItemRow} key=${item.code} item=${item} view=${rowView} multi=${st.multiSelectMode}
                                         selected=${st.selectedItems.includes(item.code)}
+                                        kbdSel=${!st.multiSelectMode && st.selectedIndex === idx}
                                         onToggle=${actions.toggleItem} onOpenDetail=${actions.openDetail}
                                         onFav=${actions.markFav} onWatch=${actions.markWatched}
                                         onUnfav=${actions.unfavorite}
                                         onDelete=${actions.deleteToTrash}
                                         onRestore=${actions.restoreFromTrash} onPurge=${actions.permanentDelete} />
                                 `) : html`
-                                    <div class="emh-empty-state"><div class="emh-empty-state-icon">${emptyIcon}</div><div>${emptyMsg}</div></div>
+                                    <div class="emh-empty-state"><div class="emh-empty-state-icon">${EMPTY_ICONS[emptyIcon] || EMPTY_ICONS.library}</div><div>${emptyMsg}</div></div>
                                 `}
                             </div>
                             ${st.multiSelectMode ? html`
@@ -2212,6 +2536,7 @@
                             <${PromptModal} promptState=${st.prompt} onSubmit=${actions.doPromptSubmit} onCancel=${actions.cancelPrompt} />
                             <${MagnetListModal} magnetSearch=${st.magnetSearch} onPick=${actions.fetchMagnetDetail} onClose=${actions.closeMagnetSearch} />
                             <${BatchProgressModal} progress=${st.batchProgress} />
+                            ${st.helpOpen ? html`<${HelpModal} onClose=${actions.toggleHelp} />` : ''}
                             ${st.detail ? (() => {
                                 const detailItem = CODE_LIBRARY.getItem(st.detail) || (trashList.find(i => i.code.toUpperCase() === st.detail.toUpperCase())) || null;
                                 const detailInTrash = detailItem ? trashList.some(i => i.code.toUpperCase() === detailItem.code.toUpperCase()) : false;
@@ -2221,6 +2546,7 @@
                                         onEditMagnetItem=${actions.editMagnetItem} onRemoveMagnet=${actions.removeMagnet}
                                         onCopyMagnetItem=${actions.copyMagnetItem}
                                         onCopyMagnet=${actions.copyMagnet} onPreviewMagnet=${actions.previewMagnet}
+                                        onPreviewMagnetAt=${actions.previewMagnetAt}
                                         onSearchMagnet=${actions.searchMagnet}
                                         onFav=${actions.markFav}
                                         onWatch=${actions.markWatched} onUnfav=${actions.unfavorite}
@@ -2259,19 +2585,19 @@
                 const btn = document.createElement('button');
                 btn.id = 'emh-code-manager-toggle';
                 btn.className = 'emh-code-manager-toggle';
-                btn.textContent = '📋 番号库';
+                btn.innerHTML = ICONS.grid + '<span>番号库</span>';
                 btn.title = '管理番号库';
                 btn.addEventListener('click', () => this.togglePanel());
                 document.body.appendChild(btn);
             },
 
             togglePanel: function() {
-                PanelStore.state.visible ? PanelStore.set({ visible: false, multiSelectMode: false, selectedItems: [] }) : PanelStore.set({ visible: true });
+                PanelStore.state.visible ? PanelStore.set({ visible: false, multiSelectMode: false, selectedItems: [], helpOpen: false }) : PanelStore.set({ visible: true });
             },
 
             showPanel: function() { PanelStore.set({ visible: true }); },
 
-            hidePanel: function() { PanelStore.set({ visible: false, multiSelectMode: false, selectedItems: [] }); },
+            hidePanel: function() { PanelStore.set({ visible: false, multiSelectMode: false, selectedItems: [], helpOpen: false }); },
 
             refreshPanelContent: function() { PanelStore.refresh(); },
 
@@ -2306,35 +2632,47 @@
                         -webkit-backdrop-filter: blur(16px) saturate(160%);
                         backdrop-filter: blur(16px) saturate(160%);
                         border-bottom: 1px solid var(--emh-border);
-                        position: relative; z-index: 1;
+                        position: relative; z-index: 1; flex-shrink: 0;
                     }
                     .emh-panel-header h2 { margin: 0; font-size: 16px; font-weight: 700; color: var(--emh-text); letter-spacing: 0.1px; display: flex; align-items: center; gap: 8px; }
-                    .emh-panel-logo { font-size: 18px; line-height: 1; }
+                    .emh-panel-logo { font-size: 18px; line-height: 1; color: var(--emh-primary); display: inline-flex; align-items: center; }
                     .emh-panel-close {
                         background: var(--emh-btn-bg); border: none; font-size: 18px; cursor: pointer; color: var(--emh-text-secondary);
                         width: 30px; height: 30px; border-radius: var(--emh-radius-sm); transition: background 0.15s, color 0.15s; line-height: 1;
                         display: inline-flex; align-items: center; justify-content: center;
                     }
                     .emh-panel-close:hover { background: var(--emh-danger-soft); color: var(--emh-danger); }
+                    .emh-panel-controls { display: inline-flex; align-items: center; gap: 6px; }
+                    .emh-theme-toggle {
+                        background: var(--emh-btn-bg); border: none; cursor: pointer; color: var(--emh-text-secondary);
+                        width: 30px; height: 30px; border-radius: var(--emh-radius-sm); transition: background 0.15s, color 0.15s; line-height: 1;
+                        display: inline-flex; align-items: center; justify-content: center;
+                    }
+                    .emh-theme-toggle:hover { background: var(--emh-primary-soft); color: var(--emh-primary); }
+                    .emh-theme-toggle:focus-visible { outline: 2px solid var(--emh-primary); outline-offset: 2px; }
+                    .emh-panel-close:focus-visible,
+                    .emh-search-clear:focus-visible,
+                    .emh-magnet-op:focus-visible { outline: 2px solid var(--emh-primary); outline-offset: 2px; }
                     .emh-header-count { font-size: 12px; font-weight: 500; color: var(--emh-text-muted); margin-left: 6px; }
                     .emh-tab-count { font-size: 11px; background: var(--emh-btn-bg); color: var(--emh-text-secondary); padding: 1px 7px; border-radius: 999px; margin-left: 5px; font-weight: 600; }
                     .emh-panel-tabs button.active .emh-tab-count { background: var(--emh-primary-soft); color: var(--emh-primary); }
-                    .emh-panel-tabs { display: flex; background: var(--emh-surface); border-bottom: 1px solid var(--emh-border); padding: 0 12px; }
+                    .emh-panel-tabs { display: flex; background: var(--emh-surface); border-bottom: 1px solid var(--emh-border); padding: 0 12px; flex-shrink: 0; }
                     .emh-panel-tabs button {
                         background: none; border: none; padding: 11px 14px; font-size: 13px; font-weight: 500;
-                        cursor: pointer; color: var(--emh-text-secondary); position: relative; transition: color 0.15s;
-                        letter-spacing: 0.1px;
+                        cursor: pointer; color: var(--emh-text-secondary); position: relative; transition: color 0.15s, background-color 0.15s;
+                        letter-spacing: 0.1px; border-radius: 8px;
                     }
-                    .emh-panel-tabs button:hover { color: var(--emh-primary); }
-                    .emh-panel-tabs button.active { color: var(--emh-primary); font-weight: 600; }
+                    .emh-panel-tabs button:hover { color: var(--emh-primary); background: var(--emh-primary-softer); }
+                    .emh-panel-tabs button:focus-visible { outline: 2px solid var(--emh-primary); outline-offset: -2px; }
+                    .emh-panel-tabs button.active { color: var(--emh-primary); font-weight: 600; background: none; }
                     .emh-panel-tabs button.active::after {
                         content: ''; position: absolute; bottom: 0; left: 12px; right: 12px;
                         height: 2.5px; background: var(--emh-primary); border-radius: 2px;
                     }
-                    .emh-panel-search { padding: 14px 20px 12px; background: var(--emh-surface); border-bottom: 1px solid var(--emh-border); }
+                    .emh-panel-search { padding: 14px 20px 12px; background: var(--emh-surface); border-bottom: 1px solid var(--emh-border); flex-shrink: 0; }
                     .emh-search-wrapper { position: relative; display: flex; }
                     .emh-search-wrapper input {
-                        flex: 1; padding: 9px 36px 9px 14px; border: 1px solid var(--emh-border);
+                        flex: 1; width: 100%; box-sizing: border-box; padding: 9px 36px 9px 14px; border: 1px solid var(--emh-border);
                         border-radius: 10px; outline: none; font-size: 13px; letter-spacing: 0.1px;
                         transition: border-color 0.15s, box-shadow 0.15s, background 0.15s; background: var(--emh-bg);
                         font-family: inherit; box-shadow: inset 0 1px 2px rgba(0,0,0,0.03); color: var(--emh-text);
@@ -2350,7 +2688,8 @@
                     }
                     .emh-search-clear:hover { background: var(--emh-btn-hover); color: var(--emh-text); }
                     .emh-search-clear.visible { display: inline-flex; }
-                    .emh-filter-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+                    .emh-filter-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+                    .emh-filter-divider { width: 1px; height: 16px; background: var(--emh-border-strong); margin: 0 2px; flex-shrink: 0; }
                     .emh-filter-tag {
                         display: inline-flex; align-items: center; justify-content: center;
                         padding: 4px 12px; border-radius: 999px; cursor: pointer;
@@ -2368,7 +2707,7 @@
                         display: flex; align-items: center; padding: 8px 20px;
                         background: var(--emh-bg); border-bottom: 1px solid var(--emh-border);
                         font-size: 11px; font-weight: 600; color: var(--emh-text-muted);
-                        text-transform: uppercase; letter-spacing: 0.5px;
+                        text-transform: uppercase; letter-spacing: 0.5px; flex-shrink: 0;
                     }
                     .emh-col-code { flex: 1; padding-left: 8px; }
                     .emh-col-status { width: 64px; text-align: center; }
@@ -2379,13 +2718,14 @@
                         flex: 1; overflow-y: auto; padding: 10px 14px;
                         background: var(--emh-bg); scrollbar-width: thin;
                         scrollbar-color: var(--emh-border-strong) transparent;
+                        position: relative;
                     }
                     .emh-panel-content::-webkit-scrollbar { width: 6px; }
                     .emh-panel-content::-webkit-scrollbar-thumb { background: var(--emh-border-strong); border-radius: 3px; }
                     .emh-panel-content::-webkit-scrollbar-track { background: transparent; }
                     .emh-panel-actions, .emh-panel-multi-actions {
                         padding: 12px 20px; display: flex; gap: 10px; align-items: stretch;
-                        border-top: 1px solid var(--emh-border);
+                        border-top: 1px solid var(--emh-border); flex-shrink: 0;
                         background: var(--emh-glass);
                         -webkit-backdrop-filter: blur(16px) saturate(160%);
                         backdrop-filter: blur(16px) saturate(160%);
@@ -2408,6 +2748,7 @@
                     .emh-item.favorite { border-left: 3px solid var(--emh-danger); }
                     .emh-item.watched { border-left: 3px solid var(--emh-success); }
                     .emh-item.selected { background: var(--emh-primary-soft); border-color: var(--emh-primary); box-shadow: 0 0 0 1px var(--emh-focus-ring); }
+                    .emh-item.kbd-sel { border-color: var(--emh-primary); box-shadow: 0 0 0 2px var(--emh-focus-ring); }
                     .emh-item-code {
                         font-weight: 600; color: var(--emh-text); font-size: 13px;
                         font-family: var(--emh-font-mono); letter-spacing: 0.1px;
@@ -2451,8 +2792,8 @@
                     .emh-panel-content.multi-select .emh-list-header .emh-col-actions { display: none; }
                     .emh-status-tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 9px; border-radius: 999px; line-height: 1.7; white-space: nowrap; letter-spacing: 0.1px; border: 1px solid transparent; }
                     .emh-status-tag.unmarked { background: var(--emh-btn-bg); color: var(--emh-text-secondary); border-color: var(--emh-border); }
-                    .emh-status-tag.favorite { background: var(--emh-danger-soft); color: var(--emh-danger); border-color: rgba(220, 38, 38, 0.15); }
-                    .emh-status-tag.watched { background: var(--emh-success-soft); color: var(--emh-success); border-color: rgba(5, 150, 105, 0.15); }
+                    .emh-status-tag.favorite { background: var(--emh-danger-soft); color: var(--emh-danger); border-color: var(--emh-danger-soft); }
+                    .emh-status-tag.watched { background: var(--emh-success-soft); color: var(--emh-success); border-color: var(--emh-success-soft); }
                     .emh-empty-state { text-align: center; color: var(--emh-text-muted); padding: 48px 0; font-size: 13px; letter-spacing: 0.2px; }
                     .emh-empty-state-icon { font-size: 36px; margin-bottom: 10px; opacity: 0.45; }
                     .emh-panel-content .emh-item { animation: emh-item-in 0.18s ease both; }
@@ -2461,17 +2802,19 @@
                     .emh-panel-content .emh-item:nth-child(3) { animation-delay: 0.04s; }
                     .emh-panel-content .emh-item:nth-child(4) { animation-delay: 0.06s; }
                     .emh-panel-content .emh-item:nth-child(5) { animation-delay: 0.08s; }
-                    @keyframes emh-item-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+                    @keyframes emh-item-in { from { opacity: 0; } to { opacity: 1; } }
                     .emh-panel-modal {
                         position: absolute; top: 0; left: 0; right: 0; bottom: 0;
                         background: var(--emh-overlay); display: none; justify-content: center; align-items: center;
                         z-index: 10014; backdrop-filter: blur(2px);
                     }
                     .emh-panel-modal-content {
-                        background: var(--emh-surface); padding: 24px; border-radius: var(--emh-radius);
+                        background: var(--emh-surface-raised); padding: 24px; border-radius: var(--emh-radius);
                         width: 80%; max-width: 320px; text-align: center;
                         box-shadow: var(--emh-shadow-lg); border: 1px solid var(--emh-border);
+                        animation: emh-modal-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
                     }
+                    @keyframes emh-modal-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
                     .emh-panel-modal-content h3 { margin: 0 0 18px 0; color: var(--emh-text); font-size: 15px; font-weight: 600; line-height: 1.5; }
                     .emh-prompt-input {
                         width: 100%; box-sizing: border-box; padding: 9px 12px;
@@ -2482,6 +2825,17 @@
                     .emh-prompt-input:focus { border-color: var(--emh-primary); box-shadow: 0 0 0 3px var(--emh-focus-ring); background: var(--emh-surface); }
                     .emh-panel-modal-buttons { display: flex; justify-content: center; gap: 12px; margin-top: 18px; }
                     .emh-panel-modal-buttons .btn { margin-left: 0; min-height: 36px; }
+                    .emh-help-modal-content { max-width: 360px; text-align: left; }
+                    .emh-help-list { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+                    .emh-help-list li { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--emh-text); }
+                    .emh-kbd-chip {
+                        display: inline-flex; align-items: center; justify-content: center;
+                        min-width: 36px; padding: 2px 8px; border-radius: 6px;
+                        font-family: var(--emh-font-mono); font-size: 11px; font-weight: 600;
+                        color: var(--emh-primary); background: var(--emh-btn-bg); border: 1px solid var(--emh-border);
+                        white-space: nowrap; flex-shrink: 0;
+                    }
+                    .emh-help-desc { color: var(--emh-text-secondary); }
                     .emh-selected-count { align-self: center; font-size: 12px; font-weight: 600; color: var(--emh-primary); letter-spacing: 0.2px; white-space: nowrap; }
                     .emh-detail-backdrop {
                         position: absolute; top: 0; left: 0; right: 0; bottom: 0;
@@ -2503,7 +2857,7 @@
                     .emh-detail-header {
                         display: flex; justify-content: space-between; align-items: center;
                         padding: 16px 20px; border-bottom: 1px solid var(--emh-border);
-                        background: var(--emh-glass);
+                        background: var(--emh-glass); flex-shrink: 0;
                         -webkit-backdrop-filter: blur(16px) saturate(160%);
                         backdrop-filter: blur(16px) saturate(160%);
                     }
@@ -2514,7 +2868,10 @@
                         font-variant-numeric: tabular-nums;
                         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
                     }
-                    .emh-detail-body { flex: 1; overflow-y: auto; padding: 16px 20px; background: var(--emh-bg); }
+                    .emh-detail-body { flex: 1; overflow-y: auto; padding: 16px 20px; background: var(--emh-bg); scrollbar-width: thin; scrollbar-color: var(--emh-border-strong) transparent; }
+                    .emh-detail-body::-webkit-scrollbar { width: 6px; }
+                    .emh-detail-body::-webkit-scrollbar-thumb { background: var(--emh-border-strong); border-radius: 3px; }
+                    .emh-detail-body::-webkit-scrollbar-track { background: transparent; }
                     .emh-detail-field {
                         display: flex; flex-direction: column; gap: 4px; padding: 10px 0;
                         border-bottom: 1px solid var(--emh-border);
@@ -2547,7 +2904,10 @@
                     .emh-batch-stat-fail { color: var(--emh-danger); }
                     .emh-magnet-loading { padding: 24px 0; text-align: center; color: var(--emh-text-muted); font-size: 13px; }
                     .emh-magnet-error { padding: 24px 0; text-align: center; color: var(--emh-danger); font-size: 13px; }
-                    .emh-magnet-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; max-height: 45vh; }
+                    .emh-magnet-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; max-height: 45vh; scrollbar-width: thin; scrollbar-color: var(--emh-border-strong) transparent; }
+                    .emh-magnet-list::-webkit-scrollbar { width: 6px; }
+                    .emh-magnet-list::-webkit-scrollbar-thumb { background: var(--emh-border-strong); border-radius: 3px; }
+                    .emh-magnet-list::-webkit-scrollbar-track { background: transparent; }
                     .emh-magnet-item {
                         display: flex; align-items: center; justify-content: space-between; gap: 10px;
                         padding: 9px 12px; margin-bottom: 4px; border-radius: var(--emh-radius-sm);
@@ -2562,7 +2922,7 @@
                     .emh-magnet-item-size { font-size: 12px; color: var(--emh-text-muted); white-space: nowrap; }
                     .emh-magnet-hint { margin-top: 10px; text-align: center; font-size: 12px; color: var(--emh-text-muted); }
                     .emh-magnet-item-static {
-                        display: flex; align-items: flex-start; gap: 8px;
+                        display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap;
                         padding: 6px 8px; margin-bottom: 3px; border-radius: 6px;
                         background: var(--emh-bg); border: 1px solid var(--emh-border);
                     }
@@ -2577,14 +2937,16 @@
                     }
                     .emh-magnet-item-ops { flex-shrink: 0; display: inline-flex; gap: 2px; align-items: center; }
                     .emh-magnet-op {
-                        background: none; border: none; cursor: pointer; padding: 3px 5px;
-                        border-radius: 5px; font-size: 12px; line-height: 1;
+                        background: none; border: none; cursor: pointer; padding: 0;
+                        width: 24px; height: 24px; min-width: 24px; min-height: 24px;
+                        border-radius: 6px; font-size: 12px; line-height: 1;
+                        display: inline-flex; align-items: center; justify-content: center;
                         color: var(--emh-text-muted); transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease; opacity: 0.7;
                     }
                     .emh-magnet-op:hover { opacity: 1; background: var(--emh-btn-hover); color: var(--emh-primary); }
                     .emh-magnet-op-del:hover { background: var(--emh-danger-soft); color: var(--emh-danger); }
                     .emh-magnet-op-preview {
-                        position: relative; min-width: 22px;
+                        position: relative;
                     }
                     .emh-magnet-op-preview.has-cache { color: var(--emh-primary); opacity: 0.95; }
                     .emh-magnet-op-preview:hover { color: var(--emh-primary); }
@@ -2594,6 +2956,32 @@
                         border-radius: 999px; font-size: 9px; font-weight: 700; line-height: 12px;
                         background: var(--emh-primary); color: var(--emh-on-primary);
                         text-align: center; pointer-events: none;
+                    }
+                    .emh-preview-grid {
+                        flex: 1 1 100%; display: grid;
+                        grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+                        gap: 6px; margin-top: 8px; padding-top: 8px;
+                        border-top: 1px dashed var(--emh-border);
+                    }
+                    .emh-preview-cell {
+                        position: relative; padding: 0; border: none; cursor: pointer;
+                        border-radius: 6px; overflow: hidden; background: var(--emh-surface-raised);
+                        aspect-ratio: 16 / 9; display: block; width: 100%;
+                        transition: opacity 0.15s ease, transform 0.15s ease;
+                    }
+                    .emh-preview-cell:hover { transform: translateY(-1px); }
+                    .emh-preview-cell:focus-visible { outline: 2px solid var(--emh-primary); outline-offset: 2px; }
+                    .emh-preview-thumb {
+                        position: absolute; inset: 0;
+                        background-position: center; background-size: cover; background-repeat: no-repeat;
+                        background-color: var(--emh-surface-raised);
+                    }
+                    .emh-preview-time {
+                        position: absolute; right: 3px; top: 3px;
+                        font-family: var(--emh-font-mono); font-size: 9px; font-weight: 600; line-height: 1;
+                        padding: 2px 4px; border-radius: 4px;
+                        background: rgba(0, 0, 0, 0.6); color: #fff;
+                        pointer-events: none;
                     }
                     .emh-detail-meta {
                         padding: 10px 20px;
@@ -2610,7 +2998,7 @@
                     }
                     .emh-detail-actions {
                         padding: 14px 20px; border-top: 1px solid var(--emh-border);
-                        display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+                        display: grid; grid-template-columns: 1fr 1fr; gap: 8px; flex-shrink: 0;
                         background: var(--emh-glass);
                         -webkit-backdrop-filter: blur(16px) saturate(160%);
                         backdrop-filter: blur(16px) saturate(160%);
@@ -2618,7 +3006,7 @@
                     .emh-detail-actions .btn { margin-left: 0; justify-content: center; width: 100%; min-height: 36px; }
                     .emh-detail-danger {
                         padding: 12px 20px 16px; border-top: 1px solid var(--emh-danger-soft);
-                        display: flex; gap: 8px; background: var(--emh-danger-soft);
+                        display: flex; gap: 8px; background: var(--emh-danger-soft); flex-shrink: 0;
                     }
                     .emh-detail-danger .btn { margin-left: 0; justify-content: center; width: 100%; color: var(--emh-danger); min-height: 36px; }
                     @media (max-width: 576px) { .emh-code-manager-panel { width: 100%; right: -100%; border-radius: 0; } }
@@ -2637,7 +3025,8 @@
                         .emh-detail-drawer,
                         .emh-detail-backdrop,
                         .emh-magnet-item,
-                        .emh-batch-progress-bar {
+                        .emh-batch-progress-bar,
+                        .emh-panel-modal-content {
                             transition: none !important;
                             animation: none !important;
                         }
@@ -2723,6 +3112,7 @@
     }
 
     function initialize() {
+        THEME.apply(THEME.get());
         CODE_LIBRARY.init();
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => main());
