@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name           Enhanced_Media_Helper
-// @version        3.4.1
-// @description    Code Manager Panel with javgg site support (Preact + htm) + magnet screenshot preview
+// @version        3.5.0
+// @description    Code Manager Panel with javgg site support (Preact + htm) + magnet screenshot preview + Linear UI
 // @author         cores
 // @match          https://javgg.net/tag/to-be-release/*
 // @match          https://javgg.net/featured/*
@@ -391,11 +391,16 @@
             }
             const existingIndex = this.data.items.findIndex(item => item.code.toUpperCase() === normalizedCode);
             if (existingIndex >= 0) {
-                this.data.items[existingIndex].status = status;
-                if (title) this.data.items[existingIndex].title = title;
-                if (remark !== undefined) this.data.items[existingIndex].remarks = remark;
-                if (magnet !== undefined) this.data.items[existingIndex].magnet = this.normMagnets(magnet);
-                this.data.items[existingIndex].modifiedDate = new Date().toISOString();
+                const cur = this.data.items[existingIndex];
+                // 不可变更新：换新对象引用，保证 memo(ItemRow) 能感知状态/备注/磁力变化
+                this.data.items[existingIndex] = {
+                    ...cur,
+                    status: status,
+                    ...(title ? { title: title } : {}),
+                    ...(remark !== undefined ? { remarks: remark } : {}),
+                    ...(magnet !== undefined ? { magnet: this.normMagnets(magnet) } : {}),
+                    modifiedDate: new Date().toISOString()
+                };
             } else {
                 this.data.items.unshift({
                     code: normalizedCode,
@@ -409,6 +414,65 @@
                 });
             }
             return this.save();
+        },
+
+        setTags: function(code, tags) {
+            if (!this.initialized) this.init();
+            if (!code) return false;
+            const rec = this.findItemRecord(code);
+            if (!rec || rec.inTrash) return false;
+            const arr = Array.isArray(tags) ? tags : (tags == null ? [] : [tags]);
+            const cleaned = [];
+            const seen = new Set();
+            for (const t of arr) {
+                const s = String(t == null ? '' : t).trim();
+                if (s && !seen.has(s.toLowerCase())) {
+                    seen.add(s.toLowerCase());
+                    cleaned.push(s);
+                }
+            }
+            rec.item.tags = cleaned;
+            rec.item.modifiedDate = new Date().toISOString();
+            return this.save();
+        },
+
+        clearAllPreviewCaches: function() {
+            if (!this.initialized) this.init();
+            let cleared = 0;
+            const scan = (list) => {
+                for (const it of list) {
+                    const ms = this.normMagnets(it && it.magnet);
+                    let changed = false;
+                    for (const m of ms) {
+                        if (m.preview) { delete m.preview; changed = true; cleared++; }
+                    }
+                    if (changed) { it.magnet = ms; }
+                }
+            };
+            scan(this.data.items);
+            scan(this.trash.items);
+            if (cleared) this.save();
+            return cleared;
+        },
+
+        previewCacheStats: function() {
+            if (!this.initialized) this.init();
+            let magnets = 0, screenshots = 0, bytes = 0;
+            const scan = (list) => {
+                for (const it of list) {
+                    const ms = this.normMagnets(it && it.magnet);
+                    for (const m of ms) {
+                        if (m.preview) {
+                            magnets++;
+                            screenshots += (Array.isArray(m.preview.screenshots) ? m.preview.screenshots.length : 0);
+                            try { bytes += JSON.stringify(m.preview).length; } catch (e) {}
+                        }
+                    }
+                }
+            };
+            scan(this.data.items);
+            scan(this.trash.items);
+            return { magnets, screenshots, bytes };
         },
 
         exportData: function(filter = 'all') {
@@ -1398,8 +1462,33 @@
     // ===== 面板工厂：依赖就绪后构建 Preact 组件 =====
     function buildPanel() {
         const { h, render, Fragment } = getGlobal('preact');
-        const { useEffect, useRef, useReducer } = getGlobal('preactHooks');
+        const { useEffect, useRef, useReducer, useState, useCallback } = getGlobal('preactHooks');
         const html = getGlobal('htm').bind(h);
+
+        // 注意：preact.umd.js 不导出 memo（核心包才有），用 Component.shouldComponentUpdate 实现浅比较 memo
+        const Memorize = (Comp) => class extends getGlobal('preact').Component {
+            shouldComponentUpdate(nextProps) {
+                const cur = this.props;
+                for (const k in nextProps) {
+                    if (Object.prototype.hasOwnProperty.call(nextProps, k) && nextProps[k] !== cur[k]) return true;
+                }
+                return false;
+            }
+            render() { return h(Comp, this.props); }
+        };
+
+        // 通用按钮图标（VNode，可直接插值到 htm JSX）
+        const ICON = {
+            heart: html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`,
+            check: html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
+            checkCircle: html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`,
+            trash: html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
+            restore: html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>`,
+            edit: html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>`,
+            search: html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
+            copy: html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
+            unfav: html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`
+        };
 
         // 状态存储
         const PanelStore = {
@@ -1419,6 +1508,7 @@
                 toasts: [],
                 selectedIndex: -1,
                 helpOpen: false,
+                menuOpen: false,
                 lastSyncTimestamp: null,
                 revision: 0
             },
@@ -1567,14 +1657,27 @@
                         ` : ''}
                         ${progress.skipped || progress.failed ? html`
                             <div class="emh-batch-stats">
-                                ${progress.skipped ? html`<span class="emh-batch-stat">⏭ 跳过 ${progress.skipped}</span>` : ''}
-                                ${progress.failed ? html`<span class="emh-batch-stat emh-batch-stat-fail">✕ 失败 ${progress.failed}</span>` : ''}
+                                ${progress.skipped ? html`<span class="emh-batch-stat">跳过 ${progress.skipped}</span>` : ''}
+                                ${progress.failed ? html`<span class="emh-batch-stat emh-batch-stat-fail">失败 ${progress.failed}</span>` : ''}
                             </div>
                         ` : ''}
                         <div class="emh-panel-modal-buttons">
-                            <button class="btn btn-outline emh-panel-modal-cancel" onClick=${() => {}} disabled>处理中...</button>
+                            <button class="btn btn-outline emh-panel-modal-cancel" disabled>处理中…</button>
                         </div>
                     </div>
+                </div>
+            `;
+        }
+
+        function HeaderMenu({ onClose, onClear, stats }) {
+            return html`
+                <div class="emh-header-menu-backdrop" onClick=${onClose}></div>
+                <div class="emh-header-menu">
+                    <div class="emh-header-menu-title">预览缓存</div>
+                    ${stats ? html`
+                        <div class="emh-header-menu-stat">已缓存 ${stats.magnets} 条磁力 · ${stats.screenshots} 张截图 · ${UTILS.formatBytes(stats.bytes)}</div>
+                    ` : ''}
+                    <button type="button" class="emh-header-menu-item" onClick=${onClear}>清除全部预览缓存</button>
                 </div>
             `;
         }
@@ -1660,6 +1763,9 @@
             `;
         }
 
+        // memo 化：仅当 item/selected/kbdSel/view/multi 或稳定回调变化时重建行
+        const ItemRowMemo = Memorize(ItemRow);
+
         function ConfirmModal({ confirm, onConfirm, onCancel }) {
             if (!confirm) return null;
             const confirmBtnClass = confirm.danger === 'soft'
@@ -1678,7 +1784,7 @@
             `;
         }
 
-        function DetailDrawer({ item, inTrash, onClose, onEdit, onEditMagnet, onEditMagnetItem, onRemoveMagnet, onCopyMagnet, onCopyMagnetItem, onPreviewMagnet, onPreviewMagnetAt, onSearchMagnet, onFav, onWatch, onUnfav, onDelete, onRestore, onPurge }) {
+        function DetailDrawer({ item, inTrash, onClose, onEdit, onEditTags, onEditMagnet, onEditMagnetItem, onRemoveMagnet, onCopyMagnet, onCopyMagnetItem, onPreviewMagnet, onPreviewMagnetAt, onSearchMagnet, onFav, onWatch, onUnfav, onDelete, onRestore, onPurge }) {
             const drawerBodyRef = useRef(null);
             // 宫格缩略图懒加载
             useEffect(() => {
@@ -1691,6 +1797,14 @@
             const deleted = item.deleteDate ? new Date(item.deleteDate).toLocaleString() : '';
             const magnets = CODE_LIBRARY.normMagnets(item.magnet);
             const metaParts = [created ? `创建 ${created}` : '', modified ? `更新 ${modified}` : ''].filter(Boolean);
+            const tagList = [];
+            (function extract(input) {
+                if (input == null) return;
+                if (Array.isArray(input)) return input.forEach(extract);
+                if (typeof input === 'string') { if (input.trim()) tagList.push(input.trim()); return; }
+                if (typeof input === 'number') { tagList.push(String(input)); return; }
+                if (typeof input === 'object' && input.value != null) extract(input.value);
+            })(item.tags);
             return html`
                 <div class="emh-detail-backdrop" onClick=${onClose}></div>
                 <div class="emh-detail-drawer">
@@ -1711,6 +1825,17 @@
                         <div class="emh-detail-field">
                             <span class="emh-detail-label">备注</span>
                             <span class="emh-detail-value ${item.remarks ? '' : 'emh-detail-empty'}">${typeof item.remarks === 'string' && item.remarks ? item.remarks : '暂无备注'}</span>
+                        </div>
+                        <div class="emh-detail-field">
+                            <span class="emh-detail-label">标签</span>
+                            <div class="emh-detail-tags">
+                                ${tagList.length ? tagList.map(t => html`<span class="emh-detail-tag">#${t}</span>`) : html`<span class="emh-detail-value emh-detail-empty">暂无标签</span>`}
+                                ${!inTrash ? html`
+                                    <button class="emh-magnet-op emh-tag-edit" title="编辑标签" aria-label="编辑标签" onClick=${() => onEditTags(item.code)}>
+                                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                                    </button>
+                                ` : ''}
+                            </div>
                         </div>
                         <div class="emh-detail-field">
                             <span class="emh-detail-label">磁力链接 ${magnets.length ? `(${magnets.length})` : ''}</span>
@@ -1763,17 +1888,17 @@
                                     })}
                                 </ul>
                                 <span class="emh-magnet-actions">
-                                    <button class="btn btn-outline emh-magnet-btn" onClick=${() => onCopyMagnet(item.code)}>📋 复制全部</button>
+                                    <button class="btn btn-outline emh-magnet-btn" onClick=${() => onCopyMagnet(item.code)}>${ICON.copy} 复制全部</button>
                                     ${!inTrash ? html`
-                                        <button class="btn btn-outline emh-magnet-btn" onClick=${() => onSearchMagnet(item.code)}>🔍 搜索</button>
+                                        <button class="btn btn-outline emh-magnet-btn" onClick=${() => onSearchMagnet(item.code)}>${ICON.search} 搜索</button>
                                     ` : null}
                                 </span>
                             ` : html`
                                 <span class="emh-detail-value emh-detail-empty">暂无磁力链接</span>
                                 ${!inTrash ? html`
                                     <span class="emh-magnet-actions">
-                                        <button class="btn btn-outline emh-magnet-btn" onClick=${() => onSearchMagnet(item.code)}>🔍 搜索磁力</button>
-                                        <button class="btn btn-outline emh-magnet-btn" onClick=${() => onEditMagnet(item.code)}>✏️ 手动添加</button>
+                                        <button class="btn btn-outline emh-magnet-btn" onClick=${() => onSearchMagnet(item.code)}>${ICON.search} 搜索磁力</button>
+                                        <button class="btn btn-outline emh-magnet-btn" onClick=${() => onEditMagnet(item.code)}>${ICON.edit} 手动添加</button>
                                     </span>
                                 ` : null}
                             `}
@@ -1787,39 +1912,27 @@
                     </div>
                     <div class="emh-detail-meta">
                         ${metaParts.length ? html`<div>${metaParts.join(' · ')}</div>` : ''}
-                        ${(() => {
-                            const extractTags = (input, out) => {
-                                if (input == null) return;
-                                if (Array.isArray(input)) { input.forEach(x => extractTags(x, out)); return; }
-                                if (typeof input === 'string') { if (input.trim()) out.push(input.trim()); return; }
-                                if (typeof input === 'number') { out.push(String(input)); return; }
-                                if (typeof input === 'object' && input.value != null) { extractTags(input.value, out); return; }
-                            };
-                            const tagList = [];
-                            extractTags(item.tags, tagList);
-                            return tagList.length ? html`<div class="emh-detail-meta-tags">${tagList.map(t => html`<span class="emh-detail-tag">#${t}</span>`)}</div>` : '';
-                        })()}
                     </div>
                     <div class="emh-detail-actions">
                         ${!inTrash ? html`
-                            <button class="btn btn-outline" onClick=${() => onEdit(item.code)}>✏️ 编辑备注</button>
+                            <button class="btn btn-outline" onClick=${() => onEdit(item.code)}>${ICON.edit} 编辑备注</button>
                         ` : null}
                         ${inTrash ? html`
-                            <button class="btn btn-outline" onClick=${() => onRestore(item.code)}>↩ 恢复</button>
-                            <button class="btn my-btn-danger" onClick=${() => onPurge(item.code)}>🗑️ 彻底删除</button>
+                            <button class="btn btn-outline" onClick=${() => onRestore(item.code)}>${ICON.restore} 恢复</button>
+                            <button class="btn my-btn-danger" onClick=${() => onPurge(item.code)}>${ICON.trash} 彻底删除</button>
                         ` : item.status === 'unmarked' ? html`
-                            <button class="btn btn-outline" onClick=${() => onFav(item.code)}>❤️ 关注</button>
-                            <button class="btn btn-outline" onClick=${() => onWatch(item.code)}>✓ 标记已看</button>
+                            <button class="btn btn-outline" onClick=${() => onFav(item.code)}>${ICON.heart} 关注</button>
+                            <button class="btn btn-outline" onClick=${() => onWatch(item.code)}>${ICON.checkCircle} 标记已看</button>
                         ` : item.status === 'favorite' ? html`
-                            <button class="btn btn-outline" onClick=${() => onWatch(item.code)}>✓ 标记已看</button>
-                            <button class="btn btn-outline" onClick=${() => onUnfav(item.code)}>⤺ 取消关注</button>
+                            <button class="btn btn-outline" onClick=${() => onWatch(item.code)}>${ICON.checkCircle} 标记已看</button>
+                            <button class="btn btn-outline" onClick=${() => onUnfav(item.code)}>${ICON.unfav} 取消关注</button>
                         ` : html`
-                            <button class="btn my-btn-danger" onClick=${() => onDelete(item.code)}>🗑️ 删除到回收站</button>
+                            <button class="btn my-btn-danger" onClick=${() => onDelete(item.code)}>${ICON.trash} 删除到回收站</button>
                         `}
                     </div>
                     ${!inTrash && item.status !== 'watched' ? html`
                         <div class="emh-detail-danger">
-                            <button class="btn btn-outline" onClick=${() => onDelete(item.code)}>🗑️ 删除到回收站</button>
+                            <button class="btn btn-outline" onClick=${() => onDelete(item.code)}>${ICON.trash} 删除到回收站</button>
                         </div>
                     ` : null}
                 </div>
@@ -1831,6 +1944,29 @@
             const headRef = useRef(null);
             const searchRef = useRef(null);
             const contentRef = useRef(null);
+            const actionsRef = useRef(null);
+            const debounceRef = useRef(null);
+            const [searchDraft, setSearchDraft] = useState('');
+
+            // 搜索防抖：200ms 后才写 store，避免逐字符全量重渲染
+            const onSearchInput = (e) => {
+                const v = e.target.value;
+                setSearchDraft(v);
+                if (debounceRef.current) clearTimeout(debounceRef.current);
+                debounceRef.current = setTimeout(() => {
+                    debounceRef.current = null;
+                    PanelStore.set({ searchQuery: v });
+                }, 200);
+            };
+            const clearSearch = () => {
+                if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null; }
+                setSearchDraft('');
+                PanelStore.set({ searchQuery: '' });
+                if (searchRef.current) searchRef.current.focus();
+            };
+            useEffect(() => {
+                return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+            }, []);
 
             useEffect(() => {
                 const unsub = PanelStore.subscribe(() => forceUpdate());
@@ -1839,8 +1975,13 @@
 
             const st = PanelStore.get();
 
+            // store 的 searchQuery 外部变化（清空/同步）时回写草稿
+            useEffect(() => {
+                setSearchDraft(st.searchQuery);
+            }, [st.searchQuery]);
+
             const actions = {
-                hidePanel: () => PanelStore.set({ visible: false, multiSelectMode: false, selectedItems: [], helpOpen: false }),
+                hidePanel: () => PanelStore.set({ visible: false, multiSelectMode: false, selectedItems: [], helpOpen: false, menuOpen: false }),
                 setFilter: (f) => PanelStore.set({ currentFilter: f, timeFilter: f === 'all' ? st.timeFilter : '', multiSelectMode: false, selectedItems: [], selectedIndex: -1 }),
                 toggleMulti: () => PanelStore.set({ multiSelectMode: !st.multiSelectMode, selectedItems: [], selectedIndex: -1 }),
                 toggleItem: (code) => {
@@ -1867,6 +2008,30 @@
                             if (remark !== null) {
                                 CODE_LIBRARY.markItem(code, cur.status || 'unmarked', undefined, remark);
                                 UTILS.showToast('备注已更新', 'success');
+                            }
+                        }
+                    } });
+                },
+                editTags: (code) => {
+                    const cur = CODE_LIBRARY.getItem(code);
+                    if (!cur) { UTILS.showToast('回收站条目请先恢复再编辑标签', 'warning'); return; }
+                    const list = [];
+                    (function extract(input) {
+                        if (input == null) return;
+                        if (Array.isArray(input)) return input.forEach(extract);
+                        if (typeof input === 'string') { if (input.trim()) list.push(input.trim()); return; }
+                        if (typeof input === 'number') { list.push(String(input)); return; }
+                        if (typeof input === 'object' && input.value != null) extract(input.value);
+                    })(cur.tags);
+                    PanelStore.set({ prompt: {
+                        title: `编辑标签 (${code})`,
+                        initial: list.join(', '),
+                        placeholder: '多个标签用逗号分隔',
+                        onSubmit: (val) => {
+                            if (val !== null) {
+                                const arr = String(val).split(/[,，、]/).map(s => s.trim()).filter(Boolean);
+                                CODE_LIBRARY.setTags(code, arr);
+                                UTILS.showToast('标签已更新', 'success');
                             }
                         }
                     } });
@@ -2273,6 +2438,18 @@
                 closeDetail: () => PanelStore.set({ detail: null }),
                 toggleTheme: () => { THEME.set(THEME.next()); PanelStore.set({}); },
                 toggleHelp: () => PanelStore.set({ helpOpen: !PanelStore.state.helpOpen }),
+                toggleMenu: () => PanelStore.set({ menuOpen: !PanelStore.state.menuOpen }),
+                clearPreviewCaches: () => {
+                    const s = CODE_LIBRARY.previewCacheStats();
+                    PanelStore.set({ menuOpen: false, confirm: {
+                        message: `确定清除全部预览缓存（${s.magnets} 条磁力 / ${s.screenshots} 张截图）？之后可重新拉取。`,
+                        danger: 'soft',
+                        onConfirm: () => {
+                            const n = CODE_LIBRARY.clearAllPreviewCaches();
+                            UTILS.showToast(`已清除 ${n} 条磁力的预览缓存`, 'success');
+                        }
+                    } });
+                },
                 kbdStep: (delta) => {
                     const len = items.length;
                     if (!len) return;
@@ -2309,6 +2486,17 @@
                 }
             };
 
+            // actions 每次渲染重建；经 ref 转发给稳定回调，保证 memo(ItemRow) 生效且无过期闭包
+            actionsRef.current = actions;
+            const stableOnToggle = useCallback((code) => actionsRef.current.toggleItem(code), []);
+            const stableOnOpenDetail = useCallback((code) => actionsRef.current.openDetail(code), []);
+            const stableOnFav = useCallback((code) => actionsRef.current.markFav(code), []);
+            const stableOnWatch = useCallback((code) => actionsRef.current.markWatched(code), []);
+            const stableOnUnfav = useCallback((code) => actionsRef.current.unfavorite(code), []);
+            const stableOnDelete = useCallback((code) => actionsRef.current.deleteToTrash(code), []);
+            const stableOnRestore = useCallback((code) => actionsRef.current.restoreFromTrash(code), []);
+            const stableOnPurge = useCallback((code) => actionsRef.current.permanentDelete(code), []);
+
             const kbdRef = useRef(null);
             kbdRef.current = (e) => {
                 if (!st.visible) return;
@@ -2316,6 +2504,7 @@
                 if (MAGNET_PREVIEW._open) return;
                 const key = e.key;
                 if (key === 'Escape') {
+                    if (st.menuOpen) { e.preventDefault(); actions.toggleMenu(); return; }
                     if (st.helpOpen) { e.preventDefault(); actions.toggleHelp(); return; }
                     if (st.prompt) { e.preventDefault(); actions.cancelPrompt(); return; }
                     if (st.confirm) { e.preventDefault(); actions.cancelConfirm(); return; }
@@ -2327,7 +2516,7 @@
                 const ae = document.activeElement;
                 if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
                 if (key === '?') { e.preventDefault(); actions.toggleHelp(); return; }
-                if (st.helpOpen || st.prompt || st.confirm || st.magnetSearch || st.batchProgress) return;
+                if (st.helpOpen || st.menuOpen || st.prompt || st.confirm || st.magnetSearch || st.batchProgress) return;
                 if (st.detail) {
                     if (key === 'r' || key === 'R') { e.preventDefault(); actions.kbdRefreshPreview(); }
                     return;
@@ -2451,6 +2640,9 @@
                         <div class="emh-panel-header">
                             <h2><span class="emh-panel-logo"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span> 管理中心 <span class="emh-header-count">${items.length > 0 ? `(${items.length})` : ''}</span></h2>
                             <div class="emh-panel-controls">
+                                <button class="emh-theme-toggle" title="更多选项" onClick=${actions.toggleMenu}>
+                                    <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
+                                </button>
                                 <button class="emh-theme-toggle" title="快捷键帮助 (? )" onClick=${actions.toggleHelp}>
                                     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                                 </button>
@@ -2468,11 +2660,11 @@
                             </div>
                             <div class="emh-panel-search">
                                 <div class="emh-search-wrapper">
-                                    <input ref=${searchRef} type="text" placeholder="🔍 搜索番号或备注..."
-                                           value=${st.searchQuery}
-                                           onInput=${e => PanelStore.set({ searchQuery: e.target.value })} />
-                                    <button class="emh-search-clear ${st.searchQuery ? 'visible' : ''}" title="清除"
-                                            onClick=${() => { PanelStore.set({ searchQuery: '' }); if (searchRef.current) searchRef.current.focus(); }}>×</button>
+                                    <input ref=${searchRef} type="text" placeholder="搜索番号或备注…"
+                                           value=${searchDraft}
+                                           onInput=${onSearchInput} />
+                                    <button class="emh-search-clear ${searchDraft ? 'visible' : ''}" title="清除"
+                                            onClick=${clearSearch}>×</button>
                                 </div>
                                 <div class="emh-filter-row">
                                     <span class="emh-filter-tag ${st.timeFilter === '' ? 'active' : ''}"
@@ -2501,14 +2693,14 @@
                             </div>
                             <div class="emh-panel-content ${st.multiSelectMode ? 'multi-select' : ''}" ref=${contentRef}>
                                 ${items.length > 0 ? items.map((item, idx) => html`
-                                    <${ItemRow} key=${item.code} item=${item} view=${rowView} multi=${st.multiSelectMode}
+                                    <${ItemRowMemo} key=${item.code} item=${item} view=${rowView} multi=${st.multiSelectMode}
                                         selected=${st.selectedItems.includes(item.code)}
                                         kbdSel=${!st.multiSelectMode && st.selectedIndex === idx}
-                                        onToggle=${actions.toggleItem} onOpenDetail=${actions.openDetail}
-                                        onFav=${actions.markFav} onWatch=${actions.markWatched}
-                                        onUnfav=${actions.unfavorite}
-                                        onDelete=${actions.deleteToTrash}
-                                        onRestore=${actions.restoreFromTrash} onPurge=${actions.permanentDelete} />
+                                        onToggle=${stableOnToggle} onOpenDetail=${stableOnOpenDetail}
+                                        onFav=${stableOnFav} onWatch=${stableOnWatch}
+                                        onUnfav=${stableOnUnfav}
+                                        onDelete=${stableOnDelete}
+                                        onRestore=${stableOnRestore} onPurge=${stableOnPurge} />
                                 `) : html`
                                     <div class="emh-empty-state"><div class="emh-empty-state-icon">${EMPTY_ICONS[emptyIcon] || EMPTY_ICONS.library}</div><div>${emptyMsg}</div></div>
                                 `}
@@ -2537,12 +2729,14 @@
                             <${MagnetListModal} magnetSearch=${st.magnetSearch} onPick=${actions.fetchMagnetDetail} onClose=${actions.closeMagnetSearch} />
                             <${BatchProgressModal} progress=${st.batchProgress} />
                             ${st.helpOpen ? html`<${HelpModal} onClose=${actions.toggleHelp} />` : ''}
+                            ${st.menuOpen ? html`<${HeaderMenu} onClose=${actions.toggleMenu} onClear=${actions.clearPreviewCaches} stats=${CODE_LIBRARY.previewCacheStats()} />` : ''}
                             ${st.detail ? (() => {
                                 const detailItem = CODE_LIBRARY.getItem(st.detail) || (trashList.find(i => i.code.toUpperCase() === st.detail.toUpperCase())) || null;
                                 const detailInTrash = detailItem ? trashList.some(i => i.code.toUpperCase() === detailItem.code.toUpperCase()) : false;
                                 return detailItem ? html`
                                     <${DetailDrawer} item=${detailItem} inTrash=${detailInTrash} onClose=${actions.closeDetail}
-                                        onEdit=${actions.editRemark} onEditMagnet=${actions.editMagnet}
+                                        onEdit=${actions.editRemark} onEditTags=${actions.editTags}
+                                        onEditMagnet=${actions.editMagnet}
                                         onEditMagnetItem=${actions.editMagnetItem} onRemoveMagnet=${actions.removeMagnet}
                                         onCopyMagnetItem=${actions.copyMagnetItem}
                                         onCopyMagnet=${actions.copyMagnet} onPreviewMagnet=${actions.previewMagnet}
@@ -2650,6 +2844,23 @@
                     }
                     .emh-theme-toggle:hover { background: var(--emh-primary-soft); color: var(--emh-primary); }
                     .emh-theme-toggle:focus-visible { outline: 2px solid var(--emh-primary); outline-offset: 2px; }
+                    .emh-header-menu-backdrop { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 10011; background: transparent; }
+                    .emh-header-menu {
+                        position: absolute; top: 48px; right: 12px; z-index: 10012;
+                        min-width: 224px; padding: 8px; border-radius: var(--emh-radius);
+                        background: var(--emh-surface-raised); border: 1px solid var(--emh-border);
+                        box-shadow: var(--emh-shadow-lg);
+                        animation: emh-modal-in 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+                    }
+                    .emh-header-menu-title { font-size: 11px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; color: var(--emh-text-muted); padding: 4px 8px 6px; }
+                    .emh-header-menu-stat { font-size: 12px; color: var(--emh-text-secondary); padding: 2px 8px 8px; line-height: 1.5; }
+                    .emh-header-menu-item {
+                        display: block; width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px;
+                        border: none; background: none; cursor: pointer; font-size: 13px; color: var(--emh-text);
+                        transition: background 0.15s, color 0.15s;
+                    }
+                    .emh-header-menu-item:hover { background: var(--emh-danger-soft); color: var(--emh-danger); }
+                    .emh-header-menu-item:focus-visible { outline: 2px solid var(--emh-primary); outline-offset: -2px; }
                     .emh-panel-close:focus-visible,
                     .emh-search-clear:focus-visible,
                     .emh-magnet-op:focus-visible { outline: 2px solid var(--emh-primary); outline-offset: 2px; }
@@ -2992,6 +3203,8 @@
                         flex-shrink: 0;
                     }
                     .emh-detail-meta-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+                    .emh-detail-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+                    .emh-tag-edit { opacity: 0.7; }
                     .emh-detail-tag {
                         font-size: 11px; padding: 1px 7px; border-radius: 999px;
                         background: var(--emh-btn-bg); color: var(--emh-text-secondary);
@@ -3026,7 +3239,8 @@
                         .emh-detail-backdrop,
                         .emh-magnet-item,
                         .emh-batch-progress-bar,
-                        .emh-panel-modal-content {
+                        .emh-panel-modal-content,
+                        .emh-header-menu {
                             transition: none !important;
                             animation: none !important;
                         }

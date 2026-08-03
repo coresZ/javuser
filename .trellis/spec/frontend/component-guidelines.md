@@ -72,6 +72,13 @@ Key components: `StatusTag`, `ItemRow`, `DetailDrawer`, `ConfirmModal`, `PromptM
 - 选中索引 clamp effect（收敛到 `[0, len-1]`）与滚动 effect 必须放在 `items` 计算/过滤**之后**（见 Common Mistakes TDZ）。
 - 快捷键 chips 样式：mono + hairline + dim bg（`.emh-kbd-chip`），`?` 帮助浮层列出全表。
 
+## List Rendering & Performance
+
+- **`preact.umd.js` 不导出 `memo`**（实证 `Object.keys(preact)` 无 memo）。行级 memo 用自定义 `Memorize`（class extends `preact.Component` + `shouldComponentUpdate` 浅比较），**不要用 `preact.memo`**。
+- memo 行要能感知数据变化：**变更必须产生新对象引用**。`markItem` 用不可变更新（`{ ...cur, status }` 替换数组元素）；增删走 splice/unshift。就地 mutate + memo 行 = 状态标签/备注不刷新。
+- **稳定回调**：`actions` 每次渲染重建，直接传 `actions.x` 会破坏 memo。用 `actionsRef.current = actions`（渲染时赋值）+ `useCallback((...a) => actionsRef.current.x(...a), [])` 委托——既稳定又无过期闭包。
+- **搜索防抖**：输入框用本地 `useState(searchDraft)` 受控（不丢焦点）；`onInput` 200ms 定时写 `PanelStore.searchQuery`；`clearSearch` 须先 `clearTimeout` 再清 store（否则 pending 定时器回填旧值）；`useEffect(() => setSearchDraft(st.searchQuery), [st.searchQuery])` 放 `const st` 之后同步外部清空。
+
 ## Accessibility
 
 - Icon buttons carry `title` + `aria-label`; 键盘选中行加 `aria-selected`。
@@ -91,7 +98,11 @@ Key components: `StatusTag`, `ItemRow`, `DetailDrawer`, `ConfirmModal`, `PromptM
 
 > **Warning**: Trash view must hide multi-select and the header checkbox. Batch-mark on trash items re-creates them in the main library via the `markItem` bug above. Clear `multiSelectMode`/`selectedItems` when switching filters.
 
-> **Warning**: z-index 层级：toggle 10000 < panel backdrop 10009 < panel 10010 < detail backdrop 10012 < drawer 10013 < modal 10014 < lightbox 10050 < **toast container 10060**。Toast 必须高于面板/灯箱，否则面板打开时 toast 被暗层盖住（历史 bug）。
+> **Warning**: z-index 层级：toggle 10000 < panel backdrop 10009 < panel 10010 < **header menu backdrop 10011 / header menu 10012** < detail backdrop 10012 < drawer 10013 < modal 10014 < lightbox 10050 < **toast container 10060**。Toast 必须高于面板/灯箱，否则面板打开时 toast 被暗层盖住（历史 bug）。Header 下拉菜单（如缓存总控 `⋯`）须纳入 Esc 链最优先关闭。
+
+> **Warning**: `preact.umd.js`（dist 构建）**不导出 `memo`**——`preact.memo` 是 undefined。行 memo 必须用自定义 `Memorize`（见 List Rendering & Performance），否则 `TypeError: memo is not a function` 崩掉整个面板。
+
+> **Warning**: `CODE_LIBRARY.setTags` / `previewCacheStats` / `clearAllPreviewCaches`：标签编辑、缓存统计与清除均应在 `CODE_LIBRARY` 层实现并 `save()` 触发同步；`clearAllPreviewCaches` 只删 `preview` 字段、**不得动 magnet value**；统计须计入 trash。清除类操作走 ConfirmModal（`danger: 'soft'`）。
 
 > **Warning**: 不要硬编码 `color: #fff` 在 primary 填充上。用 `var(--emh-on-primary)` / `var(--emh-on-solid)` token，保证主题化一致。
 
