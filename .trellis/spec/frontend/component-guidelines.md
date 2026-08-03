@@ -79,6 +79,16 @@ Key components: `StatusTag`, `ItemRow`, `DetailDrawer`, `ConfirmModal`, `PromptM
 - **稳定回调**：`actions` 每次渲染重建，直接传 `actions.x` 会破坏 memo。用 `actionsRef.current = actions`（渲染时赋值）+ `useCallback((...a) => actionsRef.current.x(...a), [])` 委托——既稳定又无过期闭包。
 - **搜索防抖**：输入框用本地 `useState(searchDraft)` 受控（不丢焦点）；`onInput` 200ms 定时写 `PanelStore.searchQuery`；`clearSearch` 须先 `clearTimeout` 再清 store（否则 pending 定时器回填旧值）；`useEffect(() => setSearchDraft(st.searchQuery), [st.searchQuery])` 放 `const st` 之后同步外部清空。
 
+## Standalone 独立页模式
+
+- **源码捕获**：主脚本末尾 `window.__EMH_SRC = __EMH_MAIN__.toString() + "\n;try { __EMH_MAIN__(); } catch (e) { console.error(e); }"` —— `fn.toString()` 返回**裸函数声明不执行**，必须追加自调用，否则子页空白（showstopper）。
+- **内联转义**：把源码嵌入子页 `<script>` 时用 `JSON.stringify(src).replace(/<\//g, '<\\/')` 在**序列化边界**转义 `</`。不能全局改源码（`<\/` 在 htm 标记模板里是 SyntaxError）。`<\/` 经 JSON 解析还原为 `/`。
+- **opener 桥**：postMessage 协议 `{ __emh: 1, type, id }`；父页只处理 `e.source === STANDALONE.win`，子页只处理 `e.source === window.opener`。`init` 握手回传全量存储快照 → 子页**之后**注入主脚本（`CODE_LIBRARY.init()` 才能同步读到）。
+- **重载必须 force**：`CODE_LIBRARY.init()` 幂等早退会让桥的 setKey/libraryUpdated「重载」变 no-op → `init(force)`，bridge/cross-tab/2s poll 一律 `init(true)`。
+- **样式注入顺序**：`createStyles()` 在 `await ensurePreact()` 之后注入，会覆盖早先的 `injectStandaloneStyles()` override（同特异性后到者胜）→ 冲突属性用 `!important`。
+- 子页 GM 代理：`GM_getValue` 同步读缓存；`GM_setValue` 写缓存 + post；`GM_xmlhttpRequest` pending 表按 id 回调；`GM_addValueChangeListener` no-op（同步走父页推送）。
+- 父页 `beforeunload` → post `parentClosed` → 子页横幅降级提示；`forwardLibrary` 检测 `win.closed` 清理。
+
 ## Accessibility
 
 - Icon buttons carry `title` + `aria-label`; 键盘选中行加 `aria-selected`。

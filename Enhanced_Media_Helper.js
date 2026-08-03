@@ -59,6 +59,10 @@
 (function () {
     'use strict';
 
+    // 捕获主脚本源码：供 standalone 新标签页模式内联复用（STANDALONE.buildHtml 使用）
+    const __EMH_MAIN__ = function emhMain() {
+    'use strict';
+
     const CONFIG = {
         codeManager: {
             storageKey: 'emh_code_library',
@@ -86,8 +90,8 @@
         trash: null,
         initialized: false,
 
-        init: function() {
-            if (this.initialized) return true;
+        init: function(force) {
+            if (this.initialized && !force) return true;
             try {
                 const savedData = GM_getValue(CONFIG.codeManager.storageKey);
                 this.data = savedData ? JSON.parse(savedData) : {
@@ -623,6 +627,118 @@
         next: function() {
             const cur = this.get();
             return this.ORDER[(this.ORDER.indexOf(cur) + 1) % this.ORDER.length];
+        }
+    };
+
+    // ===== standalone 新标签页模式：opener postMessage 桥（父页侧） =====
+    const STANDALONE = {
+        win: null,
+        _url: null,
+        _installed: false,
+
+        buildHtml: function(src) {
+            return `<!doctype html><html><head><meta charset="utf-8"><title>番号库 · 独立页</title></head><body><script>
+var __EMH_SRC = ${JSON.stringify(src).replace(/<\//g, '<\\/')};
+window.__EMH_STANDALONE = true;
+window.__EMH_STORAGE = {};
+var __emhSeq = 0;
+var __emhPending = {};
+function __emhPost(m){ try { if (window.opener) window.opener.postMessage(Object.assign({ __emh: 1 }, m), '*'); } catch (e) {} }
+function __emhRefresh(){ try { CODE_LIBRARY.init(true); updateCodeStatusIndicators(); if (window.CodeManagerPanel) window.CodeManagerPanel.refreshPanelContent(); } catch (e) {} }
+function __emhParentClosed(){ try { var d = document.createElement('div'); d.id = 'emh-standalone-banner'; d.textContent = '父页面已关闭：此页仍可浏览，但更改可能无法同步到番号库。'; document.body.appendChild(d); } catch (e) {} }
+function __emhStart(){ var s = document.createElement('script'); s.textContent = __EMH_SRC; document.body.appendChild(s); }
+window.GM_getValue = function(k, d){ return Object.prototype.hasOwnProperty.call(window.__EMH_STORAGE, k) ? window.__EMH_STORAGE[k] : (d !== undefined ? d : null); };
+window.GM_setValue = function(k, v){ window.__EMH_STORAGE[k] = String(v); __emhPost({ type: 'setKey', key: k, value: String(v) }); };
+window.GM_addValueChangeListener = function(){ return 0; };
+window.GM_xmlhttpRequest = function(cfg){ var id = ++__emhSeq; __emhPending[id] = { cb: function(d){ if (d.ok) { if (cfg.onload) cfg.onload({ status: d.status, responseText: d.responseText }); } else if (d.error === 'timeout') { if (cfg.ontimeout) cfg.ontimeout(); } else { if (cfg.onerror) cfg.onerror(); } } }; __emhPost({ type: 'fetch', id: id, cfg: { method: cfg.method || 'GET', url: cfg.url, headers: cfg.headers, timeout: cfg.timeout } }); };
+window.addEventListener('message', function (e) {
+  var d = e.data;
+  if (!d || d.__emh !== 1 || e.source !== window.opener) return;
+  if (d.type === 'initResult' && d.ok) { window.__EMH_STORAGE = d.storage || {}; __emhStart(); }
+  else if (d.type === 'libraryUpdated') { window.__EMH_STORAGE = d.storage || {}; __emhRefresh(); }
+  else if (d.type === 'parentClosed') { __emhParentClosed(); }
+  else if (d.type === 'fetchResult') { var p = __emhPending[d.id]; if (!p) return; delete __emhPending[d.id]; p.cb(d); }
+});
+__emhPost({ type: 'init', id: 0 });
+</script></body></html>`;
+        },
+
+        open: function() {
+            const src = window.__EMH_SRC;
+            if (!src || typeof src !== 'string') { UTILS.showToast('无法获取脚本源码', 'error'); return; }
+            if (this.win && !this.win.closed) { this.win.focus(); return; }
+            const html = this.buildHtml(src);
+            const blob = new Blob([html], { type: 'text/html' });
+            this._url = URL.createObjectURL(blob);
+            this.win = window.open(this._url, '_blank');
+            if (!this.win) {
+                UTILS.showToast('浏览器拦截了新窗口，请允许弹窗后重试', 'warning');
+                try { URL.revokeObjectURL(this._url); } catch (e) {}
+                this._url = null;
+                return;
+            }
+            this.installListener();
+            UTILS.showToast('已在新标签页打开番号库', 'success');
+        },
+
+        installListener: function() {
+            if (this._installed) return;
+            this._installed = true;
+            window.addEventListener('message', (e) => {
+                const d = e.data;
+                if (!d || d.__emh !== 1) return;
+                if (e.source !== STANDALONE.win) return;
+                if (d.type === 'init') {
+                    const storage = {
+                        emh_code_library: typeof GM_getValue === 'function' ? GM_getValue(CONFIG.codeManager.storageKey) : null,
+                        emh_code_trash: typeof GM_getValue === 'function' ? GM_getValue(CONFIG.codeManager.trashStorageKey) : null,
+                        emh_ui_theme: THEME.get(),
+                        emh_sync_timestamp: typeof GM_getValue === 'function' ? GM_getValue('emh_sync_timestamp') : null
+                    };
+                    try { e.source.postMessage({ __emh: 1, id: d.id, type: 'initResult', ok: true, storage }, '*'); } catch (err) {}
+                } else if (d.type === 'setKey') {
+                    try { if (typeof GM_setValue === 'function') GM_setValue(d.key, d.value); } catch (err) {}
+                    if (d.key === CONFIG.codeManager.storageKey || d.key === CONFIG.codeManager.trashStorageKey) {
+                        CODE_LIBRARY.init(true);
+                        window.dispatchEvent(new CustomEvent('emh_library_updated', {
+                            detail: { type: 'library_update', data: CODE_LIBRARY.data }
+                        }));
+                    }
+                } else if (d.type === 'fetch') {
+                    const cfg = d.cfg || {};
+                    if (typeof GM_xmlhttpRequest !== 'function') {
+                        try { e.source.postMessage({ __emh: 1, id: d.id, type: 'fetchResult', ok: false, error: 'no-gm' }, '*'); } catch (err) {}
+                        return;
+                    }
+                    const reply = (payload) => { try { e.source.postMessage(Object.assign({ __emh: 1, id: d.id, type: 'fetchResult' }, payload), '*'); } catch (err) {} };
+                    GM_xmlhttpRequest({
+                        method: cfg.method || 'GET',
+                        url: cfg.url,
+                        headers: cfg.headers,
+                        timeout: cfg.timeout,
+                        onload: (res) => reply({ ok: true, status: res && res.status, responseText: res && res.responseText }),
+                        onerror: () => reply({ ok: false, error: 'network' }),
+                        ontimeout: () => reply({ ok: false, error: 'timeout' })
+                    });
+                }
+            });
+        },
+
+        forwardLibrary: function() {
+            if (!this.win || this.win.closed) { this.win = null; return; }
+            const storage = {
+                emh_code_library: typeof GM_getValue === 'function' ? GM_getValue(CONFIG.codeManager.storageKey) : null,
+                emh_code_trash: typeof GM_getValue === 'function' ? GM_getValue(CONFIG.codeManager.trashStorageKey) : null,
+                emh_ui_theme: THEME.get(),
+                emh_sync_timestamp: typeof GM_getValue === 'function' ? GM_getValue('emh_sync_timestamp') : null
+            };
+            try { this.win.postMessage({ __emh: 1, type: 'libraryUpdated', storage }, '*'); } catch (e) {}
+        },
+
+        notifyParentClosed: function() {
+            if (this.win && !this.win.closed) {
+                try { this.win.postMessage({ __emh: 1, type: 'parentClosed' }, '*'); } catch (e) {}
+            }
         }
     };
 
@@ -1445,7 +1561,37 @@
         document.head.appendChild(style);
     }
 
-    // 原生降级按钮（不依赖 Preact）
+    // standalone 独立页布局：全屏面板 + 左列表右详情双栏
+    function injectStandaloneStyles() {
+        if (document.getElementById('emh-standalone-style')) return;
+        const style = document.createElement('style');
+        style.id = 'emh-standalone-style';
+        style.textContent = `
+            html, body { margin: 0; height: 100%; background: var(--emh-bg); }
+            #emh-standalone-banner {
+                position: fixed; top: 0; left: 0; right: 0; z-index: 10070;
+                padding: 8px 16px; text-align: center; font-size: 12px;
+                background: var(--emh-warning); color: var(--emh-on-solid);
+            }
+            #emh-code-manager-toggle, .emh-panel-backdrop { display: none !important; }
+            #emh-code-manager-panel {
+                position: fixed; inset: 0; width: auto; height: 100vh;
+                border-radius: 0; border-left: none; padding-right: min(560px, 46vw);
+            }
+            .emh-panel-header .emh-panel-close { display: none !important; }
+            .emh-detail-backdrop { display: none !important; }
+            /* 组件样式（CodeManagerPanel.createStyles）在 bootPanel 中晚于本样式注入，
+               同优先级时后注入者胜出，故对冲突属性加 !important 保证双栏覆盖生效 */
+            .emh-detail-drawer {
+                position: fixed !important; top: 0; right: 0; bottom: 0;
+                width: min(560px, 46vw) !important; border-radius: 0 !important;
+                border-left: 1px solid var(--emh-border);
+                box-shadow: -12px 0 32px rgba(0, 0, 0, 0.25) !important;
+                animation: none !important;
+            }
+        `;
+        document.head.appendChild(style);
+    }
     function createFallbackToggle(clickHandler) {
         const existing = document.getElementById('emh-code-manager-toggle');
         if (existing) existing.remove();
@@ -1669,13 +1815,16 @@
             `;
         }
 
-        function HeaderMenu({ onClose, onClear, stats }) {
+        function HeaderMenu({ onClose, onClear, onOpenStandalone, stats }) {
             return html`
                 <div class="emh-header-menu-backdrop" onClick=${onClose}></div>
                 <div class="emh-header-menu">
                     <div class="emh-header-menu-title">预览缓存</div>
                     ${stats ? html`
                         <div class="emh-header-menu-stat">已缓存 ${stats.magnets} 条磁力 · ${stats.screenshots} 张截图 · ${UTILS.formatBytes(stats.bytes)}</div>
+                    ` : ''}
+                    ${onOpenStandalone ? html`
+                        <button type="button" class="emh-header-menu-item emh-header-menu-item-plain" onClick=${onOpenStandalone}>在新标签页打开</button>
                     ` : ''}
                     <button type="button" class="emh-header-menu-item" onClick=${onClear}>清除全部预览缓存</button>
                 </div>
@@ -2439,6 +2588,7 @@
                 toggleTheme: () => { THEME.set(THEME.next()); PanelStore.set({}); },
                 toggleHelp: () => PanelStore.set({ helpOpen: !PanelStore.state.helpOpen }),
                 toggleMenu: () => PanelStore.set({ menuOpen: !PanelStore.state.menuOpen }),
+                openStandalone: () => { PanelStore.set({ menuOpen: false }); STANDALONE.open(); },
                 clearPreviewCaches: () => {
                     const s = CODE_LIBRARY.previewCacheStats();
                     PanelStore.set({ menuOpen: false, confirm: {
@@ -2597,6 +2747,14 @@
                 cont.scrollTop = Math.max(0, el.offsetTop - cont.clientHeight / 2);
             }, [st.selectedIndex]);
 
+            // standalone 双栏：选中行 → 右侧详情联动
+            useEffect(() => {
+                if (window.__EMH_STANDALONE && st.selectedIndex >= 0) {
+                    const it = items[st.selectedIndex];
+                    if (it && st.detail !== it.code) actions.openDetail(it.code);
+                }
+            }, [st.selectedIndex]);
+
             let emptyMsg = '番号库为空，点击"添加"开始';
             let emptyIcon = 'library';
             if (st.currentFilter === 'favorite') { emptyMsg = '暂无关注番号'; emptyIcon = 'favorite'; }
@@ -2729,7 +2887,7 @@
                             <${MagnetListModal} magnetSearch=${st.magnetSearch} onPick=${actions.fetchMagnetDetail} onClose=${actions.closeMagnetSearch} />
                             <${BatchProgressModal} progress=${st.batchProgress} />
                             ${st.helpOpen ? html`<${HelpModal} onClose=${actions.toggleHelp} />` : ''}
-                            ${st.menuOpen ? html`<${HeaderMenu} onClose=${actions.toggleMenu} onClear=${actions.clearPreviewCaches} stats=${CODE_LIBRARY.previewCacheStats()} />` : ''}
+                            ${st.menuOpen ? html`<${HeaderMenu} onClose=${actions.toggleMenu} onClear=${actions.clearPreviewCaches} onOpenStandalone=${window.__EMH_STANDALONE ? null : actions.openStandalone} stats=${CODE_LIBRARY.previewCacheStats()} />` : ''}
                             ${st.detail ? (() => {
                                 const detailItem = CODE_LIBRARY.getItem(st.detail) || (trashList.find(i => i.code.toUpperCase() === st.detail.toUpperCase())) || null;
                                 const detailInTrash = detailItem ? trashList.some(i => i.code.toUpperCase() === detailItem.code.toUpperCase()) : false;
@@ -2861,6 +3019,7 @@
                     }
                     .emh-header-menu-item:hover { background: var(--emh-danger-soft); color: var(--emh-danger); }
                     .emh-header-menu-item:focus-visible { outline: 2px solid var(--emh-primary); outline-offset: -2px; }
+                    .emh-header-menu-item-plain:hover { background: var(--emh-primary-soft); color: var(--emh-primary); }
                     .emh-panel-close:focus-visible,
                     .emh-search-clear:focus-visible,
                     .emh-magnet-op:focus-visible { outline: 2px solid var(--emh-primary); outline-offset: 2px; }
@@ -3282,15 +3441,17 @@
             if (e.detail.type === 'library_update') {
                 updateCodeStatusIndicators();
                 if (window.CodeManagerPanel && window.CodeManagerPanel.isVisible) window.CodeManagerPanel.refreshPanelContent();
+                STANDALONE.forwardLibrary();
             }
         });
 
         if (typeof GM_addValueChangeListener !== 'undefined') {
             GM_addValueChangeListener('emh_sync_timestamp', function(name, old_value, new_value, remote) {
                 if (remote) {
-                    CODE_LIBRARY.init();
+                    CODE_LIBRARY.init(true);
                     updateCodeStatusIndicators();
                     if (window.CodeManagerPanel && window.CodeManagerPanel.isVisible) window.CodeManagerPanel.refreshPanelContent();
+                    STANDALONE.forwardLibrary();
                 }
             });
         }
@@ -3300,7 +3461,7 @@
                 const lastUpdate = GM_getValue('emh_sync_timestamp');
                 if (lastUpdate && lastUpdate !== window.CodeManagerPanel.lastSyncTimestamp) {
                     window.CodeManagerPanel.lastSyncTimestamp = lastUpdate;
-                    CODE_LIBRARY.init();
+                    CODE_LIBRARY.init(true);
                     updateCodeStatusIndicators();
                     if (window.CodeManagerPanel.isVisible) window.CodeManagerPanel.refreshPanelContent();
                 }
@@ -3310,10 +3471,12 @@
 
     async function bootPanel() {
         injectCoreStyles();
+        if (window.__EMH_STANDALONE) injectStandaloneStyles();
         try {
             if (await ensurePreact()) {
                 window.CodeManagerPanel = buildPanel();
                 window.CodeManagerPanel.init(); // init 内部 createToggleButton 创建按钮
+                if (window.__EMH_STANDALONE) window.CodeManagerPanel.showPanel();
             } else {
                 console.error('EMH: Preact 依赖加载失败，使用降级按钮');
                 createFallbackToggle(() => UTILS.showToast('面板组件依赖加载失败，请检查网络后刷新页面', 'error'));
@@ -3328,6 +3491,7 @@
     function initialize() {
         THEME.apply(THEME.get());
         CODE_LIBRARY.init();
+        window.addEventListener('beforeunload', () => STANDALONE.notifyParentClosed());
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => main());
         } else {
@@ -3338,4 +3502,8 @@
     }
 
     initialize();
+    };
+    __EMH_MAIN__();
+    // 捕获源码须自带执行：toString() 只含函数声明，子页注入后需调用才能运行主脚本（函数名与声明处 emhMain 一致）
+    try { window.__EMH_SRC = __EMH_MAIN__.toString() + "\n;try { emhMain(); } catch (e) { console.error('EMH: standalone 子页主脚本执行失败', e); }"; } catch (e) {}
 })();
