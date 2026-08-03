@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name           Enhanced_Media_Helper
-// @version        3.3.0
-// @description    Code Manager Panel with javgg site support (Preact + htm)
+// @version        3.4.1
+// @description    Code Manager Panel with javgg site support (Preact + htm) + magnet screenshot preview
 // @author         cores
 // @match          https://javgg.net/tag/to-be-release/*
 // @match          https://javgg.net/featured/*
@@ -47,7 +47,9 @@
 // @grant          GM_addValueChangeListener
 // @grant          GM_xmlhttpRequest
 // @connect        1cili.com
+// @connect        whatslink.info
 // @run-at         document-idle
+// @noframes
 // @license        MPL
 // @namespace      cdn.bootcss.com
 // @downloadURL https://update.greasyfork.org/scripts/531966/Enhanced_Media_Helper.user.js
@@ -67,6 +69,10 @@
                 favorite: '#ff4757',
                 watched: '#2ed573'
             }
+        },
+        magnetPreview: {
+            cacheTtlMs: 7 * 24 * 60 * 60 * 1000,
+            errorTtlMs: 5 * 60 * 1000
         },
         alternateUrl: {
             av123: 'https://123av.com/cn/v/',
@@ -226,7 +232,8 @@
         },
 
         // 归一化 magnet 字段：兼容三种形态（单值字符串 / 旧字符串数组 / 新对象数组），
-        // 统一返回对象数组 [{ id, value }]。旧数据自动生成 id（数据迁移）。
+        // 统一返回对象数组 [{ id, value, preview? }]。旧数据自动生成 id（数据迁移）。
+        // preview 为 whatslink 缓存：{ name, type, fileType, size, count, screenshots, fetchedAt, error? }
         normMagnets: function(m) {
             let arr = [];
             if (!m) {
@@ -236,15 +243,106 @@
             } else {
                 arr = [m];
             }
-            // 统一为 { id, value } 对象
+            // 统一为 { id, value, preview? } 对象
             return arr.map((entry, i) => {
                 if (entry && typeof entry === 'object' && entry.value) {
-                    return { id: entry.id || ('m-' + Date.now().toString(36) + '-' + i), value: String(entry.value).trim() };
+                    const out = { id: entry.id || ('m-' + Date.now().toString(36) + '-' + i), value: String(entry.value).trim() };
+                    const pv = this.sanitizeMagnetPreview(entry.preview);
+                    if (pv) out.preview = pv;
+                    return out;
                 }
                 const v = entry == null ? '' : String(entry).trim();
                 if (!v) return null;
                 return { id: 'm-' + Date.now().toString(36) + '-' + i, value: v };
             }).filter(Boolean);
+        },
+
+        sanitizeMagnetPreview: function(preview) {
+            if (!preview || typeof preview !== 'object' || Array.isArray(preview)) return null;
+            const isSafeHttpUrl = (url) => {
+                if (typeof url !== 'string') return false;
+                try {
+                    const u = new URL(url.trim());
+                    return u.protocol === 'https:' || u.protocol === 'http:';
+                } catch (_) { return false; }
+            };
+            const shotsRaw = Array.isArray(preview.screenshots) ? preview.screenshots : [];
+            const screenshots = [];
+            const seen = new Set();
+            for (let i = 0; i < shotsRaw.length && screenshots.length < 48; i++) {
+                const item = shotsRaw[i];
+                if (item == null) continue;
+                let url = '';
+                let time = null;
+                if (typeof item === 'string') url = item;
+                else if (typeof item === 'object') {
+                    url = item.screenshot || item.url || item.src || item.image || '';
+                    if (item.time != null && Number.isFinite(Number(item.time))) time = Number(item.time);
+                }
+                url = String(url || '').trim();
+                if (!isSafeHttpUrl(url) || seen.has(url)) continue;
+                seen.add(url);
+                screenshots.push(time != null ? { screenshot: url, time } : { screenshot: url });
+            }
+            const sizeN = Number(preview.size);
+            const countN = Number(preview.count);
+            return {
+                name: typeof preview.name === 'string' ? preview.name : (typeof preview.title === 'string' ? preview.title : ''),
+                type: typeof preview.type === 'string' ? preview.type : '',
+                fileType: typeof preview.fileType === 'string' ? preview.fileType : (typeof preview.file_type === 'string' ? preview.file_type : ''),
+                size: Number.isFinite(sizeN) ? sizeN : null,
+                count: Number.isFinite(countN) ? countN : null,
+                screenshots,
+                fetchedAt: typeof preview.fetchedAt === 'string' ? preview.fetchedAt : (preview.fetchedAt ? String(preview.fetchedAt) : ''),
+                error: typeof preview.error === 'string' ? preview.error : ''
+            };
+        },
+
+        // 在 data / trash 中定位番号条目
+        findItemRecord: function(code) {
+            if (!this.initialized) this.init();
+            if (!code) return null;
+            const normalizedCode = String(code).toUpperCase();
+            const mainIdx = this.data.items.findIndex(item => item.code.toUpperCase() === normalizedCode);
+            if (mainIdx >= 0) return { list: this.data.items, index: mainIdx, item: this.data.items[mainIdx], inTrash: false };
+            const trashIdx = this.trash.items.findIndex(item => item.code.toUpperCase() === normalizedCode);
+            if (trashIdx >= 0) return { list: this.trash.items, index: trashIdx, item: this.trash.items[trashIdx], inTrash: true };
+            return null;
+        },
+
+        // 写入某条磁力的 whatslink 预览缓存并持久化
+        setMagnetPreview: function(code, magnetIdOrIdx, preview) {
+            const rec = this.findItemRecord(code);
+            if (!rec) return false;
+            const magnets = this.normMagnets(rec.item.magnet);
+            if (!magnets.length) return false;
+            const t = String(magnetIdOrIdx);
+            let idx = magnets.findIndex((e, i) => {
+                const eid = this.magnetId(e);
+                return (eid && String(eid) === t) || (!eid && String(i) === t);
+            });
+            if (idx < 0 && /^\d+$/.test(t)) idx = Number(t);
+            if (idx < 0 || idx >= magnets.length) return false;
+            const cleaned = this.sanitizeMagnetPreview(preview);
+            if (cleaned) magnets[idx].preview = cleaned;
+            else delete magnets[idx].preview;
+            rec.item.magnet = magnets;
+            rec.item.modifiedDate = new Date().toISOString();
+            return this.save();
+        },
+
+        getMagnetPreview: function(code, magnetIdOrIdx) {
+            const rec = this.findItemRecord(code);
+            if (!rec) return null;
+            const magnets = this.normMagnets(rec.item.magnet);
+            const t = String(magnetIdOrIdx);
+            let idx = magnets.findIndex((e, i) => {
+                const eid = this.magnetId(e);
+                return (eid && String(eid) === t) || (!eid && String(i) === t);
+            });
+            if (idx < 0 && /^\d+$/.test(t)) idx = Number(t);
+            if (idx < 0 || idx >= magnets.length) return null;
+            return this.sanitizeMagnetPreview(magnets[idx].preview);
         },
 
         // 取磁力对象的值（兼容对象/字符串）
@@ -376,6 +474,392 @@
         showToast: (message, type = 'info') => {
             const evt = new CustomEvent('emh_toast', { detail: { message, type } });
             window.dispatchEvent(evt);
+        },
+        formatBytes: (bytes) => {
+            const n = Number(bytes);
+            if (!Number.isFinite(n) || n < 0) return '';
+            if (n < 1024) return n + ' B';
+            const units = ['KB', 'MB', 'GB', 'TB'];
+            let v = n;
+            let i = -1;
+            do { v /= 1024; i += 1; } while (v >= 1024 && i < units.length - 1);
+            return v.toFixed(v >= 100 || i === 0 ? 0 : 1) + ' ' + units[i];
+        },
+        isSafeHttpUrl: (url) => {
+            if (typeof url !== 'string') return false;
+            try {
+                const u = new URL(url.trim());
+                return u.protocol === 'https:' || u.protocol === 'http:';
+            } catch (_) { return false; }
+        }
+    };
+
+    // whatslink 磁力截图预览（灯箱 + API 解析）
+    const MAGNET_PREVIEW = {
+        API: 'https://whatslink.info/api/v1/link',
+        TIMEOUT: 20000,
+        _ready: false,
+        _urls: [],
+        _index: 0,
+        _open: false,
+        _touchX: null,
+        _els: null,
+        _requestSeq: 0,
+        _inflight: {},
+        _lastErrorIdx: -1,
+
+        _isCacheFresh: function(preview) {
+            if (!preview || !preview.fetchedAt) return false;
+            const t = new Date(preview.fetchedAt).getTime();
+            if (!Number.isFinite(t)) return false;
+            const ttl = preview.error ? CONFIG.magnetPreview.errorTtlMs : CONFIG.magnetPreview.cacheTtlMs;
+            return (Date.now() - t) < ttl;
+        },
+
+        _errPreview: function(err) {
+            return CODE_LIBRARY.sanitizeMagnetPreview({
+                error: err || '预览失败',
+                screenshots: [],
+                fetchedAt: new Date().toISOString()
+            });
+        },
+
+        ensureUi: function() {
+            if (this._ready) return;
+            if (!document.getElementById('emh-magnet-lb-style')) {
+                const st = document.createElement('style');
+                st.id = 'emh-magnet-lb-style';
+                st.textContent = `
+                    #emh-magnet-lightbox {
+                        position: fixed; inset: 0; z-index: 10050; display: none;
+                        align-items: center; justify-content: center;
+                        background: rgba(0,0,0,0.88);
+                        backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+                        user-select: none;
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    }
+                    #emh-magnet-lightbox.open { display: flex; }
+                    #emh-magnet-lb-stage {
+                        position: relative; width: 100%; height: 100%;
+                        display: flex; align-items: center; justify-content: center;
+                        padding: 48px 64px 56px; box-sizing: border-box;
+                    }
+                    #emh-magnet-lb-img {
+                        max-width: 100%; max-height: 100%; object-fit: contain;
+                        border-radius: 4px; box-shadow: 0 8px 32px rgba(0,0,0,0.45); background: #111;
+                    }
+                    #emh-magnet-lb-img.is-loading { opacity: 0.35; }
+                    .emh-lb-btn {
+                        position: absolute; top: 50%; transform: translateY(-50%);
+                        width: 44px; height: 44px; border: none; border-radius: 50%;
+                        background: rgba(255,255,255,0.12); color: #fff; font-size: 28px;
+                        line-height: 1; cursor: pointer; display: flex; align-items: center;
+                        justify-content: center; z-index: 2;
+                    }
+                    .emh-lb-btn:hover { background: rgba(255,255,255,0.22); }
+                    .emh-lb-btn:disabled { opacity: 0.25; cursor: default; }
+                    #emh-magnet-lb-prev { left: 12px; }
+                    #emh-magnet-lb-next { right: 12px; }
+                    #emh-magnet-lb-close {
+                        position: absolute; top: 12px; right: 12px; width: 40px; height: 40px;
+                        border: none; border-radius: 50%; background: rgba(255,255,255,0.12);
+                        color: #fff; font-size: 24px; cursor: pointer; z-index: 3; line-height: 1;
+                    }
+                    #emh-magnet-lb-close:hover { background: rgba(255,255,255,0.22); }
+                    #emh-magnet-lb-counter {
+                        position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+                        color: rgba(255,255,255,0.9); font-size: 13px; font-weight: 600;
+                        padding: 6px 12px; border-radius: 999px; background: rgba(0,0,0,0.45);
+                        z-index: 2; pointer-events: none;
+                    }
+                    #emh-magnet-lb-meta {
+                        position: absolute; top: 14px; left: 16px; right: 64px;
+                        color: rgba(255,255,255,0.85); font-size: 12px; line-height: 1.4;
+                        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                        z-index: 2; pointer-events: none;
+                    }
+                    #emh-magnet-lb-hint {
+                        position: absolute; bottom: 14px; right: 16px;
+                        color: rgba(255,255,255,0.45); font-size: 11px; z-index: 2; pointer-events: none;
+                    }
+                    @media (max-width: 640px) {
+                        #emh-magnet-lb-stage { padding: 44px 52px 52px; }
+                        .emh-lb-btn { width: 38px; height: 38px; font-size: 24px; }
+                        #emh-magnet-lb-hint { display: none; }
+                    }
+                `;
+                document.head.appendChild(st);
+            }
+            const root = document.createElement('div');
+            root.id = 'emh-magnet-lightbox';
+            root.setAttribute('role', 'dialog');
+            root.setAttribute('aria-modal', 'true');
+            root.setAttribute('aria-label', '磁力截图预览');
+            root.innerHTML = `
+                <div id="emh-magnet-lb-stage">
+                    <div id="emh-magnet-lb-meta"></div>
+                    <button type="button" id="emh-magnet-lb-close" aria-label="关闭">×</button>
+                    <button type="button" class="emh-lb-btn" id="emh-magnet-lb-prev" aria-label="上一张">‹</button>
+                    <img id="emh-magnet-lb-img" alt="Screenshot" referrerpolicy="no-referrer" />
+                    <button type="button" class="emh-lb-btn" id="emh-magnet-lb-next" aria-label="下一张">›</button>
+                    <div id="emh-magnet-lb-counter"></div>
+                    <div id="emh-magnet-lb-hint">← → 切换 · Esc 关闭</div>
+                </div>
+            `;
+            document.body.appendChild(root);
+            this._els = {
+                root,
+                img: root.querySelector('#emh-magnet-lb-img'),
+                prev: root.querySelector('#emh-magnet-lb-prev'),
+                next: root.querySelector('#emh-magnet-lb-next'),
+                close: root.querySelector('#emh-magnet-lb-close'),
+                counter: root.querySelector('#emh-magnet-lb-counter'),
+                meta: root.querySelector('#emh-magnet-lb-meta')
+            };
+            this._els.prev.addEventListener('click', (e) => { e.stopPropagation(); this.step(-1); });
+            this._els.next.addEventListener('click', (e) => { e.stopPropagation(); this.step(1); });
+            this._els.close.addEventListener('click', (e) => { e.stopPropagation(); this.close(); });
+            root.addEventListener('click', (e) => {
+                if (e.target === root || e.target.id === 'emh-magnet-lb-stage') this.close();
+            });
+            root.addEventListener('touchstart', (e) => {
+                if (e.touches && e.touches[0]) this._touchX = e.touches[0].clientX;
+            }, { passive: true });
+            root.addEventListener('touchend', (e) => {
+                if (this._touchX == null || !e.changedTouches || !e.changedTouches[0]) {
+                    this._touchX = null;
+                    return;
+                }
+                const dx = e.changedTouches[0].clientX - this._touchX;
+                this._touchX = null;
+                if (Math.abs(dx) < 40) return;
+                this.step(dx < 0 ? 1 : -1);
+            }, { passive: true });
+            document.addEventListener('keydown', (e) => {
+                if (!this._open) return;
+                if (e.key === 'Escape') { e.preventDefault(); this.close(); }
+                else if (e.key === 'ArrowLeft') { e.preventDefault(); this.step(-1); }
+                else if (e.key === 'ArrowRight') { e.preventDefault(); this.step(1); }
+            });
+            this._ready = true;
+        },
+
+        _update: function() {
+            const { img, prev, next, counter } = this._els;
+            const total = this._urls.length;
+            if (!total) {
+                counter.textContent = '';
+                prev.disabled = true;
+                next.disabled = true;
+                img.classList.remove('is-loading');
+                img.removeAttribute('src');
+                img.alt = 'Screenshot';
+                return;
+            }
+            const idx = this._index;
+            const url = this._urls[idx];
+            counter.textContent = (idx + 1) + ' / ' + total;
+            prev.disabled = total <= 1;
+            next.disabled = total <= 1;
+            if (img.getAttribute('src') === url) {
+                img.classList.remove('is-loading');
+                return;
+            }
+            img.classList.add('is-loading');
+            img.onload = () => img.classList.remove('is-loading');
+            img.onerror = () => {
+                img.classList.remove('is-loading');
+                if (total > 1 && idx !== this._lastErrorIdx) {
+                    // 跳过失效截图自动切到下一张；同一张不重复跳过，避免坏图死循环
+                    this._lastErrorIdx = idx;
+                    this.step(1);
+                    return;
+                }
+                img.removeAttribute('src');
+                img.alt = '图片加载失败';
+            };
+            img.alt = 'Screenshot ' + (idx + 1);
+            img.src = url;
+            [idx - 1, idx + 1].forEach((n) => {
+                if (n >= 0 && n < total) {
+                    const pre = new Image();
+                    pre.referrerPolicy = 'no-referrer';
+                    pre.src = this._urls[n];
+                }
+            });
+        },
+
+        open: function(urls, startIndex, metaText) {
+            this.ensureUi();
+            const list = (Array.isArray(urls) ? urls : []).filter(UTILS.isSafeHttpUrl);
+            if (!list.length) {
+                UTILS.showToast('暂无可用截图', 'warning');
+                return;
+            }
+            let idx = Number(startIndex);
+            if (!Number.isFinite(idx) || idx < 0) idx = 0;
+            if (idx >= list.length) idx = list.length - 1;
+            this._urls = list;
+            this._index = idx;
+            this._open = true;
+            this._lastErrorIdx = -1;
+            this._els.meta.textContent = metaText || '';
+            this._els.root.classList.add('open');
+            this._update();
+        },
+
+        close: function() {
+            if (!this._open || !this._els) return;
+            this._open = false;
+            this._els.root.classList.remove('open');
+            this._urls = [];
+            this._index = 0;
+            this._lastErrorIdx = -1;
+            this._els.img.removeAttribute('src');
+            this._els.img.alt = 'Screenshot';
+            this._els.img.classList.remove('is-loading');
+            this._els.counter.textContent = '';
+            this._els.meta.textContent = '';
+        },
+
+        step: function(delta) {
+            if (!this._open || !this._urls.length) return;
+            const total = this._urls.length;
+            this._index = (this._index + delta + total) % total;
+            this._update();
+        },
+
+        parseApiResponse: function(rawText) {
+            let data;
+            try { data = JSON.parse(rawText); }
+            catch (_) { return { ok: false, error: '接口返回非 JSON' }; }
+            if (data == null || typeof data !== 'object' || Array.isArray(data)) {
+                return { ok: false, error: '接口数据结构异常' };
+            }
+            const apiError = typeof data.error === 'string' ? data.error.trim() : '';
+            if (apiError) return { ok: false, error: apiError };
+            const preview = CODE_LIBRARY.sanitizeMagnetPreview({
+                name: data.name || data.title || '',
+                type: data.type || '',
+                file_type: data.file_type || data.type || '',
+                size: data.size,
+                count: data.count,
+                screenshots: data.screenshots,
+                fetchedAt: new Date().toISOString(),
+                error: ''
+            });
+            if (!preview) return { ok: false, error: '预览数据无效' };
+            return { ok: true, preview };
+        },
+
+        fetchAndCache: function(code, magnetId, magnetValue, opts) {
+            const options = opts || {};
+            const force = !!options.force;
+            const onStart = typeof options.onStart === 'function' ? options.onStart : null;
+            const onDone = typeof options.onDone === 'function' ? options.onDone : null;
+
+            const magnet = String(magnetValue || '').trim();
+            if (!magnet || magnet.indexOf('magnet:') !== 0) {
+                UTILS.showToast('无效的磁力链接', 'error');
+                if (onDone) onDone(new Error('invalid magnet'));
+                return;
+            }
+            if (typeof GM_xmlhttpRequest !== 'function') {
+                UTILS.showToast('当前环境不支持跨域请求', 'error');
+                if (onDone) onDone(new Error('no gm'));
+                return;
+            }
+
+            // 全局递增序号：并发竞态下仅“最新一次用户请求”能打开灯箱/弹提示
+            const mySeq = ++this._requestSeq;
+            const key = String(code) + '::' + String(magnetId);
+
+            // 命中缓存：优先展示旧截图；若过期则在展示的同时后台刷新
+            const cached = !force ? CODE_LIBRARY.getMagnetPreview(code, magnetId) : null;
+            if (cached && Array.isArray(cached.screenshots) && cached.screenshots.length) {
+                const urls = cached.screenshots.map(s => s.screenshot || s.url || '').filter(Boolean);
+                const metaParts = [cached.name, cached.fileType || cached.type, UTILS.formatBytes(cached.size)].filter(Boolean);
+                this.open(urls, 0, metaParts.join(' · '));
+                if (onDone) onDone(null, cached);
+                if (this._isCacheFresh(cached)) return;
+            } else if (cached && cached.error && !force && this._isCacheFresh(cached)) {
+                // 错误缓存仍在有效期内：直接提示并跳过重复请求
+                UTILS.showToast(cached.error || '上次预览失败', 'warning');
+                if (onDone) onDone(new Error(cached.error || 'cached error'));
+                return;
+            }
+
+            // 并发去重：同一磁力已有在途请求时复用结果，不重复发起 HTTP
+            const existing = this._inflight[key];
+            if (existing && !force) {
+                existing.latestSeq = Math.max(existing.latestSeq, mySeq);
+                existing.p.then((r) => {
+                    if (existing.superseded) {
+                        if (onDone) onDone(new Error('superseded'));
+                        return;
+                    }
+                    if (onDone) onDone((r && r.error) ? new Error(r.error) : null, (r && r.preview) || null);
+                });
+                return;
+            }
+            if (existing && force) existing.superseded = true;
+
+            if (onStart) onStart();
+            UTILS.showToast('正在获取截图预览…', 'info');
+
+            // 预先登记在途条目：请求回调据此判断自己是否仍是“最新且未被作废”
+            const entry = this._inflight[key] = { p: null, latestSeq: mySeq, superseded: false };
+            const p = new Promise((resolve) => {
+                const finish = (errText, preview, noShotToast) => {
+                    const isLatest = !entry.superseded && this._inflight[key] === entry && entry.latestSeq === this._requestSeq;
+                    const urls = preview ? preview.screenshots.map(s => s.screenshot || s.url || '').filter(Boolean) : [];
+                    if (isLatest) {
+                        if (urls.length) {
+                            const metaParts = [preview.name, preview.fileType || preview.type, UTILS.formatBytes(preview.size)].filter(Boolean);
+                            this.open(urls, 0, metaParts.join(' · '));
+                            if (!errText) UTILS.showToast('截图已缓存', 'success');
+                        } else if (noShotToast) {
+                            UTILS.showToast('接口未返回截图', 'warning');
+                        } else if (errText) {
+                            UTILS.showToast(errText, 'error');
+                        }
+                    }
+                    // 仅在最新请求时持久化错误，避免旧请求的失败污染新结果
+                    if (isLatest && errText && !preview) {
+                        CODE_LIBRARY.setMagnetPreview(code, magnetId, this._errPreview(errText));
+                    }
+                    if (onDone) onDone(errText ? new Error(errText) : null, preview || null);
+                    resolve({
+                        error: errText,
+                        urls,
+                        meta: [preview && preview.name, preview && (preview.fileType || preview.type), UTILS.formatBytes(preview && preview.size)].filter(Boolean).join(' · '),
+                        preview: preview || null
+                    });
+                };
+                const url = this.API + '?url=' + encodeURIComponent(magnet);
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url,
+                    timeout: this.TIMEOUT,
+                    headers: { 'Accept': 'application/json, text/plain, */*' },
+                    onload: (res) => {
+                        const status = res && typeof res.status === 'number' ? res.status : 0;
+                        if (status < 200 || status >= 300) { finish('预览失败：HTTP ' + status, null); return; }
+                        const parsed = this.parseApiResponse(res.responseText || '');
+                        if (!parsed.ok) { finish(parsed.error || '预览失败', null); return; }
+                        CODE_LIBRARY.setMagnetPreview(code, magnetId, parsed.preview);
+                        if (!parsed.preview || !parsed.preview.screenshots || !parsed.preview.screenshots.length) {
+                            finish('', parsed.preview, true);
+                            return;
+                        }
+                        finish('', parsed.preview, false);
+                    },
+                    onerror: () => finish('网络请求失败', null),
+                    ontimeout: () => finish('请求超时', null)
+                });
+            });
+            entry.p = p;
+            p.then(() => { if (this._inflight[key] === entry) delete this._inflight[key]; });
         }
     };
 
@@ -1012,7 +1496,7 @@
             `;
         }
 
-        function DetailDrawer({ item, inTrash, onClose, onEdit, onEditMagnet, onEditMagnetItem, onRemoveMagnet, onCopyMagnet, onCopyMagnetItem, onSearchMagnet, onFav, onWatch, onUnfav, onDelete, onRestore, onPurge }) {
+        function DetailDrawer({ item, inTrash, onClose, onEdit, onEditMagnet, onEditMagnetItem, onRemoveMagnet, onCopyMagnet, onCopyMagnetItem, onPreviewMagnet, onSearchMagnet, onFav, onWatch, onUnfav, onDelete, onRestore, onPurge }) {
             if (!item) return null;
             const created = item.createdDate ? new Date(item.createdDate).toLocaleString() : '';
             const modified = item.modifiedDate ? new Date(item.modifiedDate).toLocaleString() : '';
@@ -1048,11 +1532,20 @@
                                         const mid = CODE_LIBRARY.magnetId(m) || ('idx-' + idx);
                                         const mvalue = CODE_LIBRARY.magnetValue(m);
                                         const displayM = CODE_LIBRARY.magnetName(m);
+                                        const pv = CODE_LIBRARY.sanitizeMagnetPreview(m.preview);
+                                        const hasCache = !!(pv && Array.isArray(pv.screenshots) && pv.screenshots.length);
+                                        const shotCount = hasCache ? pv.screenshots.length : 0;
                                         return html`
                                             <li key=${mid} class="emh-magnet-item-static" title="${mvalue}">
                                                 <span class="emh-magnet-item-idx">#${idx + 1}</span>
                                                 <span class="emh-magnet-item-text">${displayM.length > 60 ? displayM.slice(0, 60) + '…' : displayM}</span>
                                                 <span class="emh-magnet-item-ops">
+                                                    <button class="emh-magnet-op emh-magnet-op-preview ${hasCache ? 'has-cache' : ''}"
+                                                        title=${hasCache ? `预览截图（已缓存 ${shotCount} 张，右键强制刷新）` : '预览截图'}
+                                                        onClick=${(e) => onPreviewMagnet(item.code, mid, { force: !!(e && e.shiftKey) })}
+                                                        onContextMenu=${(e) => { e.preventDefault(); onPreviewMagnet(item.code, mid, { force: true }); }}>
+                                                        👁${hasCache ? html`<span class="emh-magnet-preview-badge">${shotCount}</span>` : ''}
+                                                    </button>
                                                     <button class="emh-magnet-op" title="复制该磁力" onClick=${() => onCopyMagnetItem(item.code, mid)}>📋</button>
                                                     ${!inTrash ? html`
                                                         <button class="emh-magnet-op" title="修改该磁力" onClick=${() => onEditMagnetItem(item.code, mid)}>✏️</button>
@@ -1209,7 +1702,13 @@
                         placeholder: '粘贴新磁力链接',
                         onSubmit: (magnet) => {
                             if (magnet !== null && magnet.trim()) {
-                                const newArr = arr.map((e, i) => i === idx ? { ...e, value: magnet.trim() } : e);
+                                const nextVal = magnet.trim();
+                                const newArr = arr.map((e, i) => {
+                                    if (i !== idx) return e;
+                                    const next = { id: e.id, value: nextVal };
+                                    // 磁力变更后清除旧预览缓存
+                                    return next;
+                                });
                                 CODE_LIBRARY.markItem(code, cur.status || 'unmarked', undefined, undefined, newArr);
                                 UTILS.showToast('磁力已修改', 'success');
                             }
@@ -1407,6 +1906,22 @@
                     })();
                 },
                 resolveItem: (code) => CODE_LIBRARY.getItem(code) || CODE_LIBRARY.trash.items.find(i => i.code.toUpperCase() === String(code).toUpperCase()) || null,
+                previewMagnet: (code, idOrIdx, opts) => {
+                    const item = actions.resolveItem(code);
+                    if (!item) { UTILS.showToast('未找到该番号', 'warning'); return; }
+                    const magnets = CODE_LIBRARY.normMagnets(item.magnet);
+                    const t = String(idOrIdx);
+                    let idx = magnets.findIndex((e, i) => {
+                        const eid = CODE_LIBRARY.magnetId(e);
+                        return (eid && String(eid) === t) || String(i) === t;
+                    });
+                    if (idx < 0 && /^\d+$/.test(t)) idx = Number(t);
+                    if (idx < 0 || idx >= magnets.length) { UTILS.showToast('磁力不存在', 'warning'); return; }
+                    const entry = magnets[idx];
+                    const mid = CODE_LIBRARY.magnetId(entry) || String(idx);
+                    const mval = CODE_LIBRARY.magnetValue(entry);
+                    MAGNET_PREVIEW.fetchAndCache(code, mid, mval, opts || {});
+                },
                 copyMagnetItem: (code, idOrIdx) => {
                     const item = actions.resolveItem(code);
                     const magnets = CODE_LIBRARY.normMagnets(item && item.magnet);
@@ -1414,7 +1929,7 @@
                     const entry = magnets.find(e => {
                         const eid = CODE_LIBRARY.magnetId(e);
                         return (eid && String(eid) === t) || (!eid && typeof idOrIdx === 'number' && magnets.indexOf(e) === idOrIdx);
-                    });
+                    }) || magnets[Number(idOrIdx)];
                     if (!entry) { UTILS.showToast('磁力不存在', 'warning'); return; }
                     const mval = CODE_LIBRARY.magnetValue(entry);
                     const text = CODE_LIBRARY.cleanMagnet(entry) || mval;
@@ -1535,10 +2050,11 @@
 
             useEffect(() => {
                 const onKey = (e) => {
-                    if (e.key === 'Escape' && st.visible) {
-                        if (st.detail) { actions.closeDetail(); return; }
-                        actions.hidePanel();
-                    }
+                    if (e.key !== 'Escape' || !st.visible) return;
+                    // 灯箱打开时由 MAGNET_PREVIEW 处理 Esc，不关闭详情/面板
+                    if (MAGNET_PREVIEW._open) return;
+                    if (st.detail) { actions.closeDetail(); return; }
+                    actions.hidePanel();
                 };
                 document.addEventListener('keydown', onKey);
                 return () => document.removeEventListener('keydown', onKey);
@@ -1704,7 +2220,8 @@
                                         onEdit=${actions.editRemark} onEditMagnet=${actions.editMagnet}
                                         onEditMagnetItem=${actions.editMagnetItem} onRemoveMagnet=${actions.removeMagnet}
                                         onCopyMagnetItem=${actions.copyMagnetItem}
-                                        onCopyMagnet=${actions.copyMagnet} onSearchMagnet=${actions.searchMagnet}
+                                        onCopyMagnet=${actions.copyMagnet} onPreviewMagnet=${actions.previewMagnet}
+                                        onSearchMagnet=${actions.searchMagnet}
                                         onFav=${actions.markFav}
                                         onWatch=${actions.markWatched} onUnfav=${actions.unfavorite}
                                         onDelete=${actions.deleteToTrash}
@@ -2066,6 +2583,18 @@
                     }
                     .emh-magnet-op:hover { opacity: 1; background: var(--emh-btn-hover); color: var(--emh-primary); }
                     .emh-magnet-op-del:hover { background: var(--emh-danger-soft); color: var(--emh-danger); }
+                    .emh-magnet-op-preview {
+                        position: relative; min-width: 22px;
+                    }
+                    .emh-magnet-op-preview.has-cache { color: var(--emh-primary); opacity: 0.95; }
+                    .emh-magnet-op-preview:hover { color: var(--emh-primary); }
+                    .emh-magnet-preview-badge {
+                        position: absolute; top: -4px; right: -5px;
+                        min-width: 12px; height: 12px; padding: 0 3px;
+                        border-radius: 999px; font-size: 9px; font-weight: 700; line-height: 12px;
+                        background: var(--emh-primary); color: var(--emh-on-primary);
+                        text-align: center; pointer-events: none;
+                    }
                     .emh-detail-meta {
                         padding: 10px 20px;
                         font-size: 11px; color: var(--emh-text-muted);

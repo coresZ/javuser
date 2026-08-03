@@ -79,3 +79,5 @@ Key components: `StatusTag`, `ItemRow`, `DetailDrawer`, `ConfirmModal`, `PromptM
 > **Warning**: When a dialog is open over the detail drawer, its z-index must exceed the drawer's (panel 10010 < detail backdrop 10012 < drawer 10013 < modal 10014), or the dialog gets occluded.
 
 > **Warning**: Do not put `color: #fff` on primary-filled controls. Dark theme primary is light (`#a5b4fc`); use `var(--emh-on-primary)`.
+
+> **Warning**: Magnet entries are `{ id, value, preview? }`. `preview` is whatslink cache (`screenshots` as `{ screenshot, time? }[]`). `normMagnets` must preserve `preview`. Changing `value` must drop `preview`. Preview fetch uses `MAGNET_PREVIEW.fetchAndCache` + `@connect whatslink.info`; never call `markItem` solely to attach preview — use `CODE_LIBRARY.setMagnetPreview` (works for main + trash).
