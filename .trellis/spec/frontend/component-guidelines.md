@@ -83,6 +83,9 @@ Key components: `StatusTag`, `ItemRow`, `DetailDrawer`, `ConfirmModal`, `PromptM
 
 - **真实网址后台加载（原生 GM，无桥）**：`STANDALONE.open()` 用 `GM_openInTab(standaloneUrl(), { active: false, insert: true })` 后台加载同源真实网址（`location.href.split('#')[0] + '#emh-standalone'`），`GM_openInTab` 不可用时回退 `window.open`。脚本在独立页**原生运行**，GM 存储/网络齐全，父页可关闭；无 postMessage 桥、无 Blob URL、无源码捕获。
 - **standalone 检测**：`initialize()` 最前判断 `location.hash/search` 含 `emh-standalone` → 置 `window.__EMH_STANDALONE = true` + 标题「番号库 · 独立页」。后续所有 standalone 分支（双栏布局注入、自动展示、详情联动、菜单入口隐藏）都以该标志驱动。
+- **加载封面（@run-at document-start）**：脚本 `@run-at document-start`，standalone 页在 `initialize()` 立即 `injectStandaloneCover()`——`body { visibility: hidden }` + 全屏「加载中」spinner，避免闪现站点内容；`bootPanel` 等 `document.body` 出现后再挂载面板，面板 `showPanel()` 后 `removeStandaloneCover()`（成功/降级/异常三路都需移除，防卡加载）。**document-start 下 DOM 未就绪**：样式注入须 `(document.head || document.documentElement)`；`bootPanel` 内先等 body。
+- **standalone 首帧展开用 init() 预置 visible，勿在 render 后同步 showPanel**：`CodeManagerPanel.init()` 里先 `PanelStore.set({ visible: true })` 再 `render()`（preact `useEffect` 延迟执行，render 后同步 `showPanel()` 会先于 `PanelStore.subscribe` 注册，notify 时无监听者 → 状态更新丢失、面板永不显示；外部 2s 轮询不一定触发重渲染）。非 standalone 页保持 `visible:false` 由用户点击 toggle 展开。
+- **灯箱方向键 vs 浏览器历史导航**：Chrome/Edge 在无横向滚动页面对 ←/→ 会触发前进/后退。灯箱 keydown 必须 `e.preventDefault()`（+ `stopPropagation()`、`{ passive: false }`、以「`_open` 或 lightbox 根含 `open` 类」判断可见性兜底）；面板 kbdRef 在 `MAGNET_PREVIEW._open` 时对 ←/→ 也 `preventDefault` 兜底。任何接管方向键的全局 keydown 都必须 preventDefault，否则浏览器历史导航吞掉切换。
 - **入口**：Header `⋯` 菜单「在新标签页打开」→ `actions.openStandalone` → `STANDALONE.open()`；standalone 页自身不显示该入口（`onOpenStandalone` 传 null）。
 - **重载必须 force**：`CODE_LIBRARY.init()` 幂等早退会让 cross-tab/2s poll 的「重载」变 no-op → `init(force)`，cross-tab/2s poll 一律 `init(true)`。
 - **样式注入顺序**：`createStyles()` 在 `await ensurePreact()` 之后注入，会覆盖早先的 `injectStandaloneStyles()` override（同特异性后到者胜）→ 冲突属性用 `!important`。

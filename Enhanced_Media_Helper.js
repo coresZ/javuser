@@ -49,7 +49,7 @@
 // @grant          GM_openInTab
 // @connect        1cili.com
 // @connect        whatslink.info
-// @run-at         document-idle
+// @run-at         document-start
 // @noframes
 // @license        MPL
 // @namespace      cdn.bootcss.com
@@ -817,11 +817,14 @@
                 this.step(dx < 0 ? 1 : -1);
             }, { passive: true });
             document.addEventListener('keydown', (e) => {
-                if (!this._open) return;
-                if (e.key === 'Escape') { e.preventDefault(); this.close(); }
-                else if (e.key === 'ArrowLeft') { e.preventDefault(); this.step(-1); }
-                else if (e.key === 'ArrowRight') { e.preventDefault(); this.step(1); }
-            });
+                // 灯箱打开时接管方向键：必须 preventDefault 阻止浏览器前进/后退
+                const visible = this._open || (this._els && this._els.root && this._els.root.classList.contains('open'));
+                if (!visible) return;
+                const k = e.key;
+                if (k === 'Escape') { e.preventDefault(); e.stopPropagation(); this.close(); }
+                else if (k === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); this.step(-1); }
+                else if (k === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); this.step(1); }
+            }, { passive: false });
             this._ready = true;
         },
 
@@ -1482,7 +1485,42 @@
                 .custom-toast.leaving { opacity: 0; transform: none; }
             }
         `;
-        document.head.appendChild(style);
+        (document.head || document.documentElement).appendChild(style);
+    }
+
+    // standalone 加载封面：document-start 起隐藏站点内容，面板就绪前显示"加载中"
+    function injectStandaloneCover() {
+        if (document.getElementById('emh-standalone-cover-style')) return;
+        const st = document.createElement('style');
+        st.id = 'emh-standalone-cover-style';
+        st.textContent = `
+            html { background: #08090a !important; }
+            body { visibility: hidden !important; }
+            #emh-standalone-loading {
+                position: fixed; inset: 0; z-index: 2147483646;
+                display: flex; align-items: center; justify-content: center; gap: 12px;
+                background: #08090a; color: #9ca3af;
+                font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            }
+            .emh-loading-spinner {
+                width: 16px; height: 16px; border-radius: 50%;
+                border: 2px solid rgba(255,255,255,0.12); border-top-color: #5e6ad2;
+                animation: emh-loading-spin 0.8s linear infinite;
+            }
+            @keyframes emh-loading-spin { to { transform: rotate(360deg); } }
+        `;
+        (document.head || document.documentElement).appendChild(st);
+        const ov = document.createElement('div');
+        ov.id = 'emh-standalone-loading';
+        ov.innerHTML = '<span class="emh-loading-spinner"></span>正在加载番号库…';
+        document.documentElement.appendChild(ov);
+    }
+
+    function removeStandaloneCover() {
+        const st = document.getElementById('emh-standalone-cover-style');
+        if (st) st.remove();
+        const ov = document.getElementById('emh-standalone-loading');
+        if (ov) ov.remove();
     }
 
     // standalone 独立页布局：全屏面板 + 左列表右详情双栏
@@ -1529,7 +1567,7 @@
             /* 详情 Hero/卡片层次已迁移至 createStyles（.emh-detail-body.unified），
                standalone 仅保留双栏面板覆盖，不再重复定义 */
         `;
-        document.head.appendChild(style);
+        (document.head || document.documentElement).appendChild(style);
     }
     function createFallbackToggle(clickHandler) {
         const existing = document.getElementById('emh-code-manager-toggle');
@@ -2609,8 +2647,11 @@
             const kbdRef = useRef(null);
             kbdRef.current = (e) => {
                 if (!st.visible) return;
-                // 灯箱打开时由 MAGNET_PREVIEW 处理键盘，不劫持
-                if (MAGNET_PREVIEW._open) return;
+                // 灯箱打开时由 MAGNET_PREVIEW 处理键盘；方向键兜底 preventDefault 防止浏览器历史导航
+                if (MAGNET_PREVIEW._open) {
+                    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') e.preventDefault();
+                    return;
+                }
                 const key = e.key;
                 if (key === 'Escape') {
                     if (st.menuOpen) { e.preventDefault(); actions.toggleMenu(); return; }
@@ -2926,6 +2967,9 @@
             init: function() {
                 if (this.initialized) return;
                 this.initialized = true;
+                // standalone：首帧即展开（render 前设 visible），避免 showPanel 在
+                // useEffect 订阅注册前丢失更新（preact useEffect 延迟执行）
+                if (window.__EMH_STANDALONE) PanelStore.set({ visible: true });
                 this.createStyles();
                 this.createToggleButton();
                 this.mountEl = document.createElement('div');
@@ -3494,18 +3538,29 @@
     async function bootPanel() {
         injectCoreStyles();
         if (window.__EMH_STANDALONE) injectStandaloneStyles();
+        // @run-at document-start：body 可能尚未解析，等待其出现再挂载面板
+        if (!document.body) {
+            await new Promise((resolve) => {
+                const iv = setInterval(() => { if (document.body) { clearInterval(iv); resolve(); } }, 15);
+            });
+        }
         try {
             if (await ensurePreact()) {
                 window.CodeManagerPanel = buildPanel();
                 window.CodeManagerPanel.init(); // init 内部 createToggleButton 创建按钮
-                if (window.__EMH_STANDALONE) window.CodeManagerPanel.showPanel();
+                if (window.__EMH_STANDALONE) {
+                    window.CodeManagerPanel.showPanel();
+                    removeStandaloneCover();
+                }
             } else {
                 console.error('EMH: Preact 依赖加载失败，使用降级按钮');
+                if (window.__EMH_STANDALONE) removeStandaloneCover();
                 createFallbackToggle(() => UTILS.showToast('面板组件依赖加载失败，请检查网络后刷新页面', 'error'));
             }
         } catch (e) {
             console.error('EMH: 面板初始化失败', e);
             // 初始化异常时也保证按钮可见
+            if (window.__EMH_STANDALONE) removeStandaloneCover();
             createFallbackToggle(() => UTILS.showToast('面板初始化失败，请刷新页面重试', 'error'));
         }
     }
@@ -3515,6 +3570,8 @@
         if (location.hash.indexOf('emh-standalone') >= 0 || location.search.indexOf('emh-standalone') >= 0) {
             window.__EMH_STANDALONE = true;
             try { document.title = '番号库 · 独立页'; } catch (e) {}
+            // document-start 起隐藏站点、显示加载中
+            injectStandaloneCover();
         }
         THEME.apply(THEME.get());
         CODE_LIBRARY.init();

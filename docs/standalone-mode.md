@@ -37,11 +37,13 @@
 
 ### standalone 检测
 
-`initialize()` 最前判断 `location.hash` / `location.search` 含 `emh-standalone` → 置 `window.__EMH_STANDALONE = true` 并设标题「番号库 · 独立页」。之后所有 standalone 分支由该标志驱动：
+脚本 `@run-at document-start`。`initialize()` 最前判断 `location.hash` / `location.search` 含 `emh-standalone` → 置 `window.__EMH_STANDALONE = true` 并设标题「番号库 · 独立页」，同时 `injectStandaloneCover()`：隐藏 `body`（`visibility: hidden`）并显示全屏「加载中」spinner，避免闪现站点内容。之后所有 standalone 分支由该标志驱动：
 
-- `bootPanel`：注入 `injectStandaloneStyles()`（双栏大画布布局），完成后自动 `CodeManagerPanel.showPanel()`
+- `bootPanel`：先等 `document.body` 出现，注入 `injectStandaloneStyles()`（双栏大画布布局），完成后自动 `CodeManagerPanel.showPanel()`，随后 `removeStandaloneCover()`（成功 / 降级 / 异常三路都移除，防卡加载）
 - 主从联动：standalone 下 `selectedIndex` 变化 → 自动 `openDetail`（右侧展示详情）
 - Header `⋯` 菜单：standalone 页不显示「在新标签页打开」入口（`onOpenStandalone` 传 null）
+
+> `document-start` 下 DOM 未就绪：样式注入一律 `(document.head || document.documentElement)`；面板挂载前须等 `document.body`。
 
 ### 打开与回退
 
