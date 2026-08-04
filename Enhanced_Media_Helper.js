@@ -46,6 +46,7 @@
 // @grant          GM_getValue
 // @grant          GM_addValueChangeListener
 // @grant          GM_xmlhttpRequest
+// @grant          GM_openInTab
 // @connect        1cili.com
 // @connect        whatslink.info
 // @run-at         document-idle
@@ -57,10 +58,6 @@
 // ==/UserScript==
 
 (function () {
-    'use strict';
-
-    // 捕获主脚本源码：供 standalone 新标签页模式内联复用（STANDALONE.buildHtml 使用）
-    const __EMH_MAIN__ = function emhMain() {
     'use strict';
 
     const CONFIG = {
@@ -630,115 +627,26 @@
         }
     };
 
-    // ===== standalone 新标签页模式：opener postMessage 桥（父页侧） =====
+    // ===== standalone 独立页：后台加载同源真实网址（原生 GM 能力，不依赖父页） =====
     const STANDALONE = {
-        win: null,
-        _url: null,
-        _installed: false,
-
-        buildHtml: function(src) {
-            return `<!doctype html><html><head><meta charset="utf-8"><title>番号库 · 独立页</title></head><body><script>
-var __EMH_SRC = ${JSON.stringify(src).replace(/<\//g, '<\\/')};
-window.__EMH_STANDALONE = true;
-window.__EMH_STORAGE = {};
-var __emhSeq = 0;
-var __emhPending = {};
-function __emhPost(m){ try { if (window.opener) window.opener.postMessage(Object.assign({ __emh: 1 }, m), '*'); } catch (e) {} }
-function __emhRefresh(){ try { CODE_LIBRARY.init(true); updateCodeStatusIndicators(); if (window.CodeManagerPanel) window.CodeManagerPanel.refreshPanelContent(); } catch (e) {} }
-function __emhParentClosed(){ try { var d = document.createElement('div'); d.id = 'emh-standalone-banner'; d.textContent = '父页面已关闭：此页仍可浏览，但更改可能无法同步到番号库。'; document.body.appendChild(d); } catch (e) {} }
-function __emhStart(){ var s = document.createElement('script'); s.textContent = __EMH_SRC; document.body.appendChild(s); }
-window.GM_getValue = function(k, d){ return Object.prototype.hasOwnProperty.call(window.__EMH_STORAGE, k) ? window.__EMH_STORAGE[k] : (d !== undefined ? d : null); };
-window.GM_setValue = function(k, v){ window.__EMH_STORAGE[k] = String(v); __emhPost({ type: 'setKey', key: k, value: String(v) }); };
-window.GM_addValueChangeListener = function(){ return 0; };
-window.GM_xmlhttpRequest = function(cfg){ var id = ++__emhSeq; __emhPending[id] = { cb: function(d){ if (d.ok) { if (cfg.onload) cfg.onload({ status: d.status, responseText: d.responseText }); } else if (d.error === 'timeout') { if (cfg.ontimeout) cfg.ontimeout(); } else { if (cfg.onerror) cfg.onerror(); } } }; __emhPost({ type: 'fetch', id: id, cfg: { method: cfg.method || 'GET', url: cfg.url, headers: cfg.headers, timeout: cfg.timeout } }); };
-window.addEventListener('message', function (e) {
-  var d = e.data;
-  if (!d || d.__emh !== 1 || e.source !== window.opener) return;
-  if (d.type === 'initResult' && d.ok) { window.__EMH_STORAGE = d.storage || {}; __emhStart(); }
-  else if (d.type === 'libraryUpdated') { window.__EMH_STORAGE = d.storage || {}; __emhRefresh(); }
-  else if (d.type === 'parentClosed') { __emhParentClosed(); }
-  else if (d.type === 'fetchResult') { var p = __emhPending[d.id]; if (!p) return; delete __emhPending[d.id]; p.cb(d); }
-});
-__emhPost({ type: 'init', id: 0 });
-</script></body></html>`;
+        // 同源真实网址 + #emh-standalone 标记；该页脚本原生运行 → GM 数据/网络齐全，父页可关闭
+        standaloneUrl: function() {
+            return location.href.split('#')[0] + '#emh-standalone';
         },
 
         open: function() {
-            const src = window.__EMH_SRC;
-            if (!src || typeof src !== 'string') { UTILS.showToast('无法获取脚本源码', 'error'); return; }
-            if (this.win && !this.win.closed) { this.win.focus(); return; }
-            const html = this.buildHtml(src);
-            const blob = new Blob([html], { type: 'text/html' });
-            this._url = URL.createObjectURL(blob);
-            this.win = window.open(this._url, '_blank');
-            if (!this.win) {
-                UTILS.showToast('浏览器拦截了新窗口，请允许弹窗后重试', 'warning');
-                try { URL.revokeObjectURL(this._url); } catch (e) {}
-                this._url = null;
-                return;
-            }
-            this.installListener();
-            UTILS.showToast('已在新标签页打开番号库', 'success');
-        },
-
-        installListener: function() {
-            if (this._installed) return;
-            this._installed = true;
-            window.addEventListener('message', (e) => {
-                const d = e.data;
-                if (!d || d.__emh !== 1) return;
-                if (e.source !== STANDALONE.win) return;
-                if (d.type === 'init') {
-                    const storage = {
-                        emh_code_library: typeof GM_getValue === 'function' ? GM_getValue(CONFIG.codeManager.storageKey) : null,
-                        emh_code_trash: typeof GM_getValue === 'function' ? GM_getValue(CONFIG.codeManager.trashStorageKey) : null,
-                        emh_ui_theme: THEME.get(),
-                        emh_sync_timestamp: typeof GM_getValue === 'function' ? GM_getValue('emh_sync_timestamp') : null
-                    };
-                    try { e.source.postMessage({ __emh: 1, id: d.id, type: 'initResult', ok: true, storage }, '*'); } catch (err) {}
-                } else if (d.type === 'setKey') {
-                    try { if (typeof GM_setValue === 'function') GM_setValue(d.key, d.value); } catch (err) {}
-                    if (d.key === CONFIG.codeManager.storageKey || d.key === CONFIG.codeManager.trashStorageKey) {
-                        CODE_LIBRARY.init(true);
-                        window.dispatchEvent(new CustomEvent('emh_library_updated', {
-                            detail: { type: 'library_update', data: CODE_LIBRARY.data }
-                        }));
-                    }
-                } else if (d.type === 'fetch') {
-                    const cfg = d.cfg || {};
-                    if (typeof GM_xmlhttpRequest !== 'function') {
-                        try { e.source.postMessage({ __emh: 1, id: d.id, type: 'fetchResult', ok: false, error: 'no-gm' }, '*'); } catch (err) {}
-                        return;
-                    }
-                    const reply = (payload) => { try { e.source.postMessage(Object.assign({ __emh: 1, id: d.id, type: 'fetchResult' }, payload), '*'); } catch (err) {} };
-                    GM_xmlhttpRequest({
-                        method: cfg.method || 'GET',
-                        url: cfg.url,
-                        headers: cfg.headers,
-                        timeout: cfg.timeout,
-                        onload: (res) => reply({ ok: true, status: res && res.status, responseText: res && res.responseText }),
-                        onerror: () => reply({ ok: false, error: 'network' }),
-                        ontimeout: () => reply({ ok: false, error: 'timeout' })
-                    });
+            const url = this.standaloneUrl();
+            // 后台加载（不抢焦点）；GM_openInTab 不可用时回退 window.open
+            try {
+                if (typeof GM_openInTab === 'function') {
+                    GM_openInTab(url, { active: false, insert: true });
+                    UTILS.showToast('已在后台加载番号库独立页', 'success');
+                    return;
                 }
-            });
-        },
-
-        forwardLibrary: function() {
-            if (!this.win || this.win.closed) { this.win = null; return; }
-            const storage = {
-                emh_code_library: typeof GM_getValue === 'function' ? GM_getValue(CONFIG.codeManager.storageKey) : null,
-                emh_code_trash: typeof GM_getValue === 'function' ? GM_getValue(CONFIG.codeManager.trashStorageKey) : null,
-                emh_ui_theme: THEME.get(),
-                emh_sync_timestamp: typeof GM_getValue === 'function' ? GM_getValue('emh_sync_timestamp') : null
-            };
-            try { this.win.postMessage({ __emh: 1, type: 'libraryUpdated', storage }, '*'); } catch (e) {}
-        },
-
-        notifyParentClosed: function() {
-            if (this.win && !this.win.closed) {
-                try { this.win.postMessage({ __emh: 1, type: 'parentClosed' }, '*'); } catch (e) {}
-            }
+            } catch (e) {}
+            const w = window.open(url, '_blank');
+            if (w) UTILS.showToast('已在新标签页打开番号库', 'success');
+            else UTILS.showToast('浏览器拦截了新窗口，请允许弹窗后重试', 'warning');
         }
     };
 
@@ -1584,11 +1492,6 @@ __emhPost({ type: 'init', id: 0 });
         style.id = 'emh-standalone-style';
         style.textContent = `
             html, body { margin: 0; height: 100%; background: var(--emh-bg); }
-            #emh-standalone-banner {
-                position: fixed; top: 0; left: 0; right: 0; z-index: 10070;
-                padding: 8px 16px; text-align: center; font-size: 12px;
-                background: var(--emh-warning); color: var(--emh-on-solid);
-            }
             #emh-code-manager-toggle, .emh-panel-backdrop { display: none !important; }
             #emh-code-manager-panel .emh-panel-resize { display: none !important; }
             #emh-code-manager-panel {
@@ -3562,7 +3465,6 @@ __emhPost({ type: 'init', id: 0 });
             if (e.detail.type === 'library_update') {
                 updateCodeStatusIndicators();
                 if (window.CodeManagerPanel && window.CodeManagerPanel.isVisible) window.CodeManagerPanel.refreshPanelContent();
-                STANDALONE.forwardLibrary();
             }
         });
 
@@ -3572,7 +3474,6 @@ __emhPost({ type: 'init', id: 0 });
                     CODE_LIBRARY.init(true);
                     updateCodeStatusIndicators();
                     if (window.CodeManagerPanel && window.CodeManagerPanel.isVisible) window.CodeManagerPanel.refreshPanelContent();
-                    STANDALONE.forwardLibrary();
                 }
             });
         }
@@ -3610,9 +3511,13 @@ __emhPost({ type: 'init', id: 0 });
     }
 
     function initialize() {
+        // standalone 独立页：同源真实网址 + #emh-standalone 标记 → 原生 GM 能力，无需父页桥
+        if (location.hash.indexOf('emh-standalone') >= 0 || location.search.indexOf('emh-standalone') >= 0) {
+            window.__EMH_STANDALONE = true;
+            try { document.title = '番号库 · 独立页'; } catch (e) {}
+        }
         THEME.apply(THEME.get());
         CODE_LIBRARY.init();
-        window.addEventListener('beforeunload', () => STANDALONE.notifyParentClosed());
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => main());
         } else {
@@ -3623,8 +3528,4 @@ __emhPost({ type: 'init', id: 0 });
     }
 
     initialize();
-    };
-    __EMH_MAIN__();
-    // 捕获源码须自带执行：toString() 只含函数声明，子页注入后需调用才能运行主脚本（函数名与声明处 emhMain 一致）
-    try { window.__EMH_SRC = __EMH_MAIN__.toString() + "\n;try { emhMain(); } catch (e) { console.error('EMH: standalone 子页主脚本执行失败', e); }"; } catch (e) {}
 })();

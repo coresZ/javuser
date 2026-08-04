@@ -81,13 +81,12 @@ Key components: `StatusTag`, `ItemRow`, `DetailDrawer`, `ConfirmModal`, `PromptM
 
 ## Standalone 独立页模式
 
-- **源码捕获**：主脚本末尾 `window.__EMH_SRC = __EMH_MAIN__.toString() + "\n;try { __EMH_MAIN__(); } catch (e) { console.error(e); }"` —— `fn.toString()` 返回**裸函数声明不执行**，必须追加自调用，否则子页空白（showstopper）。
-- **内联转义**：把源码嵌入子页 `<script>` 时用 `JSON.stringify(src).replace(/<\//g, '<\\/')` 在**序列化边界**转义 `</`。不能全局改源码（`<\/` 在 htm 标记模板里是 SyntaxError）。`<\/` 经 JSON 解析还原为 `/`。
-- **opener 桥**：postMessage 协议 `{ __emh: 1, type, id }`；父页只处理 `e.source === STANDALONE.win`，子页只处理 `e.source === window.opener`。`init` 握手回传全量存储快照 → 子页**之后**注入主脚本（`CODE_LIBRARY.init()` 才能同步读到）。
-- **重载必须 force**：`CODE_LIBRARY.init()` 幂等早退会让桥的 setKey/libraryUpdated「重载」变 no-op → `init(force)`，bridge/cross-tab/2s poll 一律 `init(true)`。
+- **真实网址后台加载（原生 GM，无桥）**：`STANDALONE.open()` 用 `GM_openInTab(standaloneUrl(), { active: false, insert: true })` 后台加载同源真实网址（`location.href.split('#')[0] + '#emh-standalone'`），`GM_openInTab` 不可用时回退 `window.open`。脚本在独立页**原生运行**，GM 存储/网络齐全，父页可关闭；无 postMessage 桥、无 Blob URL、无源码捕获。
+- **standalone 检测**：`initialize()` 最前判断 `location.hash/search` 含 `emh-standalone` → 置 `window.__EMH_STANDALONE = true` + 标题「番号库 · 独立页」。后续所有 standalone 分支（双栏布局注入、自动展示、详情联动、菜单入口隐藏）都以该标志驱动。
+- **入口**：Header `⋯` 菜单「在新标签页打开」→ `actions.openStandalone` → `STANDALONE.open()`；standalone 页自身不显示该入口（`onOpenStandalone` 传 null）。
+- **重载必须 force**：`CODE_LIBRARY.init()` 幂等早退会让 cross-tab/2s poll 的「重载」变 no-op → `init(force)`，cross-tab/2s poll 一律 `init(true)`。
 - **样式注入顺序**：`createStyles()` 在 `await ensurePreact()` 之后注入，会覆盖早先的 `injectStandaloneStyles()` override（同特异性后到者胜）→ 冲突属性用 `!important`。
-- 子页 GM 代理：`GM_getValue` 同步读缓存；`GM_setValue` 写缓存 + post；`GM_xmlhttpRequest` pending 表按 id 回调；`GM_addValueChangeListener` no-op（同步走父页推送）。
-- 父页 `beforeunload` → post `parentClosed` → 子页横幅降级提示；`forwardLibrary` 检测 `win.closed` 清理。
+- `@grant` 需含 `GM_openInTab`；无跨页同步协议（两页各自读同一 GM 存储，经 cross-tab 变更监听收敛）。
 
 ## 可调尺寸面板 & 图标按钮
 
