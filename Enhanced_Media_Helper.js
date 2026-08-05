@@ -3005,8 +3005,8 @@
                 styleElement.textContent = `
                     .emh-code-manager-panel {
                         position: fixed; top: 0;
-                        right: calc(-1 * (var(--emh-panel-w, 520px) + 40px));
-                        width: var(--emh-panel-w, 520px); height: 100vh;
+                        right: calc(-1 * (min(var(--emh-panel-w, 520px), calc(100vw - 24px)) + 40px));
+                        width: min(var(--emh-panel-w, 520px), calc(100vw - 24px)); height: 100vh;
                         background: var(--emh-bg);
                         box-shadow: var(--emh-shadow-lg); z-index: 10010;
                         border-left: 1px solid var(--emh-border);

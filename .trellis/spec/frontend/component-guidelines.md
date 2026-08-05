@@ -94,6 +94,7 @@ Key components: `StatusTag`, `ItemRow`, `DetailDrawer`, `ConfirmModal`, `PromptM
 ## 可调尺寸面板 & 图标按钮
 
 - **面板宽度可调**：宽度由 CSS 变量 `--emh-panel-w`（默认 520）驱动；面板隐藏偏移 `right: calc(-1 * (var(--emh-panel-w) + 40px))`，`.visible` 置 0。左缘 `.emh-panel-resize` 手柄（pointer events）拖拽 320–900 clamp，持久化 GM `emh_panel_size`，启动恢复。**注意**：面板 `overflow: hidden` 会裁剪位于边缘的手柄——手柄须完全在面板内（`left:0` + 内部抓握条），并加 `touch-action: none`。拖动期间禁 `transition`。
+- **视口溢出防护（DevTools/窄窗口/缩放）**：宽度与隐藏偏移均用 `min(var(--emh-panel-w, 520px), calc(100vw - 24px))` 约束——面板永不超出视口；`emh_panel_size` 仍存用户偏好（大屏恢复），显示宽度被视口实时裁剪。手机媒体查询（≤576px `width:100%`）在样式表更靠后、同特异性，仍优先于 `min()`（全宽行为不变）；standalone `width:auto` 不受影响。
 - **详情层次统一（侧栏/新页签一致）**：`DetailDrawer` body 恒用 `.emh-detail-body.unified`：Hero 标题（`.emh-detail-hero`）→ meta 行（`.emh-detail-meta-line`）→ 信息/磁力卡片（`.emh-detail-section`），底部 meta 已移除。抽屉宽度 `clamp(320px, 42%, 460px)`；入场动画 `translateX(100%)`（勿用 `clamp()`，其百分比按元素自身宽度解析，与含块宽度分歧）。顶栏统一 52px 纯色、去毛玻璃；footer 同背景（勿残留 `--emh-glass`）。
 - **图标按钮 + 展开标签**：文本按钮转 icon-only SVG + `<span class="emh-expand-label">`，`.btn.emh-expand` hover/`focus-visible` 时 label `max-width` 0→12em 滑出（`gap:0`，间距用 label `margin-left`）；必须带 `aria-label`；`prefers-reduced-motion` 下直显。紧凑按钮（如 `.emh-magnet-btn`）需单独覆盖 padding，防 `.emh-expand` 通用 padding 撑大。footer 用 `flex-wrap: wrap` + `flex: 0 0 auto` 防窄宽溢出。
 
