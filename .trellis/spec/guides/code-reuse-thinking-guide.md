@@ -144,6 +144,58 @@ of that replay model.
 
 ---
 
+## Userscript Capability Extraction Pattern（javuser → favjs kit）
+
+**Problem**: javuser 用户脚本能力（番号检测/高亮/弹窗等）被多个脚本复用时，若继续 copy-paste，bug 修复不传播、行为漂移。
+
+**Solution**: 跨仓库抽取为独立 kit 项目。javuser 是源仓库，`D:\source\favjs\` 下放可复用的 kit 项目（独立 git 仓库），消费方用 `@require` 引入、以全局对象调用。
+
+```
+javuser/jav-code-scanner.user.js  (源，只读参考，不改动)
+  └── 抽取能力 → D:\source\favjs\jav-code-detector-kit
+        src/ + esbuild + banner.txt → dist/jav-code-detector-kit.js
+        globalName 'JavCodeDetector' 暴露 window.JavCodeDetector
+  消费方：page-picker-kit 等 @require 该产物
+```
+
+**三层抽象**（检测/高亮/动作）：
+- **检测层**：纯函数，零 DOM 零 GM（extract/extractAll/fromDmmCid/makeCode）——任何脚本可直接复用
+- **高亮层**：DOM 操作（linkify/clear），产物为色标 `[data-code]`
+- **动作层**：可插拔注册表（`registerAction({id,label,available,run})`），点击策略经 `onCodeClick: 'search' | 'menu' | fn(ctx)` 切换
+
+**Why**: 分层使「检测」「高亮」「动作」可独立复用；动作策略化让「点击直接搜索」vs「点击弹菜单」只是配置差异。
+
+**关键约定**：
+- kit 目录结构参照 `popup-viewer-v2`：`package.json`（scripts build/dev）、`build.mjs`（esbuild iife + globalName）、`banner.txt`（`==UserScript==` 头）、`src/`、`dist/`
+- GM 依赖能力（如字幕 API）在动作层 `available()` 返回 false，无 GM 时菜单自动隐藏——库本身零硬依赖
+- 抽取时行为零改动：直接搬运 + 样例矩阵比对（FC2/HEYZO/紧凑/带店码 CID 各形态）验证一致性
+- 需 `@grant` 的能力（GM_xmlhttpRequest 等）在 banner 声明，但实现上带降级路径
+
+### Gotcha: esbuild globalName 返回的是 CommonJS 包装
+
+**Problem**: `globalName: 'JavCodeDetector'` 产物末尾是 `var JavCodeDetector = __toCommonJS(index_exports)`，返回 `{ default: kit, ... }` 而非 kit 本体。
+
+**Fix**: 在 `src/index.js` 内部显式 `window.JavCodeDetector = kit` 兜底赋值，调用方读 `window.JavCodeDetector` 而不是 esbuild 生成的全局变量。
+
+### Gotcha: 裸引用 `GM` 抛 ReferenceError
+
+**Problem**: `typeof GM_xmlhttpRequest === 'function' || typeof GM.xmlHttpRequest === 'function'` 在无 GM 环境直接抛 `ReferenceError: GM is not defined`。
+
+**Fix**:
+```javascript
+function hasGmHttp() {
+  if (typeof GM_xmlhttpRequest === 'function') return true;
+  if (typeof GM !== 'undefined' && GM && typeof GM.xmlHttpRequest === 'function') return true;
+  return false;
+}
+```
+
+### 同步策略
+
+检测/高亮逻辑从源脚本搬运后，源脚本后续改进需回同步（README 注明出处与同步职责）。每次同步用样例矩阵回归。
+
+---
+
 ## Gotcha: Python if/elif/else Exhaustive Check
 
 **Problem**: Python's if/elif/else chains have no compile-time exhaustive check. When you add a new value to a `Literal` type (e.g., `Platform`), existing if/elif/else chains silently fall through to `else` with wrong defaults.
