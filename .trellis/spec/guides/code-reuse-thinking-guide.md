@@ -146,6 +146,8 @@ of that replay model.
 
 ## Userscript Capability Extraction Pattern（javuser → favjs kit）
 
+> **⚠️ 2026-08-06 已废弃**：首个实践项目 `jav-code-detector-kit` 因用户判定「失败」已删除。以下技术结论仍有效（来自实测），但**模式本身未经受住实践验证**，未来做类似抽取前先与用户确认价值与维护意愿，不要默认套用。
+
 **Problem**: javuser 用户脚本能力（番号检测/高亮/弹窗等）被多个脚本复用时，若继续 copy-paste，bug 修复不传播、行为漂移。
 
 **Solution**: 跨仓库抽取为独立 kit 项目。javuser 是源仓库，`D:\source\favjs\` 下放可复用的 kit 项目（独立 git 仓库），消费方用 `@require` 引入、以全局对象调用。
