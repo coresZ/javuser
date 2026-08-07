@@ -1366,6 +1366,17 @@
 
     // ─── 可配置搜索源 ───────────────────────────────────────
 
+    /** X-Frame-Options 拒绝 iframe 的站（hostname 含 javdb），此类源一律强制 fetch 自渲染 */
+    function isFetchForcedHost(url) {
+        try {
+            const u = String(url || '').toLowerCase();
+            const host = (u.match(/^https?:\/\/([^\/?#]+)/i) || [null, u.split('/')[0]])[1] || '';
+            return host.split('.').some((part) => part.indexOf('javdb') >= 0);
+        } catch (e) {
+            return false;
+        }
+    }
+
     function normalizeProvider(p, idx) {
         if (!p || typeof p !== 'object') return null;
         const url = String(p.url || p.template || '').trim();
@@ -1376,7 +1387,7 @@
             name: String(p.name || '').trim() || id,
             hint: String(p.hint || '').trim(),
             url: url,
-            mode: p.mode === 'fetch' ? 'fetch' : 'iframe'
+            mode: (p.mode === 'fetch' || isFetchForcedHost(url)) ? 'fetch' : 'iframe'
         };
     }
 
@@ -6531,7 +6542,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         const frame = document.getElementById(NS + '-frame');
         const fetchBox = document.getElementById(NS + '-fetch');
         const p = getProvider(state.provider);
-        const isFetch = !!(p && p.mode === 'fetch');
+        const isFetch = !!(p && (p.mode === 'fetch' || autoFetchProviders[p.id]));
         if (box) box.classList.remove('show');
         if (frame) {
             try { frame.style.visibility = isFetch ? 'hidden' : ''; } catch (e) { /* ignore */ }
@@ -6547,6 +6558,9 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             frame.addEventListener('error', () => {
                 if (!state.frameUrl) return;
                 markHostFrameBlocked();
+                const code = state.active || '';
+                const p = getProvider(state.provider);
+                if (p && autoFallbackFetch(code, p)) return;
                 showFrameFallback(state.frameUrl, '本页预览加载失败。可能是本站或搜索站不允许嵌套显示，请用新标签打开。');
             });
             frame.addEventListener('load', () => {
@@ -6554,14 +6568,26 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 // 同源可读时若是浏览器错误页，切回退；跨域成功则保持嵌入
                 try {
                     const doc = frame.contentDocument;
-                    if (!doc) return;
+                    if (!doc) {
+                        // 跨域或错误页：尝试 HEAD 探测目标站是否声明拒绝嵌入
+                        const code = state.active || '';
+                        const p = getProvider(state.provider);
+                        probeFrameBlock(state.frameUrl, code, p);
+                        return;
+                    }
                     const t = String((doc.title || '') + ' ' + (doc.body && doc.body.innerText || '')).slice(0, 500);
                     if (/该内容被屏蔽|拒绝连接|refused to connect|blocked by|ERR_BLOCKED|X-Frame-Options|frame-ancestors/i.test(t)) {
                         markHostFrameBlocked();
+                        const code = state.active || '';
+                        const p = getProvider(state.provider);
+                        if (p && autoFallbackFetch(code, p)) return;
                         showFrameFallback(state.frameUrl, '搜索站拒绝在页面里显示，请用新标签打开。');
                     }
                 } catch (e) {
-                    // 跨域：能 load 且无 CSP 报错，视为嵌入成功
+                    // 跨域：能 load 且无 CSP 报错，视为嵌入成功；同时 HEAD 探测 XFO（跨域拒绝是 JS 盲区）
+                    const code = state.active || '';
+                    const p = getProvider(state.provider);
+                    probeFrameBlock(state.frameUrl, code, p);
                     hideFrameFallback();
                 }
             });
@@ -6577,6 +6603,9 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 // 仍可能是 frame-src 拦截本次 src
             }
             markHostFrameBlocked();
+            const code = state.active || '';
+            const p = getProvider(state.provider);
+            if (p && autoFallbackFetch(code, p)) return;
             showFrameFallback(state.frameUrl, '本站安全策略不允许嵌套显示该搜索页，已改为请用新标签打开。');
         });
     }
@@ -6585,15 +6614,99 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
 
     /** 预览代次：每次 loadFrame 递增，使在途 fetch 结果失效（切源/重搜时丢弃过期回调） */
     let fetchGen = 0;
+    /** 本会话已自动判定需 fetch 自渲染的源（provider.id → true）；探测/降级后不再走 iframe */
+    const autoFetchProviders = Object.create(null);
+    /** 本会话已对某源发起过嵌入探测（防重复 HEAD） */
+    const frameProbePending = Object.create(null);
 
-    function fetchSearchHtml(url) {
+    /** GM 响应头是否声明拒绝跨域嵌入（X-Frame-Options / CSP frame-ancestors） */
+    function frameDeniedByHeaders(headers) {
+        const h = String(headers || '').toLowerCase();
+        if (/x-frame-options\s*:\s*(deny|sameorigin)/.test(h)) return true;
+        // frame-ancestors 可能不是 CSP 头第一个指令（如 default-src 'self'; frame-ancestors 'none'）
+        const fa = h.match(/frame-ancestors\s+([^;\r\n]+)/i);
+        if (fa && fa[1]) {
+            const v = String(fa[1]).trim();
+            // 'none' / 'self' 或空 source-list → 跨域嵌入被拒；含 http(s) 白名单则可能允许
+            if (/'none'|'self'/.test(v) || !/^https?:/i.test(v)) return true;
+        }
+        return false;
+    }
+
+    /** 对 iframe 型源做一次 HEAD 探测：目标响应头拒绝嵌入 → 自动转 fetch 自渲染（会话记住） */
+    function probeFrameBlock(url, code, provider) {
+        if (!provider || provider.mode === 'fetch' || autoFetchProviders[provider.id] || frameProbePending[provider.id]) return;
+        frameProbePending[provider.id] = 1;
+        gmRequest({
+            url: url,
+            method: 'HEAD',
+            timeout: 8000,
+            headers: {
+                'User-Agent': navigator.userAgent,
+                'Accept': 'text/html,application/xhtml+xml'
+            }
+        }).then((res) => {
+            if (!frameDeniedByHeaders(res && res.responseHeaders)) return; // 允许嵌入，保持 iframe
+            autoFetchProviders[provider.id] = 1;
+            if (state.frameUrl === url && state.active === code) {
+                loadFetchPreview(code, provider);
+            }
+        }).catch(() => { /* HEAD 失败（405/403 等）：不打扰 iframe 现状 */ });
+    }
+
+    /** iframe 明确失败（error/CSP 违规/拒绝文案）时尝试自动降级 fetch；返回 true 表示已接管 */
+    function autoFallbackFetch(code, provider) {
+        if (!provider || provider.mode === 'fetch') return false;
+        const gm = (typeof GM_xmlhttpRequest === 'function')
+            || (typeof GM !== 'undefined' && GM && typeof GM.xmlHttpRequest === 'function');
+        if (!gm) return false;
+        autoFetchProviders[provider.id] = 1;
+        loadFetchPreview(code, provider);
+        return true;
+    }
+
+    /** 通用结果提取（未知站点兜底）：抓页面所有 a[href]，过滤导航/静态/短文本，去重 */
+    function extractGenericResults(doc, baseUrl, limit) {
+        const out = [];
+        const seen = Object.create(null);
+        const skipScheme = /^(#|javascript:|mailto:|tel:|data:|blob:)/i;
+        const navRe = /(^|\/)(home|index|search|login|signin|signup|register|about|contact|help|faq|terms|privacy|category|categories|tag|tags|top|new|best|random|fav|favorites|profile|user|setting|settings|admin|static|assets|css|js|img|images|upload|download|api|feed|rss|sitemap|robots|favicon)(\/|$)/i;
+        const nodes = doc.querySelectorAll('a[href]');
+        for (let i = 0; i < nodes.length && out.length < limit; i++) {
+            const a = nodes[i];
+            if (a.closest('script,style,noscript,nav,footer,header,form,button')) continue;
+            const raw = String(a.getAttribute('href') || '').trim();
+            if (!raw || skipScheme.test(raw)) continue;
+            let abs;
+            try { abs = new URL(raw, baseUrl).href; } catch (e) { continue; }
+            if (!/^https?:/i.test(abs) || seen[abs]) continue;
+            if (navRe.test(abs)) continue;
+            const text = String((a.textContent || '').replace(/\s+/g, ' ')).trim();
+            if (text.length < 6 || text.length > 200) continue;
+            const img = a.querySelector('img');
+            const imgSrc = img
+                ? String(img.getAttribute('data-src') || img.getAttribute('src') || '').trim()
+                : '';
+            seen[abs] = 1;
+            out.push({ title: text, uid: '', href: abs, img: imgSrc });
+        }
+        return out;
+    }
+
+    function fetchSearchHtml(url, provider) {
+        let referer = 'https://javdb.com/';
+        try {
+            const pUrl = String((provider && provider.url) || url || '');
+            const m = pUrl.match(/^(https?:\/\/[^\/?#]+)/i);
+            if (m) referer = m[1] + '/';
+        } catch (e) { /* ignore */ }
         return gmRequest({
             url: url,
             method: 'GET',
             timeout: 20000,
             acceptStatuses: [200],
             headers: {
-                'Referer': 'https://javdb.com/',
+                'Referer': referer,
                 'Accept': 'text/html,application/xhtml+xml',
                 'User-Agent': navigator.userAgent
             }
@@ -6603,8 +6716,9 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
     function renderFetchResults(html, code, provider) {
         const fetchBox = document.getElementById(NS + '-fetch');
         const items = [];
+        let doc = null;
         try {
-            const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+            doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
             doc.querySelectorAll('.movie-list .item, .movie-item').forEach((el) => {
                 const a = el.querySelector('a[href^="/v/"]') || el.querySelector('a[href]');
                 if (!a) return;
@@ -6625,6 +6739,11 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                         : ''
                 });
             });
+            // 通用兜底：javdb 专用选择器无结果时，抓页面链接做简单列表（未知站点也能用）
+            if (!items.length) {
+                const base = (String(provider.url || '').match(/^https?:\/\/[^/]+/i) || ['https://javdb.com'])[0];
+                extractGenericResults(doc, base, 30).forEach((it) => items.push(it));
+            }
         } catch (e) { /* ignore */ }
         if (!items.length) {
             if (fetchBox) fetchBox.hidden = true;
@@ -6663,14 +6782,13 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             fetchBox.hidden = false;
             fetchBox.innerHTML = '<div class="jcs-fetch-loading">正在请求 ' + escapeHtml(provider.name) + '，请稍候…</div>';
         }
-        fetchSearchHtml(url).then((html) => {
+        fetchSearchHtml(url, provider).then((html) => {
             if (gen !== fetchGen) return; // 已切源/重搜，丢弃过期结果
             renderFetchResults(html, code, provider);
         }).catch(() => {
             if (gen !== fetchGen) return; // 已切源/重搜，过期失败不再降级覆盖新预览
             if (fetchBox) fetchBox.hidden = true;
-            markHostFrameBlocked();
-            showFrameFallback(url, 'javdb 需要登录会话或反爬校验，请用新标签打开。');
+            showFrameFallback(url, '该搜索站需要登录会话或反爬校验，请用新标签打开。');
         });
     }
 
@@ -6681,8 +6799,8 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         const tip = document.getElementById(NS + '-ptip');
         const title = document.getElementById(NS + '-ptitle');
         const p = getProvider(state.provider);
-        // fetch 型源：GM 抓 HTML 自渲染，不走 iframe（X-Frame-Options 无法加请求头规避）
-        if (p && p.mode === 'fetch') {
+        // fetch 型源（含本会话被自动识别为拒绝 iframe 的源）：GM 抓 HTML 自渲染，不走 iframe
+        if (p && (p.mode === 'fetch' || autoFetchProviders[p.id])) {
             loadFetchPreview(code, p);
             return;
         }

@@ -54,4 +54,9 @@
   - 卡片文本/属性（title/uid/href/img）全部 `escapeHtml`；相对路径补全为绝对 URL。
   - 解析空 / 结构漂移时降级回退层，不白屏。
 - **异步竞态保护**：GM 请求在途时切源/切番号，旧 promise 回调不能渲染到新容器上。用**代次计数器**（如 `let fetchGen`，`loadFrame` 入口递增，回调比较代次丢弃过期结果），避免旧结果盖新预览 / 误标宿主禁嵌。
+- **通用自动降级（不逐站预制）**：iframe 预览失败不应只提示"用新标签"。任何 iframe 源被拒时自动转 fetch 自渲染：
+  - **响应头探测**：跨域 XFO 拒绝是 JS 盲区（iframe `load` 仍触发、`contentDocument` 抛错被误判成功）。用 GM `HEAD` 探测目标响应头 `X-Frame-Options: deny/sameorigin` / CSP `frame-ancestors 'none'/'self'`，拒绝则自动转 fetch。每源会话一次（防重 Map）。
+  - **会话记忆**：自动降级成功后记 `autoFetchProviders[id]`，`loadFrame` 分流条件含之，下次直接 fetch 不再探测。
+  - **失败信号兜底**：iframe `error` / `securitypolicyviolation` / 同源错误页文案命中 → GM 可用则自动转 fetch；fetch 失败是搜索站问题，**不要** `markHostFrameBlocked`（宿主禁嵌无关）。
+  - **通用结果提取兜底**：专用选择器无结果时抓页面所有 `a[href]`，过滤 scheme/导航路径/静态资源/过短文本去重——未知站点也能渲染链接列表。
 - 无 GM 环境：`gmRequest` reject → catch → 降级新标签，与 iframe 源现状一致。
