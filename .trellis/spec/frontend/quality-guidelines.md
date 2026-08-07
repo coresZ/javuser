@@ -51,3 +51,4 @@
 - [ ] 有 reduced-motion 兜底
 - [ ] 有 focus-visible 焦点环
 - [ ] 无硬编码站点类名
+- [ ] fetch 型搜索源：href scheme 白名单 + 异步竞态代次保护（见 type-safety.md）

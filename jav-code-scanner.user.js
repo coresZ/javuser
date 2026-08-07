@@ -540,7 +540,8 @@
     const DEFAULT_PROVIDERS = [
         { id: 'cili', name: '1cili', hint: '磁力搜索', url: 'https://1cili.com/search?q={code}' },
         { id: 'av123', name: '123AV', hint: '在线播放', url: 'https://123av.com/cn/v/{code_lower}' },
-        { id: 'jable', name: 'Jable', hint: '在线播放', url: 'https://jable.tv/search/{code}/' }
+        { id: 'jable', name: 'Jable', hint: '在线播放', url: 'https://jable.tv/search/{code}/' },
+        { id: 'javdb', name: 'JavDB', hint: '数据库搜索', url: 'https://javdb.com/search?q={code}', mode: 'fetch' }
     ];
 
     const SKIP_SEL = '#' + NS + '-host,#' + NS + '-panel,#' + NS + '-popup,#' + NS + '-pick,#' + NS + '-sub,script,style,noscript,textarea,input,select,option,code,pre,[contenteditable="true"]';
@@ -785,6 +786,8 @@
         if (!isSubtitleOpen()) lockBodyScroll(false);
         const frame = root.querySelector('#' + NS + '-frame');
         try { if (frame) frame.src = 'about:blank'; } catch (e) { /* ignore */ }
+        const fetchBox = root.querySelector('#' + NS + '-fetch');
+        if (fetchBox) fetchBox.hidden = true;
     }
 
     function bindGlobalHotkeys() {
@@ -1372,7 +1375,8 @@
             id: id,
             name: String(p.name || '').trim() || id,
             hint: String(p.hint || '').trim(),
-            url: url
+            url: url,
+            mode: p.mode === 'fetch' ? 'fetch' : 'iframe'
         };
     }
 
@@ -4657,6 +4661,19 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
   border-radius:var(--jcs-radius-md);overflow:hidden;background:var(--jcs-surface)
 }
 #${NS}-win iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#fff}
+#${NS}-fetch{position:absolute;inset:0;z-index:1;overflow:auto;padding:14px;background:var(--jcs-surface);color:var(--jcs-text)}
+#${NS}-fetch[hidden]{display:none!important}
+#${NS}-fetch .jcs-fetch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px}
+#${NS}-fetch .jcs-fetch-card{display:flex;flex-direction:column;gap:6px;padding:8px;border:1px solid var(--jcs-line);
+  border-radius:var(--jcs-radius-sm);background:var(--jcs-fill-2);color:var(--jcs-text);text-decoration:none;
+  transition:border-color var(--jcs-fast) var(--jcs-ease),transform var(--jcs-fast) var(--jcs-ease)}
+#${NS}-fetch .jcs-fetch-card:hover{border-color:var(--jcs-accent-line);transform:translateY(-1px)}
+#${NS}-fetch .jcs-fetch-thumb{width:100%;aspect-ratio:3/4;overflow:hidden;border-radius:var(--jcs-radius-xs);background:var(--jcs-fill)}
+#${NS}-fetch .jcs-fetch-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+#${NS}-fetch .jcs-fetch-card strong{font-size:12px;line-height:1.35;font-weight:700;color:var(--jcs-soft);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#${NS}-fetch .jcs-fetch-card code{font:var(--jcs-mono);font-size:10.5px;color:var(--jcs-accent2)}
+#${NS}-fetch .jcs-fetch-loading{padding:36px 12px;text-align:center;color:var(--jcs-empty)}
 #${NS}-frame-fallback{
   position:absolute;inset:0;z-index:2;display:none;flex-direction:column;align-items:center;justify-content:center;
   gap:12px;padding:24px 20px;text-align:center;background:var(--jcs-surface);color:var(--jcs-text)
@@ -5548,6 +5565,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
           <iframe id="${NS}-frame" title="search"
             referrerpolicy="no-referrer-when-downgrade"
             sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-popups-to-escape-sandbox"></iframe>
+          <div id="${NS}-fetch" class="jcs-fetch" hidden></div>
           <div id="${NS}-frame-fallback" aria-live="polite">
             <div class="jcs-fb-ico" aria-hidden="true">!</div>
             <strong id="${NS}-fb-title">无法在本页预览</strong>
@@ -6475,6 +6493,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
     function showFrameFallback(url, reason) {
         const box = document.getElementById(NS + '-frame-fallback');
         const frame = document.getElementById(NS + '-frame');
+        const fetchBox = document.getElementById(NS + '-fetch');
         const title = document.getElementById(NS + '-fb-title');
         const desc = document.getElementById(NS + '-fb-desc');
         const urlEl = document.getElementById(NS + '-fb-url');
@@ -6503,16 +6522,21 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         if (frame) {
             try { frame.style.visibility = 'hidden'; } catch (e) { /* ignore */ }
         }
+        if (fetchBox) fetchBox.hidden = true;
         if (tip) tip.textContent = (url || '') + ' · 点网站名称用新标签打开';
     }
 
     function hideFrameFallback() {
         const box = document.getElementById(NS + '-frame-fallback');
         const frame = document.getElementById(NS + '-frame');
+        const fetchBox = document.getElementById(NS + '-fetch');
+        const p = getProvider(state.provider);
+        const isFetch = !!(p && p.mode === 'fetch');
         if (box) box.classList.remove('show');
         if (frame) {
-            try { frame.style.visibility = ''; } catch (e) { /* ignore */ }
+            try { frame.style.visibility = isFetch ? 'hidden' : ''; } catch (e) { /* ignore */ }
         }
+        if (fetchBox) fetchBox.hidden = !isFetch;
     }
 
     function bindFrameGuard(root) {
@@ -6557,12 +6581,111 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         });
     }
 
+    // ─── fetch 型搜索源（GM 请求 + 自渲染，用于 X-Frame-Options 拒绝 iframe 的站）───
+
+    /** 预览代次：每次 loadFrame 递增，使在途 fetch 结果失效（切源/重搜时丢弃过期回调） */
+    let fetchGen = 0;
+
+    function fetchSearchHtml(url) {
+        return gmRequest({
+            url: url,
+            method: 'GET',
+            timeout: 20000,
+            acceptStatuses: [200],
+            headers: {
+                'Referer': 'https://javdb.com/',
+                'Accept': 'text/html,application/xhtml+xml',
+                'User-Agent': navigator.userAgent
+            }
+        }).then((res) => (res && res.responseText) || '');
+    }
+
+    function renderFetchResults(html, code, provider) {
+        const fetchBox = document.getElementById(NS + '-fetch');
+        const items = [];
+        try {
+            const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+            doc.querySelectorAll('.movie-list .item, .movie-item').forEach((el) => {
+                const a = el.querySelector('a[href^="/v/"]') || el.querySelector('a[href]');
+                if (!a) return;
+                const titleEl = el.querySelector('.video-title') || el.querySelector('.uid') || a;
+                const title = String((titleEl && titleEl.textContent) || (el.getAttribute('title')) || a.textContent || '').trim();
+                const img = el.querySelector('img');
+                const uidEl = el.querySelector('.uid');
+                const href = String(a.getAttribute('href') || '').trim();
+                if (!href) return;
+                const abs = /^https?:/i.test(href) ? href : (String(provider.url || '').match(/^https?:\/\/[^/]+/i) || ['https://javdb.com'])[0] + (href.charAt(0) === '/' ? '' : '/') + href;
+                if (!/^https?:/i.test(abs)) return; // 只渲染 http(s) 链接，防 javascript: 等伪协议
+                items.push({
+                    title: title || code || '',
+                    uid: String((uidEl && uidEl.textContent) || '').trim(),
+                    href: abs,
+                    img: img
+                        ? String(img.getAttribute('data-src') || img.getAttribute('src') || '').trim()
+                        : ''
+                });
+            });
+        } catch (e) { /* ignore */ }
+        if (!items.length) {
+            if (fetchBox) fetchBox.hidden = true;
+            showFrameFallback(state.frameUrl || buildProviderUrl(code, provider.id), '搜索没有返回结果，请点下方网站，用新标签打开。');
+            return;
+        }
+        if (fetchBox) {
+            fetchBox.hidden = false;
+            fetchBox.innerHTML = '<div class="jcs-fetch-grid">' + items.map((it) =>
+                '<a class="jcs-fetch-card" href="' + escapeHtml(it.href) + '" target="_blank" rel="noopener noreferrer">' +
+                (it.img ? '<span class="jcs-fetch-thumb"><img loading="lazy" alt="" src="' + escapeHtml(it.img) + '" /></span>' : '') +
+                '<strong>' + escapeHtml(it.title) + '</strong>' +
+                (it.uid ? '<code>' + escapeHtml(it.uid) + '</code>' : '') +
+                '</a>'
+            ).join('') + '</div>';
+        }
+    }
+
+    function loadFetchPreview(code, provider) {
+        const frame = document.getElementById(NS + '-frame');
+        const fetchBox = document.getElementById(NS + '-fetch');
+        const tip = document.getElementById(NS + '-ptip');
+        const title = document.getElementById(NS + '-ptitle');
+        const gen = fetchGen;
+        const url = buildProviderUrl(code, provider.id);
+        state.frameUrl = url;
+        if (title) title.textContent = code + ' · ' + provider.name;
+        if (tip) tip.textContent = url;
+        clearTimeout(state.frameWatch);
+        hideFrameFallback();
+        if (frame) {
+            try { frame.src = 'about:blank'; } catch (e) { /* ignore */ }
+            try { frame.style.visibility = 'hidden'; } catch (e) { /* ignore */ }
+        }
+        if (fetchBox) {
+            fetchBox.hidden = false;
+            fetchBox.innerHTML = '<div class="jcs-fetch-loading">正在请求 ' + escapeHtml(provider.name) + '，请稍候…</div>';
+        }
+        fetchSearchHtml(url).then((html) => {
+            if (gen !== fetchGen) return; // 已切源/重搜，丢弃过期结果
+            renderFetchResults(html, code, provider);
+        }).catch(() => {
+            if (gen !== fetchGen) return; // 已切源/重搜，过期失败不再降级覆盖新预览
+            if (fetchBox) fetchBox.hidden = true;
+            markHostFrameBlocked();
+            showFrameFallback(url, 'javdb 需要登录会话或反爬校验，请用新标签打开。');
+        });
+    }
+
     function loadFrame(code, opts) {
+        fetchGen++; // 任何重新加载预览（切源/重搜/重试）都使在途 fetch 过期
         const o = opts || {};
         const frame = document.getElementById(NS + '-frame');
         const tip = document.getElementById(NS + '-ptip');
         const title = document.getElementById(NS + '-ptitle');
         const p = getProvider(state.provider);
+        // fetch 型源：GM 抓 HTML 自渲染，不走 iframe（X-Frame-Options 无法加请求头规避）
+        if (p && p.mode === 'fetch') {
+            loadFetchPreview(code, p);
+            return;
+        }
         const url = buildProviderUrl(code, p.id);
         state.frameUrl = url;
         if (title) title.textContent = code + ' · ' + p.name;
@@ -6621,7 +6744,8 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 id: p.id,
                 name: p.name,
                 url: p.url,
-                hint: p.hint || ''
+                hint: p.hint || '',
+                mode: p.mode === 'fetch' ? 'fetch' : 'iframe'
             })),
             providerActive: loadProviderId(),
             theme: state.theme || loadTheme(),
@@ -7999,7 +8123,12 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         let id = (idEl && idEl.value || '').trim();
         if (!id) id = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || ('p' + Date.now());
         const editId = (idEl && idEl.dataset.editId) || state.cfgEditId || '';
-        const item = normalizeProvider({ id, name, url, hint: (hintEl && hintEl.value) || '' });
+        const prevMode = editId ? getProviders().find((x) => x.id === editId) : null;
+        const item = normalizeProvider({
+            id, name, url,
+            hint: (hintEl && hintEl.value) || '',
+            mode: (prevMode && prevMode.mode) || undefined
+        });
         if (!item) {
             showToast('保存失败，请检查填写内容');
             return;

@@ -27,6 +27,9 @@ Desktop.ini
 *.new
 .tmp/
 
+# ===== Local backups =====
+backups/
+
 # ===== Node / build caches =====
 node_modules/
 dist/
