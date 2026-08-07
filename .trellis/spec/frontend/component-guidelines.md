@@ -6,7 +6,30 @@
 
 ## Overview
 
-This project's UI is a Preact + htm userscript panel (`Enhanced_Media_Helper.js`) injected into javgg.net. All components live inside `buildPanel()` in a factory closure sharing `PanelStore` (external-store state) and `html` (htm bound to Preact's `h`).
+本项目包含两个用户脚本，UI 采用两种组件模式：
+
+1. **Preact + htm 面板**（`Enhanced_Media_Helper.js`）：注入 javgg.net。所有组件在 `buildPanel()` 工厂闭包内，共享 `PanelStore`（external-store 状态）和 `html`（htm 绑定 Preact `h`）。
+2. **原生 DOM + 模板字符串**（`jav-code-scanner.user.js`）：ensure* 工厂函数逐组件构建 DOM，挂载到 `#jcs-host` 视口宿主层。
+
+两脚本共用同一套**设计 token 体系**（见 `design-system.md`），组件命名 `<缩写>-*` 前缀。
+
+---
+
+## 原生 DOM 组件模式（jav-code-scanner 实证）
+
+`jav-code-scanner.user.js` 的 UI 全部走「ensure* 工厂」模式：
+
+- **挂载层隔离**：所有组件挂 `#jcs-host`（`ensureHost` 868，fixed inset:0 + `pointer-events:none`，z-index 2147483000），避免被站点 body transform/滚动影响。
+- **幂等构建**：`ensurePanel`/`ensurePopup`/`ensureSubtitleModal`/`ensureSelPickUi` 检测根 id 已存在则复用，否则构建；检测 `data-ver !== SCRIPT_VER` 整体重建（版本自愈，5490）。
+- **防重绑**：逐按钮 `onclick` 直绑 + `dataset.jcsBound`/`_bound` 防重复。
+- **事件委托**：全局热键单点 `bindGlobalHotkeys`（790）；选源浮卡外部关闭用 document capture `pointerdown`（6302）；页面色标用 root 级事件委托读 `data-code`。
+- **DOM 重建纪律**：组件在版本升级时靠 data-ver 重建，不清除已绑的页面色标（`clearPageHighlight` 1589 显式调用）。
+
+> **Gotcha（本仓库真实教训）**：MutationObserver 循环里反复「全量重建」UI 会自反馈闪烁——组件构建必须幂等（已存在则跳过），仅重建真正失效部分。
+
+---
+
+## Preact 组件结构（Enhanced_Media_Helper 实证）
 
 Key components: `StatusTag`, `ItemRow`, `DetailDrawer`, `ConfirmModal`, `PromptModal`, `MagnetListModal`, `BatchProgressModal`, `HelpModal`, `ToastContainer`, `CodeManagerApp`; magnet lightbox + 缩略图索引条由 `MAGNET_PREVIEW`（原生 DOM）管理，宫格懒加载用 `LAZY` IntersectionObserver。
 
