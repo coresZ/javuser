@@ -1366,12 +1366,23 @@
 
     // ─── 可配置搜索源 ───────────────────────────────────────
 
-    /** X-Frame-Options 拒绝 iframe 的站（hostname 含 javdb），此类源一律强制 fetch 自渲染 */
+    /** X-Frame-Options 拒绝 iframe 的站（hostname 含 javdb），此类源跨域时强制 fetch 自渲染 */
     function isFetchForcedHost(url) {
         try {
             const u = String(url || '').toLowerCase();
             const host = (u.match(/^https?:\/\/([^\/?#]+)/i) || [null, u.split('/')[0]])[1] || '';
             return host.split('.').some((part) => part.indexOf('javdb') >= 0);
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /** 搜索源 URL 与当前页面是否同源（X-Frame-Options: SAMEORIGIN 放行同源嵌入，iframe 可用） */
+    function isSameOriginUrl(url) {
+        try {
+            const u = new URL(String(url || ''));
+            const cur = new URL(location.href);
+            return u.protocol === cur.protocol && u.host === cur.host;
         } catch (e) {
             return false;
         }
@@ -6542,7 +6553,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         const frame = document.getElementById(NS + '-frame');
         const fetchBox = document.getElementById(NS + '-fetch');
         const p = getProvider(state.provider);
-        const isFetch = !!(p && (p.mode === 'fetch' || autoFetchProviders[p.id]));
+        const isFetch = !!(p && (autoFetchProviders[p.id] || (p.mode === 'fetch' && !isSameOriginUrl(p.url))));
         if (box) box.classList.remove('show');
         if (frame) {
             try { frame.style.visibility = isFetch ? 'hidden' : ''; } catch (e) { /* ignore */ }
@@ -6619,16 +6630,22 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
     /** 本会话已对某源发起过嵌入探测（防重复 HEAD） */
     const frameProbePending = Object.create(null);
 
-    /** GM 响应头是否声明拒绝跨域嵌入（X-Frame-Options / CSP frame-ancestors） */
-    function frameDeniedByHeaders(headers) {
+    /** GM 响应头是否声明拒绝嵌入（X-Frame-Options / CSP frame-ancestors）；sameOrigin 时 SAMEORIGIN/'self' 放行 */
+    function frameDeniedByHeaders(headers, sameOrigin) {
         const h = String(headers || '').toLowerCase();
-        if (/x-frame-options\s*:\s*(deny|sameorigin)/.test(h)) return true;
+        if (/x-frame-options\s*:\s*(deny)/.test(h)) return true;
+        if (!sameOrigin && /x-frame-options\s*:\s*sameorigin/.test(h)) return true;
         // frame-ancestors 可能不是 CSP 头第一个指令（如 default-src 'self'; frame-ancestors 'none'）
         const fa = h.match(/frame-ancestors\s+([^;\r\n]+)/i);
         if (fa && fa[1]) {
             const v = String(fa[1]).trim();
-            // 'none' / 'self' 或空 source-list → 跨域嵌入被拒；含 http(s) 白名单则可能允许
-            if (/'none'|'self'/.test(v) || !/^https?:/i.test(v)) return true;
+            // 'none' 始终拒绝
+            if (/'none'/.test(v)) return true;
+            // 含 http(s) 白名单源 → 交由 iframe 实测，不在此判定拒绝
+            if (/^https?:/i.test(v)) return false;
+            // 仅 'self' 或空：'self' 同源放行，跨域拒绝；空 source-list 默认拒绝
+            if (/'self'/.test(v)) return !sameOrigin;
+            return true;
         }
         return false;
     }
@@ -6636,6 +6653,8 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
     /** 对 iframe 型源做一次 HEAD 探测：目标响应头拒绝嵌入 → 自动转 fetch 自渲染（会话记住） */
     function probeFrameBlock(url, code, provider) {
         if (!provider || provider.mode === 'fetch' || autoFetchProviders[provider.id] || frameProbePending[provider.id]) return;
+        // 同源：X-Frame-Options SAMEORIGIN 放行，iframe 必然可嵌入，无需探测
+        if (isSameOriginUrl(url)) return;
         frameProbePending[provider.id] = 1;
         gmRequest({
             url: url,
@@ -6646,7 +6665,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 'Accept': 'text/html,application/xhtml+xml'
             }
         }).then((res) => {
-            if (!frameDeniedByHeaders(res && res.responseHeaders)) return; // 允许嵌入，保持 iframe
+            if (!frameDeniedByHeaders(res && res.responseHeaders, false)) return; // 允许嵌入，保持 iframe
             autoFetchProviders[provider.id] = 1;
             if (state.frameUrl === url && state.active === code) {
                 loadFetchPreview(code, provider);
@@ -6656,7 +6675,8 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
 
     /** iframe 明确失败（error/CSP 违规/拒绝文案）时尝试自动降级 fetch；返回 true 表示已接管 */
     function autoFallbackFetch(code, provider) {
-        if (!provider || provider.mode === 'fetch') return false;
+        if (!provider || autoFetchProviders[provider.id]) return false;
+        // 同源源即使 mode:'fetch' 也走 iframe；iframe 失败时可降级 fetch（但同源本就应成功，兜底）
         const gm = (typeof GM_xmlhttpRequest === 'function')
             || (typeof GM !== 'undefined' && GM && typeof GM.xmlHttpRequest === 'function');
         if (!gm) return false;
@@ -6799,8 +6819,8 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         const tip = document.getElementById(NS + '-ptip');
         const title = document.getElementById(NS + '-ptitle');
         const p = getProvider(state.provider);
-        // fetch 型源（含本会话被自动识别为拒绝 iframe 的源）：GM 抓 HTML 自渲染，不走 iframe
-        if (p && (p.mode === 'fetch' || autoFetchProviders[p.id])) {
+        // fetch 型源走 GM 自渲染，仅当跨域（同源时 X-Frame-Options SAMEORIGIN 放行 iframe，更可靠）
+        if (p && (autoFetchProviders[p.id] || (p.mode === 'fetch' && !isSameOriginUrl(p.url)))) {
             loadFetchPreview(code, p);
             return;
         }
