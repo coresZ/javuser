@@ -1,6 +1,6 @@
 # jav-code-scanner.user.js · 架构梳理
 
-> 架构文档（2026-08）。对应脚本 `jav-code-scanner.user.js` v1.5.47（8575 行，383,919 字节）。
+> 架构文档（2026-08）。对应脚本 `jav-code-scanner.user.js` v1.5.48（8844 行）。
 > 所有行号锚点以该版本为准；脚本升级会平移行号。
 
 ## 概述

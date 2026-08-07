@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         通用番号扫描 & 多源搜索
 // @namespace    http://tampermonkey.net/
-// @version      1.5.47
+// @version      1.5.48
 // @description  扫描页面番号、多源搜索；字幕/原名下载；页面高亮可配置；新标签/本页预览；iframe 白名单；CBox 轻量高亮；DMM CID；快捷键/主题；全站备份(WebDAV可加密)；window.JavCodeKit
 // @author       You
 // @include      *://*jav*/*
@@ -54,8 +54,8 @@
     if (_pageWin.JavCodeKit && _pageWin.JavCodeKit.__ready) return;
 
     const NS = 'jcs';
-    const STYLE_VER = '1.5.47';
-    const SCRIPT_VER = '1.5.47';
+    const STYLE_VER = '1.5.48';
+    const SCRIPT_VER = '1.5.48';
     const IS_CBOX = /(^|\.)cbox\.ws$/i.test(location.hostname || '');
     const CBOX_MSG_SOURCE = 'jcs-cbox';
     const ENC_MARK = 'jcs-aes-gcm-v1';

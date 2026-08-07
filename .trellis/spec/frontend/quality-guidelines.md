@@ -30,6 +30,7 @@
 4. **focus-visible + aria**：可交互元素焦点环、`role`/`aria-label`/`aria-modal`。
 5. **prefers-reduced-motion 兜底**：全局 `transition/animation:none`。
 6. **事件委托 + 单点热键**：全局 keydown 唯一监听，Esc 关闭链集中管理。
+7. **每次修改递增版本号**：`@version` + `SCRIPT_VER` + `STYLE_VER` 三处同步 +1（jcs 57-58）。版本号驱动 DOM 自愈重建（`data-ver` 比对），漏改会导致旧 DOM 不重建、样式不刷新。任何功能/样式/修复改动提交前必须递增。
 
 ---
 
@@ -53,3 +54,4 @@
 - [ ] 无硬编码站点类名
 - [ ] fetch 型搜索源：href scheme 白名单 + 异步竞态代次保护（见 type-safety.md）
 - [ ] iframe 拒绝降级是通用机制（HEAD 探测响应头），不逐站预制
+- [ ] `@version` + `SCRIPT_VER` + `STYLE_VER` 三处版本号已同步递增
