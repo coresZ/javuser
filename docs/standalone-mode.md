@@ -1,6 +1,6 @@
 # Enhanced_Media_Helper · 番号库「新标签页模式」
 
-> 功能说明与实现方案（2026-08）。对应脚本 `Enhanced_Media_Helper.js` v3.5.0+。
+> 功能说明与实现方案（2026-08）。对应脚本 `Enhanced_Media_Helper.js` v3.6.5+（机制自 v3.5.0 起稳定）。
 
 ## 功能概述
 
@@ -86,6 +86,7 @@
 - 无需新增 `@connect`：独立页原生 `GM_xmlhttpRequest`，跨域请求（1cili / whatslink）直接由独立页完成
 - GM 存储 schema 不变；无数据迁移
 - `@grant` 新增 `GM_openInTab`（连同 `GM_setValue/GM_getValue/GM_addValueChangeListener/GM_xmlhttpRequest`）
+- 跨脚本桥 `EMH_API` 在 standalone 页同样挂载（`mountPublicApi` 在 `initialize` 中，不依赖面板）；对 scanner 无影响（standalone 页通常没有 scanner 操作条，但桥可用）
 
 ## 相关实现位置（Enhanced_Media_Helper.js）
 

@@ -1,6 +1,6 @@
-﻿// ==UserScript==
+// ==UserScript==
 // @name           Enhanced_Media_Helper
-// @version        3.5.0
+// @version        3.6.5
 // @description    Code Manager Panel with javgg site support (Preact + htm) + magnet screenshot preview + Linear UI
 // @author         cores
 // @match          https://javgg.net/tag/to-be-release/*
@@ -47,8 +47,10 @@
 // @grant          GM_addValueChangeListener
 // @grant          GM_xmlhttpRequest
 // @grant          GM_openInTab
+// @grant          unsafeWindow
 // @connect        1cili.com
 // @connect        whatslink.info
+// @connect        avwikidb.com
 // @run-at         document-start
 // @noframes
 // @license        MPL
@@ -59,6 +61,12 @@
 
 (function () {
     'use strict';
+
+    // 1cili 站点常量：域名与搜索入口统一收敛，避免硬编码散落
+    const CILI = {
+        base: 'https://1cili.com',
+        search: 'https://1cili.com/search?q='
+    };
 
     const CONFIG = {
         codeManager: {
@@ -78,8 +86,9 @@
         alternateUrl: {
             av123: 'https://123av.com/cn/v/',
             jable: 'https://jable.tv/videos/',
-            cili1: 'https://1cili.com/search?q='
-        }
+            cili1: CILI.search
+        },
+        cili: CILI
     };
 
     const CODE_LIBRARY = {
@@ -111,9 +120,27 @@
                         }
                     }
                 };
+                // 自愈：旧格式磁力（字符串 / 字符串数组 / 缺 id 对象）统一落盘为 { id, value, preview? } 对象数组，
+                // 保证 id 稳定，使详情内的逐条预览/编辑/删除/复制按 id 定位可靠
+                let magnetFixed = false;
+                const fixMagnets = (list) => {
+                    for (const it of list) {
+                        if (!it) continue;
+                        const raw = it.magnet;
+                        if (raw == null) continue;
+                        const isLegacy = !Array.isArray(raw) || raw.some(e => !e || typeof e !== 'object' || !e.value);
+                        const hasMissingId = Array.isArray(raw) && raw.some(e => e && typeof e === 'object' && e.value && !e.id);
+                        if (isLegacy || hasMissingId) {
+                            it.magnet = this.normMagnets(raw);
+                            magnetFixed = true;
+                        }
+                    }
+                };
                 if (Array.isArray(this.data.items)) fixRemarks(this.data.items);
                 if (Array.isArray(this.trash.items)) fixRemarks(this.trash.items);
-                if (dataFixed) {
+                if (Array.isArray(this.data.items)) fixMagnets(this.data.items);
+                if (Array.isArray(this.trash.items)) fixMagnets(this.trash.items);
+                if (dataFixed || magnetFixed) {
                     this.data.lastUpdated = new Date().toISOString();
                     GM_setValue(CONFIG.codeManager.storageKey, JSON.stringify(this.data));
                     this.trash.lastUpdated = new Date().toISOString();
@@ -209,10 +236,18 @@
             const now = new Date();
             const retentionPeriod = CONFIG.codeManager.trashRetentionDays * 24 * 60 * 60 * 1000;
             const before = this.trash.items.length;
+            let backfilled = false;
             this.trash.items = this.trash.items.filter(item => {
-                return (now - new Date(item.deleteDate)) < retentionPeriod;
+                const dt = new Date(item.deleteDate).getTime();
+                if (!Number.isFinite(dt)) {
+                    // 旧数据无有效删除时间：按"刚删除"处理（保留完整保留期），避免误清除
+                    item.deleteDate = now.toISOString();
+                    backfilled = true;
+                    return true;
+                }
+                return (now - dt) < retentionPeriod;
             });
-            if (this.trash.items.length !== before) {
+            if (this.trash.items.length !== before || backfilled) {
                 this.data.lastUpdated = new Date().toISOString();
                 GM_setValue(CONFIG.codeManager.storageKey, JSON.stringify(this.data));
                 this.trash.lastUpdated = new Date().toISOString();
@@ -317,13 +352,8 @@
             if (!rec) return false;
             const magnets = this.normMagnets(rec.item.magnet);
             if (!magnets.length) return false;
-            const t = String(magnetIdOrIdx);
-            let idx = magnets.findIndex((e, i) => {
-                const eid = this.magnetId(e);
-                return (eid && String(eid) === t) || (!eid && String(i) === t);
-            });
-            if (idx < 0 && /^\d+$/.test(t)) idx = Number(t);
-            if (idx < 0 || idx >= magnets.length) return false;
+            const idx = this.magnetIndex(magnets, magnetIdOrIdx);
+            if (idx < 0) return false;
             const cleaned = this.sanitizeMagnetPreview(preview);
             if (cleaned) magnets[idx].preview = cleaned;
             else delete magnets[idx].preview;
@@ -336,13 +366,8 @@
             const rec = this.findItemRecord(code);
             if (!rec) return null;
             const magnets = this.normMagnets(rec.item.magnet);
-            const t = String(magnetIdOrIdx);
-            let idx = magnets.findIndex((e, i) => {
-                const eid = this.magnetId(e);
-                return (eid && String(eid) === t) || (!eid && String(i) === t);
-            });
-            if (idx < 0 && /^\d+$/.test(t)) idx = Number(t);
-            if (idx < 0 || idx >= magnets.length) return null;
+            const idx = this.magnetIndex(magnets, magnetIdOrIdx);
+            if (idx < 0) return null;
             return this.sanitizeMagnetPreview(magnets[idx].preview);
         },
 
@@ -357,6 +382,22 @@
         magnetId: function(m) {
             if (m && typeof m === 'object') return m.id || null;
             return null;
+        },
+
+        // 解析磁力条目索引：优先按 id 匹配，回退按数字索引（含 'idx-N' 兼容形式）
+        magnetIndex: function(magnets, idOrIdx) {
+            if (!Array.isArray(magnets)) return -1;
+            const t = String(idOrIdx);
+            let idx = magnets.findIndex((e, i) => {
+                const eid = this.magnetId(e);
+                return (eid && String(eid) === t) || (!eid && String(i) === t);
+            });
+            if (idx < 0) {
+                let n = Number(t);
+                if (t.indexOf('idx-') === 0) n = Number(t.slice(4));
+                if (Number.isFinite(n) && n >= 0 && n < magnets.length) idx = n;
+            }
+            return idx;
         },
 
         // 清理磁力链接用于显示：去掉 &dn=xxx 参数（dn 可能带乱码/番号后缀）
@@ -453,6 +494,7 @@
             scan(this.data.items);
             scan(this.trash.items);
             if (cleared) this.save();
+            try { if (typeof AVWIKI_PREVIEW !== 'undefined') AVWIKI_PREVIEW.clearCache(); } catch (e) {}
             return cleared;
         },
 
@@ -500,26 +542,41 @@
                 if (!data.items || !Array.isArray(data.items)) {
                     throw new Error('导入的数据格式不正确');
                 }
+                // 导入清洗：番号统一大写、remarks 仅接受字符串、magnet 归一为对象数组（含稳定 id）
+                const normalizeImported = (it) => {
+                    if (!it || typeof it !== 'object') return null;
+                    const code = String(it.code == null ? '' : it.code).trim().toUpperCase();
+                    if (!code) return null;
+                    return {
+                        ...it,
+                        code,
+                        remarks: typeof it.remarks === 'string' ? it.remarks : '',
+                        tags: Array.isArray(it.tags) ? it.tags : [],
+                        magnet: this.normMagnets(it.magnet)
+                    };
+                };
+                const cleaned = data.items.map(normalizeImported).filter(Boolean);
                 if (mode === 'replace') {
-                    this.data.items = data.items;
+                    this.data.items = cleaned.map(it => ({
+                        ...it,
+                        createdDate: it.createdDate || new Date().toISOString(),
+                        modifiedDate: it.modifiedDate || new Date().toISOString()
+                    }));
                 } else if (mode === 'merge') {
-                    for (const importedItem of data.items) {
-                        if (!importedItem.code) continue;
-                        const normalizedCode = importedItem.code.toUpperCase();
+                    for (const importedItem of cleaned) {
                         const existingIndex = this.data.items.findIndex(item =>
-                            item.code.toUpperCase() === normalizedCode
+                            item.code.toUpperCase() === importedItem.code
                         );
                         if (existingIndex >= 0) {
                             this.data.items[existingIndex] = {
                                 ...this.data.items[existingIndex],
                                 ...importedItem,
-                                code: normalizedCode,
+                                code: importedItem.code,
                                 modifiedDate: new Date().toISOString()
                             };
                         } else {
                             this.data.items.unshift({
                                 ...importedItem,
-                                code: normalizedCode,
                                 createdDate: importedItem.createdDate || new Date().toISOString(),
                                 modifiedDate: new Date().toISOString()
                             });
@@ -527,7 +584,7 @@
                     }
                 }
                 this.save();
-                return { success: true, message: `成功导入 ${data.items.length} 个番号条目` };
+                return { success: true, message: `成功导入 ${cleaned.length} 个番号条目` };
             } catch (e) {
                 console.error('导入番号数据失败:', e);
                 return { success: false, message: '导入失败: ' + e.message };
@@ -687,7 +744,7 @@
                 st.id = 'emh-magnet-lb-style';
                 st.textContent = `
                     #emh-magnet-lightbox {
-                        position: fixed; inset: 0; z-index: 10050; display: none;
+                        position: fixed; inset: 0; z-index: 2147483647; display: none;
                         align-items: center; justify-content: center;
                         background: rgba(0,0,0,0.88);
                         backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
@@ -1067,6 +1124,194 @@
         }
     };
 
+    // avwikidb 作品页宫格截图预览（按番号抓取，独立于 whatslink 磁力预览）
+    const AVWIKI_PREVIEW = {
+        BASE: 'https://avwikidb.com/work/',
+        TIMEOUT: 20000,
+        _requestSeq: 0,
+        _inflight: {},
+
+        _cacheKey: 'emh_avwiki_cache',
+
+        _loadCache: function() {
+            try {
+                const raw = GM_getValue(this._cacheKey);
+                return (raw && typeof raw === 'object') ? raw : {};
+            } catch (e) {}
+            return {};
+        },
+
+        _saveCache: function(cache) {
+            try { GM_setValue(this._cacheKey, cache); } catch (e) {}
+        },
+
+        _isFresh: function(rec, force) {
+            if (force || !rec || !rec.fetchedAt) return false;
+            const t = new Date(rec.fetchedAt).getTime();
+            if (!Number.isFinite(t)) return false;
+            const ttl = rec.error ? CONFIG.magnetPreview.errorTtlMs : CONFIG.magnetPreview.cacheTtlMs;
+            return (Date.now() - t) < ttl;
+        },
+
+        codeUrl: function(code) {
+            return this.BASE + encodeURIComponent(String(code || '').trim().toUpperCase()) + '/';
+        },
+
+        // 从 avwikidb work 页 HTML 提取宫格截图：优先 dmm 的 {cid}jp-N 场景图（#gallery），
+        // 找不到时回退页内其它 jp/ps/pl 作品图；排除 logo/avatar/icon 等静态资源
+        parseHtml: function(html) {
+            const all = [];
+            const seen = new Set();
+            const RE = /<img\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi;
+            let m;
+            while ((m = RE.exec(html)) !== null) {
+                let raw = m[1] ? m[1].trim() : '';
+                if (!raw) continue;
+                // 反转义 HTML 实体（src 里的 &amp; 等）
+                raw = raw.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+                let u = raw;
+                // 相对路径拼成绝对
+                if (/^\//.test(u)) u = 'https://avwikidb.com' + u;
+                if (!UTILS.isSafeHttpUrl(u)) continue;
+                if (/\.(?:svg)($|\?)/i.test(u)) continue;
+                if (/logo|\.x\.svg|\/x\.svg|avatar|icon/i.test(u)) continue;
+                const clean = u.split('?')[0];
+                if (!/\.(?:jpg|png|jpeg|webp)$/i.test(clean)) continue;
+                if (seen.has(clean)) continue;
+                seen.add(clean);
+                all.push(u);
+                if (all.length >= 48) break;
+            }
+            // 优先 jp-N 场景截图（宫格），保持出现顺序
+            const gallery = all.filter(u => /\/[^/]*?jp-\d+\.(?:jpg|png|jpeg|webp)(?:\?|$)/i.test(u));
+            return (gallery.length ? gallery : all).slice(0, 48);
+        },
+
+        parseTitle: function(html) {
+            const m = html.match(/<title[^>]*>([^<]*)<\/title>/i);
+            if (m && m[1]) {
+                const t = m[1].replace(/\s+/g, ' ').trim();
+                return t ? t.slice(0, 120) : '';
+            }
+            return '';
+        },
+
+        fetchAndShow: function(code, opts) {
+            const options = opts || {};
+            const force = !!options.force;
+            const onDone = typeof options.onDone === 'function' ? options.onDone : null;
+            const itemCode = String(code || '').trim().toUpperCase();
+            if (!itemCode) { UTILS.showToast('无效番号', 'error'); if (onDone) onDone(new Error('invalid code')); return; }
+            if (typeof GM_xmlhttpRequest !== 'function') {
+                UTILS.showToast('当前环境不支持跨域请求', 'error');
+                if (onDone) onDone(new Error('no gm'));
+                return;
+            }
+
+            const mySeq = ++this._requestSeq;
+            const cache = this._loadCache();
+            const rec = cache[itemCode];
+
+            if (this._isFresh(rec, force)) {
+                if (rec && rec.error) {
+                    // 错误缓存仍在有效期：直接提示并跳过重复请求
+                    UTILS.showToast(rec.error || '上次预览失败', 'warning');
+                    if (onDone) onDone(new Error(rec.error || 'cached error'));
+                    return;
+                }
+                if (Array.isArray(rec && rec.screenshots) && rec.screenshots.length) {
+                    const urls = rec.screenshots.map(s => s.screenshot || s.url || '').filter(Boolean);
+                    MAGNET_PREVIEW.open(urls, 0, [rec.name, 'AVWikiDB'].filter(Boolean).join(' · '));
+                    if (onDone) onDone(null, rec);
+                    return;
+                }
+            }
+
+            const existing = this._inflight[itemCode];
+            if (existing && !force) {
+                existing.latestSeq = Math.max(existing.latestSeq, mySeq);
+                existing.p.then((r) => {
+                    if (existing.superseded) { if (onDone) onDone(new Error('superseded')); return; }
+                    if (onDone) onDone(r.error ? new Error(r.error) : null, r.preview || null);
+                });
+                return;
+            }
+            if (existing && force) existing.superseded = true;
+
+            const entry = this._inflight[itemCode] = { p: null, latestSeq: mySeq, superseded: false };
+
+            UTILS.showToast('正在获取 AVWikiDB 截图…', 'info');
+
+            const failCache = (err) => {
+                cache[itemCode] = { error: err, screenshots: [], fetchedAt: new Date().toISOString() };
+                this._saveCache(cache);
+            };
+
+            const p = new Promise((resolve) => {
+                // 仅"最新且未被作废"的请求才缓存/提示，避免旧请求的结果污染新请求
+                const isLatest = () => !entry.superseded && this._inflight[itemCode] === entry && entry.latestSeq === this._requestSeq;
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: this.codeUrl(itemCode),
+                    timeout: this.TIMEOUT,
+                    headers: { 'Accept': 'text/html,application/xhtml+xml' },
+                    onload: (res) => {
+                        const status = res && typeof res.status === 'number' ? res.status : 0;
+                        const html = (res && res.responseText) || '';
+                        if (status < 200 || status >= 300) {
+                            const err = 'AVWikiDB 请求失败：HTTP ' + status;
+                            if (isLatest()) { failCache(err); UTILS.showToast(err, 'error'); }
+                            resolve({ error: err, preview: null });
+                            return;
+                        }
+                        const urls = this.parseHtml(html);
+                        if (!urls.length) {
+                            const err = 'AVWikiDB 未收录该番号或页面无宫格截图';
+                            if (isLatest()) { failCache(err); UTILS.showToast(err, 'warning'); }
+                            resolve({ error: err, preview: null });
+                            return;
+                        }
+                        const name = this.parseTitle(html);
+                        const preview = CODE_LIBRARY.sanitizeMagnetPreview({
+                            name: name || itemCode,
+                            type: 'AVWikiDB',
+                            screenshots: urls,
+                            fetchedAt: new Date().toISOString(),
+                            error: ''
+                        });
+                        if (isLatest()) {
+                            cache[itemCode] = preview;
+                            this._saveCache(cache);
+                            MAGNET_PREVIEW.open(urls, 0, [preview.name, 'AVWikiDB'].filter(Boolean).join(' · '));
+                            UTILS.showToast('已获取 AVWikiDB 截图 ' + urls.length + ' 张', 'success');
+                        }
+                        resolve({ error: '', preview });
+                    },
+                    onerror: () => {
+                        const err = 'AVWikiDB 网络请求失败';
+                        if (isLatest()) { failCache(err); UTILS.showToast(err, 'error'); }
+                        resolve({ error: err, preview: null });
+                    },
+                    ontimeout: () => {
+                        const err = 'AVWikiDB 请求超时';
+                        if (isLatest()) { failCache(err); UTILS.showToast(err, 'error'); }
+                        resolve({ error: err, preview: null });
+                    }
+                });
+            });
+            entry.p = p;
+            p.then((r) => {
+                if (onDone) onDone(r.error ? new Error(r.error) : null, r.preview || null);
+                if (this._inflight[itemCode] === entry) delete this._inflight[itemCode];
+            });
+        },
+
+        // 清除全部 avwikidb 缓存
+        clearCache: function() {
+            try { GM_setValue(this._cacheKey, {}); } catch (e) {}
+        }
+    };
+
     function waitForElement(selector, callback, timeout = 7000) {
         const startTime = Date.now();
         const intervalId = setInterval(() => {
@@ -1082,26 +1327,31 @@
         }, 200);
     }
 
+    // 状态文案（列表标签 / 站点指示器 tooltip 共用，保持措辞一致）
+    const STATUS_TEXT = { favorite: '关注', watched: '已看', unmarked: '未标记' };
+
+    function applyStatusIndicatorState(indicator, code) {
+        const currentStatus = CODE_LIBRARY.getStatus(code);
+        indicator.dataset.status = currentStatus;
+        const statusColors = CONFIG.codeManager.statusColors;
+        indicator.style.backgroundColor = statusColors[currentStatus] || statusColors.unmarked;
+        const statusText = STATUS_TEXT[currentStatus] || '未标记';
+        if (currentStatus === 'watched') {
+            indicator.title = `状态: ${statusText} (请在番号库中修改状态)`;
+            indicator.style.cursor = 'default';
+        } else {
+            indicator.title = `状态: ${statusText} (点击${currentStatus === 'favorite' ? '取消' : ''}关注)`;
+            indicator.style.cursor = 'pointer';
+        }
+    }
+
     function createCodeStatusIndicator(container, code) {
         if (!code || !container) return null;
         if (!CODE_LIBRARY.initialized) CODE_LIBRARY.init();
-        const currentStatus = CODE_LIBRARY.getStatus(code);
         const statusIndicator = document.createElement('div');
         statusIndicator.className = 'emh-code-status-indicator';
         statusIndicator.dataset.code = code;
-        statusIndicator.dataset.status = currentStatus;
-        const statusColors = CONFIG.codeManager.statusColors;
-        statusIndicator.style.backgroundColor = statusColors[currentStatus] || statusColors.unmarked;
-        let statusText = '未标记';
-        if (currentStatus === 'favorite') statusText = '已关注';
-        if (currentStatus === 'watched') statusText = '已看过';
-        if (currentStatus === 'watched') {
-            statusIndicator.title = `状态: ${statusText} (请在番号库中修改状态)`;
-            statusIndicator.style.cursor = 'default';
-        } else {
-            statusIndicator.title = `状态: ${statusText} (点击${currentStatus === 'favorite' ? '取消' : ''}关注)`;
-            statusIndicator.style.cursor = 'pointer';
-        }
+        applyStatusIndicatorState(statusIndicator, code);
         statusIndicator.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -1123,20 +1373,7 @@
         document.querySelectorAll('.emh-code-status-indicator').forEach(indicator => {
             const code = indicator.dataset.code;
             if (!code) return;
-            const currentStatus = CODE_LIBRARY.getStatus(code);
-            indicator.dataset.status = currentStatus;
-            const statusColors = CONFIG.codeManager.statusColors;
-            indicator.style.backgroundColor = statusColors[currentStatus] || statusColors.unmarked;
-            let statusText = '未标记';
-            if (currentStatus === 'favorite') statusText = '已关注';
-            if (currentStatus === 'watched') statusText = '已看过';
-            if (currentStatus === 'watched') {
-                indicator.title = `状态: ${statusText} (请在番号库中修改状态)`;
-                indicator.style.cursor = 'default';
-            } else {
-                indicator.title = `状态: ${statusText} (点击${currentStatus === 'favorite' ? '取消' : ''}关注)`;
-                indicator.style.cursor = 'pointer';
-            }
+            applyStatusIndicatorState(indicator, code);
         });
     }
 
@@ -1404,7 +1641,7 @@
                 transition: background 0.15s, color 0.15s;
             }
             .emh-javgg-controls a:hover { background: var(--emh-primary-soft); color: var(--emh-primary); }
-            .btn {
+            #emh-code-manager-panel .btn {
                 appearance: none; -webkit-appearance: none;
                 display: inline-flex; align-items: center; justify-content: center; gap: 6px;
                 padding: 8px 14px; border-radius: 9px;
@@ -1414,32 +1651,32 @@
                 line-height: 1.2; font-family: inherit; box-sizing: border-box;
                 color: var(--emh-text);
             }
-            .btn:active { transform: scale(0.92); }
-            .btn:focus-visible { outline: 2px solid var(--emh-primary); outline-offset: 2px; }
+            #emh-code-manager-panel .btn:active { transform: scale(0.92); }
+            #emh-code-manager-panel .btn:focus-visible { outline: 2px solid var(--emh-primary); outline-offset: 2px; }
             /* 图标按钮：默认仅图标，hover/焦点展开文字标签 */
-            .btn.emh-expand { gap: 0; padding: 8px 10px; }
-            .btn .emh-expand-label {
+            #emh-code-manager-panel .btn.emh-expand { gap: 0; padding: 8px 10px; }
+            #emh-code-manager-panel .btn .emh-expand-label {
                 display: inline-block; max-width: 0; overflow: hidden; white-space: nowrap;
                 opacity: 0; vertical-align: middle;
                 transition: max-width 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.15s ease, margin-left 0.22s cubic-bezier(0.22, 1, 0.36, 1);
             }
-            .btn.emh-expand:hover .emh-expand-label,
-            .btn.emh-expand:focus-visible .emh-expand-label {
+            #emh-code-manager-panel .btn.emh-expand:hover .emh-expand-label,
+            #emh-code-manager-panel .btn.emh-expand:focus-visible .emh-expand-label {
                 max-width: 12em; opacity: 1; margin-left: 6px;
             }
             @media (prefers-reduced-motion: reduce) {
-                .btn .emh-expand-label { transition: none !important; }
-                .btn.emh-expand:hover .emh-expand-label,
-                .btn.emh-expand:focus-visible .emh-expand-label { max-width: 12em; opacity: 1; margin-left: 6px; }
+                #emh-code-manager-panel .btn .emh-expand-label { transition: none !important; }
+                #emh-code-manager-panel .btn.emh-expand:hover .emh-expand-label,
+                #emh-code-manager-panel .btn.emh-expand:focus-visible .emh-expand-label { max-width: 12em; opacity: 1; margin-left: 6px; }
             }
-            .my-btn-primary { background: var(--emh-primary-soft); color: var(--emh-primary); }
-            .my-btn-primary:hover { background: var(--emh-primary); color: var(--emh-on-primary); box-shadow: 0 2px 8px var(--emh-primary-soft); }
-            .my-btn-success { background: var(--emh-success-soft); color: var(--emh-success); }
-            .my-btn-success:hover { background: var(--emh-success); color: var(--emh-on-solid); }
-            .my-btn-danger { background: var(--emh-danger-soft); color: var(--emh-danger); }
-            .my-btn-danger:hover { background: var(--emh-danger); color: var(--emh-on-solid); }
-            .btn-outline { background: var(--emh-surface); color: var(--emh-text-secondary); border-color: var(--emh-border); }
-            .btn-outline:hover { background: var(--emh-btn-hover); color: var(--emh-text); border-color: var(--emh-border-strong); }
+            #emh-code-manager-panel .my-btn-primary { background: var(--emh-primary-soft); color: var(--emh-primary); }
+            #emh-code-manager-panel .my-btn-primary:hover { background: var(--emh-primary); color: var(--emh-on-primary); box-shadow: 0 2px 8px var(--emh-primary-soft); }
+            #emh-code-manager-panel .my-btn-success { background: var(--emh-success-soft); color: var(--emh-success); }
+            #emh-code-manager-panel .my-btn-success:hover { background: var(--emh-success); color: var(--emh-on-solid); }
+            #emh-code-manager-panel .my-btn-danger { background: var(--emh-danger-soft); color: var(--emh-danger); }
+            #emh-code-manager-panel .my-btn-danger:hover { background: var(--emh-danger); color: var(--emh-on-solid); }
+            #emh-code-manager-panel .btn-outline { background: var(--emh-surface); color: var(--emh-text-secondary); border-color: var(--emh-border); }
+            #emh-code-manager-panel .btn-outline:hover { background: var(--emh-btn-hover); color: var(--emh-text); border-color: var(--emh-border-strong); }
             .emh-code-status-indicator {
                 width: 16px; height: 16px; border-radius: 50%; cursor: pointer; margin-right: 8px;
                 transition: transform 0.2s ease, box-shadow 0.2s ease; position: relative;
@@ -1447,9 +1684,6 @@
                 display: inline-block; vertical-align: middle;
             }
             .emh-code-status-indicator:hover { transform: scale(1.2); box-shadow: var(--emh-shadow-sm); }
-            .emh-code-status-indicator[data-status="favorite"] { background-color: var(--emh-danger); }
-            .emh-code-status-indicator[data-status="watched"] { background-color: var(--emh-success); }
-            .emh-code-status-indicator[data-status="unmarked"] { background-color: var(--emh-text-muted); }
             #custom-toast-container { position: fixed; top: 70px; right: 20px; z-index: 10060; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; pointer-events: none; }
             .custom-toast {
                 padding: 10px 16px; border-radius: 12px; color: var(--emh-on-solid);
@@ -1471,8 +1705,8 @@
                 .emh-code-manager-toggle,
                 .emh-code-manager-toggle:hover,
                 .emh-code-manager-toggle:active,
-                .btn,
-                .btn:active,
+                #emh-code-manager-panel .btn,
+                #emh-code-manager-panel .btn:active,
                 .emh-javgg-controls a,
                 .emh-code-status-indicator,
                 .custom-toast {
@@ -1639,6 +1873,7 @@
                 selectedIndex: -1,
                 helpOpen: false,
                 menuOpen: false,
+                menuStats: null,
                 lastSyncTimestamp: null,
                 revision: 0
             },
@@ -1652,8 +1887,6 @@
             notify() { this.listeners.forEach(fn => fn()); },
             subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
         };
-
-        const STATUS_TEXT = { favorite: '关注', watched: '已看', unmarked: '未标记' };
 
         const ICON_TOAST = {
             success: html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
@@ -1917,7 +2150,7 @@
             `;
         }
 
-        function DetailDrawer({ item, inTrash, onClose, onEdit, onEditTags, onEditMagnet, onEditMagnetItem, onRemoveMagnet, onCopyMagnet, onCopyMagnetItem, onPreviewMagnet, onPreviewMagnetAt, onSearchMagnet, onFav, onWatch, onUnfav, onDelete, onRestore, onPurge }) {
+        function DetailDrawer({ item, inTrash, onClose, onEdit, onEditTags, onEditMagnet, onEditMagnetItem, onRemoveMagnet, onCopyMagnet, onCopyMagnetItem, onPreviewMagnet, onPreviewMagnetAt, onSearchMagnet, onFav, onWatch, onUnfav, onDelete, onRestore, onPurge, onPreviewAvwiki }) {
             const drawerBodyRef = useRef(null);
             // 宫格缩略图懒加载
             useEffect(() => {
@@ -1973,7 +2206,7 @@
                     ${magnets.length ? html`
                         <ul class="emh-magnet-list">
                             ${magnets.map((m, idx) => {
-                                const mid = CODE_LIBRARY.magnetId(m) || ('idx-' + idx);
+                                const mid = CODE_LIBRARY.magnetId(m) != null ? CODE_LIBRARY.magnetId(m) : idx;
                                 const mvalue = CODE_LIBRARY.magnetValue(m);
                                 const displayM = CODE_LIBRARY.magnetName(m);
                                 const pv = CODE_LIBRARY.sanitizeMagnetPreview(m.preview);
@@ -2061,6 +2294,7 @@
                     <div class="emh-detail-actions">
                         ${!inTrash ? html`
                             <button class="btn btn-outline emh-expand" aria-label="编辑备注" onClick=${() => onEdit(item.code)}>${ICON.edit}<span class="emh-expand-label">编辑备注</span></button>
+                            <button class="btn btn-outline emh-expand" aria-label="AVWikiDB 截图预览" title="从 AVWikiDB 抓取该番号作品页宫格截图（Shift 强制刷新）" onClick=${(e) => onPreviewAvwiki(item.code, { force: !!(e && e.shiftKey) })}>${ICON.refresh}<span class="emh-expand-label">AVWikiDB 截图</span></button>
                         ` : null}
                         ${inTrash ? html`
                             <button class="btn btn-outline emh-expand" aria-label="恢复" onClick=${() => onRestore(item.code)}>${ICON.restore}<span class="emh-expand-label">恢复</span></button>
@@ -2127,7 +2361,7 @@
             }, [st.searchQuery]);
 
             const actions = {
-                hidePanel: () => PanelStore.set({ visible: false, multiSelectMode: false, selectedItems: [], helpOpen: false, menuOpen: false }),
+                hidePanel: () => PanelStore.set({ visible: false, multiSelectMode: false, selectedItems: [], helpOpen: false, menuOpen: false, menuStats: null }),
                 setFilter: (f) => PanelStore.set({ currentFilter: f, timeFilter: f === 'all' ? st.timeFilter : '', multiSelectMode: false, selectedItems: [], selectedIndex: -1 }),
                 toggleMulti: () => PanelStore.set({ multiSelectMode: !st.multiSelectMode, selectedItems: [], selectedIndex: -1 }),
                 toggleItem: (code) => {
@@ -2203,15 +2437,8 @@
                     const cur = CODE_LIBRARY.getItem(code);
                     if (!cur) { UTILS.showToast('回收站条目请先恢复再编辑', 'warning'); return; }
                     const arr = CODE_LIBRARY.normMagnets(cur.magnet);
-                    // 按 id 定位；若无 id（旧数据）回退按索引
-                    const findIdx = (target) => {
-                        const t = String(target);
-                        return arr.findIndex(e => {
-                            const eid = CODE_LIBRARY.magnetId(e);
-                            return (eid && String(eid) === t) || (!eid && (typeof target === 'number' ? true : false));
-                        });
-                    };
-                    const idx = findIdx(idOrIdx);
+                    // 按 id 定位；无 id（旧数据）回退按索引 / 'idx-N'
+                    const idx = CODE_LIBRARY.magnetIndex(arr, idOrIdx);
                     if (idx === -1 || !arr[idx]) return;
                     const target = arr[idx];
                     PanelStore.set({ prompt: {
@@ -2237,11 +2464,7 @@
                     const cur = CODE_LIBRARY.getItem(code);
                     if (!cur) { UTILS.showToast('回收站条目请先恢复再编辑', 'warning'); return; }
                     const arr = CODE_LIBRARY.normMagnets(cur.magnet);
-                    const t = String(idOrIdx);
-                    const idx = arr.findIndex(e => {
-                        const eid = CODE_LIBRARY.magnetId(e);
-                        return (eid && String(eid) === t) || (!eid && typeof idOrIdx === 'number' && arr.indexOf(e) === idOrIdx);
-                    });
+                    const idx = CODE_LIBRARY.magnetIndex(arr, idOrIdx);
                     if (idx === -1 || !arr[idx]) return;
                     PanelStore.set({ confirm: { message: `确定删除磁力 #${idx + 1} 吗？`, danger: 'soft', onConfirm: () => {
                         const newArr = arr.filter((_, i) => i !== idx);
@@ -2253,7 +2476,7 @@
                     // 从 1cili 拉取磁力搜索结果列表；回收站条目禁止写入
                     if (!CODE_LIBRARY.getItem(code)) { UTILS.showToast('回收站条目请先恢复再搜索磁力', 'warning'); return; }
                     PanelStore.set({ magnetSearch: { code, loading: true, results: [], error: '' } });
-                    const url = `https://1cili.com/search?q=${encodeURIComponent(code)}`;
+                    const url = CONFIG.cili.search + encodeURIComponent(code);
                     const done = (results, error) => {
                         if (error) PanelStore.set({ magnetSearch: { code, loading: false, results: [], error } });
                         else PanelStore.set({ magnetSearch: { code, loading: false, results, error: '' } });
@@ -2282,7 +2505,7 @@
                     }
                 },
                 fetchMagnetDetail: (code, href) => {
-                    const base = 'https://1cili.com';
+                    const base = CONFIG.cili.base;
                     const url = base + href;
                     const onload = (resp) => {
                         try {
@@ -2387,7 +2610,7 @@
                                 upd({ done: i + 1, skipped: skipCount });
                                 continue;
                             }
-                            const searchHtml = await doGet(`https://1cili.com/search?q=${encodeURIComponent(code)}`);
+                            const searchHtml = await doGet(CONFIG.cili.search + encodeURIComponent(code));
                             if (!searchHtml) { failCount++; upd({ done: i + 1, failed: failCount }); continue; }
                             const doc = new DOMParser().parseFromString(searchHtml, 'text/html');
                             const rows = [];
@@ -2402,7 +2625,7 @@
                             const magnets = [];
                             let firstTitle = '';
                             for (const row of filteredRows) {
-                                const detailHtml = await doGet('https://1cili.com' + row.href);
+                                const detailHtml = await doGet(CONFIG.cili.base + row.href);
                                 if (!detailHtml) continue;
                                 const m = extractMagnetFromDetail(detailHtml);
                                 if (m && !magnets.includes(m)) {
@@ -2424,17 +2647,17 @@
                     })();
                 },
                 resolveItem: (code) => CODE_LIBRARY.getItem(code) || CODE_LIBRARY.trash.items.find(i => i.code.toUpperCase() === String(code).toUpperCase()) || null,
+                previewAvwiki: (code, opts) => {
+                    const item = actions.resolveItem(code);
+                    if (!item) { UTILS.showToast('未找到该番号', 'warning'); return; }
+                    AVWIKI_PREVIEW.fetchAndShow(item.code, opts || {});
+                },
                 previewMagnet: (code, idOrIdx, opts) => {
                     const item = actions.resolveItem(code);
                     if (!item) { UTILS.showToast('未找到该番号', 'warning'); return; }
                     const magnets = CODE_LIBRARY.normMagnets(item.magnet);
-                    const t = String(idOrIdx);
-                    let idx = magnets.findIndex((e, i) => {
-                        const eid = CODE_LIBRARY.magnetId(e);
-                        return (eid && String(eid) === t) || String(i) === t;
-                    });
-                    if (idx < 0 && /^\d+$/.test(t)) idx = Number(t);
-                    if (idx < 0 || idx >= magnets.length) { UTILS.showToast('磁力不存在', 'warning'); return; }
+                    const idx = CODE_LIBRARY.magnetIndex(magnets, idOrIdx);
+                    if (idx < 0) { UTILS.showToast('磁力不存在', 'warning'); return; }
                     const entry = magnets[idx];
                     const mid = CODE_LIBRARY.magnetId(entry) || String(idx);
                     const mval = CODE_LIBRARY.magnetValue(entry);
@@ -2445,13 +2668,8 @@
                     const item = actions.resolveItem(code);
                     if (!item) return;
                     const magnets = CODE_LIBRARY.normMagnets(item.magnet);
-                    const t = String(idOrIdx);
-                    let idx = magnets.findIndex((e, i) => {
-                        const eid = CODE_LIBRARY.magnetId(e);
-                        return (eid && String(eid) === t) || String(i) === t;
-                    });
-                    if (idx < 0 && /^\d+$/.test(t)) idx = Number(t);
-                    if (idx < 0 || idx >= magnets.length) return;
+                    const idx = CODE_LIBRARY.magnetIndex(magnets, idOrIdx);
+                    if (idx < 0) return;
                     const pv = CODE_LIBRARY.sanitizeMagnetPreview(magnets[idx].preview);
                     if (!pv || !Array.isArray(pv.screenshots) || !pv.screenshots.length) return;
                     const urls = pv.screenshots.map(s => s.screenshot || s.url || '').filter(Boolean);
@@ -2461,11 +2679,8 @@
                 copyMagnetItem: (code, idOrIdx) => {
                     const item = actions.resolveItem(code);
                     const magnets = CODE_LIBRARY.normMagnets(item && item.magnet);
-                    const t = String(idOrIdx);
-                    const entry = magnets.find(e => {
-                        const eid = CODE_LIBRARY.magnetId(e);
-                        return (eid && String(eid) === t) || (!eid && typeof idOrIdx === 'number' && magnets.indexOf(e) === idOrIdx);
-                    }) || magnets[Number(idOrIdx)];
+                    const idx = CODE_LIBRARY.magnetIndex(magnets, idOrIdx);
+                    const entry = idx >= 0 ? magnets[idx] : null;
                     if (!entry) { UTILS.showToast('磁力不存在', 'warning'); return; }
                     const mval = CODE_LIBRARY.magnetValue(entry);
                     const text = CODE_LIBRARY.cleanMagnet(entry) || mval;
@@ -2483,7 +2698,8 @@
                     const item = actions.resolveItem(code);
                     const magnets = CODE_LIBRARY.normMagnets(item && item.magnet);
                     if (!magnets.length) { UTILS.showToast('该番号暂无磁力链接', 'warning'); return; }
-                    const text = magnets.map(e => CODE_LIBRARY.magnetValue(e)).join('\n');
+                    // 与单条复制一致：统一去除 dn 参数，避免乱码/番号后缀
+                    const text = magnets.map(e => CODE_LIBRARY.cleanMagnet(e) || CODE_LIBRARY.magnetValue(e)).join('\n');
                     if (navigator.clipboard && navigator.clipboard.writeText) {
                         navigator.clipboard.writeText(text).then(() => UTILS.showToast(`已复制 ${magnets.length} 条磁力`, 'success')).catch(() => UTILS.showToast('复制失败', 'error'));
                     } else {
@@ -2584,7 +2800,11 @@
                 closeDetail: () => PanelStore.set({ detail: null }),
                 toggleTheme: () => { THEME.set(THEME.next()); PanelStore.set({}); },
                 toggleHelp: () => PanelStore.set({ helpOpen: !PanelStore.state.helpOpen }),
-                toggleMenu: () => PanelStore.set({ menuOpen: !PanelStore.state.menuOpen }),
+                toggleMenu: () => {
+                    // 打开时计算一次缓存统计并存入 state，避免菜单打开期间每次渲染全量扫描
+                    const opening = !PanelStore.state.menuOpen;
+                    PanelStore.set({ menuOpen: opening, menuStats: opening ? CODE_LIBRARY.previewCacheStats() : null });
+                },
                 openStandalone: () => { PanelStore.set({ menuOpen: false }); STANDALONE.open(); },
                 clearPreviewCaches: () => {
                     const s = CODE_LIBRARY.previewCacheStats();
@@ -2593,7 +2813,7 @@
                         danger: 'soft',
                         onConfirm: () => {
                             const n = CODE_LIBRARY.clearAllPreviewCaches();
-                            UTILS.showToast(`已清除 ${n} 条磁力的预览缓存`, 'success');
+                            UTILS.showToast(`已清除 ${n} 条磁力 + AVWikiDB 的预览缓存`, 'success');
                         }
                     } });
                 },
@@ -2647,9 +2867,10 @@
             const kbdRef = useRef(null);
             kbdRef.current = (e) => {
                 if (!st.visible) return;
-                // 灯箱打开时由 MAGNET_PREVIEW 处理键盘；方向键兜底 preventDefault 防止浏览器历史导航
+                // 灯箱打开时由 MAGNET_PREVIEW 处理键盘（含 Esc 关闭灯箱）；
+                // 方向键兜底 preventDefault 防止浏览器历史导航，Esc 交由灯箱单独关闭，避免连带关闭面板/详情
                 if (MAGNET_PREVIEW._open) {
-                    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') e.preventDefault();
+                    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Escape') e.preventDefault();
                     return;
                 }
                 const key = e.key;
@@ -2700,8 +2921,20 @@
             }, []);
 
             useEffect(() => {
-                document.body.style.overflow = st.visible ? 'hidden' : '';
-                return () => { document.body.style.overflow = ''; };
+                // 保存宿主原有 overflow，关闭/卸载时还原，避免覆盖站点自身设置
+                if (st.visible) {
+                    document.body.dataset.emhPrevOverflow = document.body.style.overflow || '';
+                    document.body.style.overflow = 'hidden';
+                } else if (document.body.dataset.emhPrevOverflow !== undefined) {
+                    document.body.style.overflow = document.body.dataset.emhPrevOverflow;
+                    delete document.body.dataset.emhPrevOverflow;
+                }
+                return () => {
+                    if (document.body.dataset.emhPrevOverflow !== undefined) {
+                        document.body.style.overflow = document.body.dataset.emhPrevOverflow;
+                        delete document.body.dataset.emhPrevOverflow;
+                    }
+                };
             }, [st.visible]);
 
             // 面板宽度可调：左缘拖拽 320-900px，持久化 GM
@@ -2931,7 +3164,7 @@
                             <${MagnetListModal} magnetSearch=${st.magnetSearch} onPick=${actions.fetchMagnetDetail} onClose=${actions.closeMagnetSearch} />
                             <${BatchProgressModal} progress=${st.batchProgress} />
                             ${st.helpOpen ? html`<${HelpModal} onClose=${actions.toggleHelp} />` : ''}
-                            ${st.menuOpen ? html`<${HeaderMenu} onClose=${actions.toggleMenu} onClear=${actions.clearPreviewCaches} onOpenStandalone=${window.__EMH_STANDALONE ? null : actions.openStandalone} stats=${CODE_LIBRARY.previewCacheStats()} />` : ''}
+                            ${st.menuOpen ? html`<${HeaderMenu} onClose=${actions.toggleMenu} onClear=${actions.clearPreviewCaches} onOpenStandalone=${window.__EMH_STANDALONE ? null : actions.openStandalone} stats=${st.menuStats} />` : ''}
                             ${st.detail ? (() => {
                                 const detailItem = CODE_LIBRARY.getItem(st.detail) || (trashList.find(i => i.code.toUpperCase() === st.detail.toUpperCase())) || null;
                                 const detailInTrash = detailItem ? trashList.some(i => i.code.toUpperCase() === detailItem.code.toUpperCase()) : false;
@@ -2943,6 +3176,7 @@
                                         onCopyMagnetItem=${actions.copyMagnetItem}
                                         onCopyMagnet=${actions.copyMagnet} onPreviewMagnet=${actions.previewMagnet}
                                         onPreviewMagnetAt=${actions.previewMagnetAt}
+                                        onPreviewAvwiki=${actions.previewAvwiki}
                                         onSearchMagnet=${actions.searchMagnet}
                                         onFav=${actions.markFav}
                                         onWatch=${actions.markWatched} onUnfav=${actions.unfavorite}
@@ -3565,6 +3799,84 @@
         }
     }
 
+    // ===== 对外公开 API（供同页其他用户脚本/页面脚本集成，如 jav-code-scanner） =====
+    // 挂载在页面主 world（unsafeWindow）+ 沙箱 window 双份；document-start 阶段即就绪，不依赖 Preact。
+    // 注意：GM 存储按脚本隔离，外部脚本无法直接写番号库，必须经此 API。
+    function mountPublicApi() {
+        if (window.__EMH_API__ && window.__EMH_API__.__ready) return;
+        const api = {
+            __ready: true,
+            name: 'Enhanced_Media_Helper',
+            version: '3.6.5',
+            // 添加番号；已存在时返回 { ok:false, exists:true }（不触发内部重复提示）
+            addCode: (code, title, remarks) => {
+                const c = String(code == null ? '' : code).trim().toUpperCase();
+                if (!c || c.length > 40) return { ok: false, message: '番号格式无效' };
+                if (CODE_LIBRARY.getItem(c)) return { ok: false, exists: true, message: '番号库已存在 ' + c };
+                const ok = CODE_LIBRARY.add(c, title, remarks);
+                return ok ? { ok: true, code: c } : { ok: false, message: '添加失败' };
+            },
+            // 标记状态：favorite / watched / unmarked
+            markItem: (code, status) => {
+                const c = String(code == null ? '' : code).trim().toUpperCase();
+                if (!c) return { ok: false, message: '番号无效' };
+                if (!['favorite', 'watched', 'unmarked'].includes(status)) return { ok: false, message: '状态无效' };
+                const ok = CODE_LIBRARY.markItem(c, status);
+                return ok ? { ok: true, code: c, status } : { ok: false, message: '标记失败' };
+            },
+            // 从番号库移除（进入回收站，保留期内可恢复）
+            removeCode: (code) => {
+                const c = String(code == null ? '' : code).trim().toUpperCase();
+                if (!c) return { ok: false, message: '番号无效' };
+                if (!CODE_LIBRARY.getItem(c)) return { ok: false, missing: true, message: '番号库中没有 ' + c };
+                const ok = CODE_LIBRARY.delete(c);
+                return ok ? { ok: true, code: c } : { ok: false, message: '移除失败' };
+            },
+            // 打开 AVWikiDB 宫格截图预览灯箱（异步发起；opts.force = Shift 强制刷新；
+            // opts.onDone(errMsg, preview) 完成后回调，errMsg 为空串表示成功——供调用方显示明确反馈）
+            previewAvwiki: (code, opts) => {
+                const c = String(code == null ? '' : code).trim().toUpperCase();
+                if (!c) return { ok: false, message: '番号无效' };
+                try {
+                    const onDone = (opts && typeof opts.onDone === 'function') ? opts.onDone : null;
+                    AVWIKI_PREVIEW.fetchAndShow(c, {
+                        force: !!(opts && opts.force),
+                        onDone: (err, preview) => {
+                            if (onDone) onDone(err ? (err.message || '截图预览失败') : '', preview || null);
+                        }
+                    });
+                    return { ok: true };
+                } catch (e) {
+                    return { ok: false, message: '预览失败' };
+                }
+            },
+            // 深拷贝返回，避免外部脚本直接改动库内对象
+            getItem: (code) => {
+                const it = CODE_LIBRARY.getItem(String(code == null ? '' : code).trim().toUpperCase());
+                return it ? JSON.parse(JSON.stringify(it)) : null;
+            },
+            getStatus: (code) => CODE_LIBRARY.getStatus(String(code == null ? '' : code).trim().toUpperCase()),
+            getAll: () => CODE_LIBRARY.getAll().map(it => JSON.parse(JSON.stringify(it))),
+            openPanel: () => {
+                try { if (window.CodeManagerPanel && window.CodeManagerPanel.showPanel) window.CodeManagerPanel.showPanel(); } catch (e) {}
+            },
+            refresh: () => {
+                updateCodeStatusIndicators();
+                try {
+                    if (window.CodeManagerPanel && window.CodeManagerPanel.isVisible) window.CodeManagerPanel.refreshPanelContent();
+                } catch (e) {}
+            }
+        };
+        // 防止意外覆盖已有实现
+        if (typeof unsafeWindow !== 'undefined' && unsafeWindow && !unsafeWindow.EMH_API) {
+            try { unsafeWindow.EMH_API = api; } catch (e) {}
+        }
+        if (!window.EMH_API) {
+            try { window.EMH_API = api; } catch (e) {}
+        }
+        window.__EMH_API__ = api;
+    }
+
     function initialize() {
         // standalone 独立页：同源真实网址 + #emh-standalone 标记 → 原生 GM 能力，无需父页桥
         if (location.hash.indexOf('emh-standalone') >= 0 || location.search.indexOf('emh-standalone') >= 0) {
@@ -3575,6 +3887,7 @@
         }
         THEME.apply(THEME.get());
         CODE_LIBRARY.init();
+        mountPublicApi();
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => main());
         } else {

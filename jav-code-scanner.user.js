@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         通用番号扫描 & 多源搜索
 // @namespace    http://tampermonkey.net/
-// @version      1.5.48
+// @version      1.5.71
 // @description  扫描页面番号、多源搜索；字幕/原名下载；页面高亮可配置；新标签/本页预览；iframe 白名单；CBox 轻量高亮；DMM CID；快捷键/主题；全站备份(WebDAV可加密)；window.JavCodeKit
 // @author       You
 // @include      *://*jav*/*
@@ -33,6 +33,9 @@
 // @include      *://my.cbox.ws/*
 // @exclude      *://localhost/*
 // @exclude      *://127.0.0.1/*
+// @exclude      *://*/cdn-cgi/challenge-platform/*
+// @exclude      *://challenges.cloudflare.com/*
+// @exclude      *://*.cloudflare.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
 // @grant        GM.xmlHttpRequest
@@ -54,8 +57,8 @@
     if (_pageWin.JavCodeKit && _pageWin.JavCodeKit.__ready) return;
 
     const NS = 'jcs';
-    const STYLE_VER = '1.5.48';
-    const SCRIPT_VER = '1.5.48';
+    const STYLE_VER = '1.5.71';
+    const SCRIPT_VER = '1.5.71';
     const IS_CBOX = /(^|\.)cbox\.ws$/i.test(location.hostname || '');
     const CBOX_MSG_SOURCE = 'jcs-cbox';
     const ENC_MARK = 'jcs-aes-gcm-v1';
@@ -66,9 +69,11 @@
     const PANEL_KEY = 'jcs_panel_layout_v1';
     const FAB_POS_KEY = 'jcs_fab_pos_v1';
     const THEME_KEY = 'jcs_theme_v1';
+    const CODE_ACT_KEY = 'jcs_code_actions_v1';
     const FRAME_BLOCK_KEY = 'jcs_frame_block_hosts_v1';
     const FRAME_ALLOW_KEY = 'jcs_frame_allow_hosts_v1';
     const EXT_MODE_KEY = 'jcs_prefer_ext_hosts_v1';
+    const PROVIDER_BLACKLIST_KEY = 'jcs_provider_blacklist_v1';
     const HL_OPT_KEY = 'jcs_hl_opts_v1';
     const SUB_OPT_KEY = 'jcs_sub_filename_v1';
     const SUB_HIST_KEY = 'jcs_sub_hist_v1';
@@ -80,7 +85,7 @@
     /** 脚本级配置键（跨站点共享；优先 GM 存储） */
     const STORE_KEYS = [
         PROVIDERS_KEY, PROVIDER_KEY, HIST_KEY, PANEL_KEY, FAB_POS_KEY, THEME_KEY,
-        FRAME_BLOCK_KEY, FRAME_ALLOW_KEY, EXT_MODE_KEY, HL_OPT_KEY, SUB_OPT_KEY, SUB_HIST_KEY,
+        FRAME_BLOCK_KEY, FRAME_ALLOW_KEY, EXT_MODE_KEY, PROVIDER_BLACKLIST_KEY, HL_OPT_KEY, SUB_OPT_KEY, SUB_HIST_KEY,
         SITES_KEY, WEBDAV_KEY
     ];
 
@@ -419,6 +424,34 @@
         nativeSelectors: ''
     };
 
+    // 当前番号操作条（选源面板 / 预览弹窗操作栏）按钮配置：
+    // 每项 { on: 显示开关, fold: 收进「⋯」更多菜单 }；兼容旧版布尔格式（true/false）
+    const DEFAULT_CODE_ACTIONS = {
+        sub: { on: true, fold: false },
+        copy: { on: true, fold: false },
+        lib: { on: true, fold: false },
+        shot: { on: true, fold: false }
+    };
+    function normalizeCodeActions(ca) {
+        const base = {};
+        Object.keys(DEFAULT_CODE_ACTIONS).forEach((k) => {
+            base[k] = { on: true, fold: false };
+        });
+        if (ca && typeof ca === 'object') {
+            Object.keys(DEFAULT_CODE_ACTIONS).forEach((k) => {
+                const v = ca[k];
+                if (v == null) return;
+                if (typeof v === 'boolean') {
+                    base[k].on = v; // 旧布尔格式兼容
+                } else if (typeof v === 'object') {
+                    if (typeof v.on === 'boolean') base[k].on = v.on;
+                    if (typeof v.fold === 'boolean') base[k].fold = v.fold;
+                }
+            });
+        }
+        return base;
+    }
+
     /**
      * 允许在 iframe 内运行的默认域名（不含 @noframes 后的白名单）
      * 仅匹配 hostname；子域可用父域（如 dmm.co.jp 含 www.dmm.co.jp）
@@ -427,6 +460,11 @@
     const DEFAULT_FRAME_ALLOW_HOSTS = [
         // 'video.dmm.co.jp',
         // 'www.javlibrary.com',
+    ];
+
+    /** 内置搜索源域名黑名单（精确域名及其子域名） */
+    const DEFAULT_PROVIDER_BLACKLIST_HOSTS = [
+        'javdb.com'
     ];
 
     function isInIframe() {
@@ -442,6 +480,82 @@
         const p = String(pattern || '').toLowerCase().replace(/^\*\./, '').replace(/^\./, '');
         if (!h || !p) return false;
         return h === p || h.endsWith('.' + p);
+    }
+
+    function providerHostname(providerOrUrl) {
+        const raw = providerOrUrl && typeof providerOrUrl === 'object'
+            ? providerOrUrl.url
+            : providerOrUrl;
+        try {
+            const host = new URL(String(raw || '')).hostname;
+            return String(host || '').toLowerCase().trim().replace(/\.+$/, '');
+        } catch (e) {
+            return '';
+        }
+    }
+
+    function isBuiltinProviderBlacklistHost(host) {
+        const h = String(host || '').toLowerCase().trim();
+        return !!h && DEFAULT_PROVIDER_BLACKLIST_HOSTS.some((pattern) => hostMatchesPattern(h, pattern));
+    }
+
+    function loadProviderBlacklist() {
+        try {
+            const raw = storeGetJson(PROVIDER_BLACKLIST_KEY, []);
+            const clean = normalizeHostList(raw)
+                .map((host) => normalizeProviderBlacklistInput(host))
+                .filter((host) => host && !isBuiltinProviderBlacklistHost(host));
+            return normalizeHostList(clean).slice(-80);
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function saveProviderBlacklist(list) {
+        const clean = normalizeHostList(list)
+            .map((host) => normalizeProviderBlacklistInput(host))
+            .filter((host) => host && !isBuiltinProviderBlacklistHost(host));
+        const limited = clean.length > 80 ? clean.slice(clean.length - 80) : clean;
+        if (limited.length) storeSetJson(PROVIDER_BLACKLIST_KEY, limited);
+        else storeRemove(PROVIDER_BLACKLIST_KEY);
+        return limited;
+    }
+
+    function isProviderHostBlacklisted(providerOrUrl) {
+        const host = providerHostname(providerOrUrl);
+        if (!host) return false;
+        return DEFAULT_PROVIDER_BLACKLIST_HOSTS.concat(loadProviderBlacklist())
+            .some((pattern) => hostMatchesPattern(host, pattern));
+    }
+
+    function markProviderHostBlacklisted(providerOrUrl) {
+        const host = providerHostname(providerOrUrl);
+        if (!host || isBuiltinProviderBlacklistHost(host)) return host;
+        const list = loadProviderBlacklist();
+        if (list.indexOf(host) >= 0) return host;
+        list.push(host);
+        saveProviderBlacklist(list);
+        try { renderProviderBlacklist(); } catch (e) { /* UI may not be mounted yet */ }
+        return host;
+    }
+
+    function normalizeProviderBlacklistInput(value) {
+        let raw = String(value || '').trim().toLowerCase();
+        if (!raw) return '';
+        raw = raw.replace(/^\*\./, '').replace(/^\.+|\.+$/g, '');
+        if (!raw || /[\s/:?#]/.test(raw)) return '';
+        if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(raw)) return '';
+        return raw;
+    }
+
+    function removeProviderBlacklistHost(host) {
+        const h = normalizeProviderBlacklistInput(host);
+        if (!h || isBuiltinProviderBlacklistHost(h)) return false;
+        const current = loadProviderBlacklist();
+        const next = current.filter((item) => item !== h);
+        if (next.length === current.length) return false;
+        saveProviderBlacklist(next);
+        return true;
     }
 
     // 启动时把本站遗留配置并入脚本总库（不覆盖其它站已有数据）
@@ -540,8 +654,7 @@
     const DEFAULT_PROVIDERS = [
         { id: 'cili', name: '1cili', hint: '磁力搜索', url: 'https://1cili.com/search?q={code}' },
         { id: 'av123', name: '123AV', hint: '在线播放', url: 'https://123av.com/cn/v/{code_lower}' },
-        { id: 'jable', name: 'Jable', hint: '在线播放', url: 'https://jable.tv/search/{code}/' },
-        { id: 'javdb', name: 'JavDB', hint: '数据库搜索', url: 'https://javdb.com/search?q={code}', mode: 'fetch' }
+        { id: 'jable', name: 'Jable', hint: '在线播放', url: 'https://jable.tv/search/{code}/' }
     ];
 
     const SKIP_SEL = '#' + NS + '-host,#' + NS + '-panel,#' + NS + '-popup,#' + NS + '-pick,#' + NS + '-sub,script,style,noscript,textarea,input,select,option,code,pre,[contenteditable="true"]';
@@ -572,7 +685,9 @@
         // 顶层已有完整 UI 时，iframe 内只做高亮，避免双浮钮
         embedLite: false,
         hl: Object.assign({}, DEFAULT_HL_OPTS),
+        codeActions: Object.assign({}, DEFAULT_CODE_ACTIONS),
         cfgTab: 'general',
+        cfgSourceTab: 'providers',
         cfgEditId: '',
         cfgDeleteId: '',
         cfgFlashId: '',
@@ -689,12 +804,360 @@
         });
     }
 
+    /** 跨脚本桥：调用 Enhanced_Media_Helper 的公开 API，把番号加入番号库（需对方已安装并启用） */
+    // 返回 'added' | 'exists' | 'noapi' | 'fail'，供按钮就地反馈；toast 提示由 addToLibrary 负责
+    function doAddToLibrary(code) {
+        const c = String(code || '').trim().toUpperCase();
+        if (!c) return 'fail';
+        let api = null;
+        try {
+            api = _pageWin.EMH_API || (typeof window !== 'undefined' && window.EMH_API) || null;
+        } catch (e) { api = null; }
+        if (!api || typeof api.addCode !== 'function') return 'noapi';
+        try {
+            const r = api.addCode(c) || {};
+            if (r.ok) return 'added';
+            if (r.exists) return 'exists';
+            return 'fail';
+        } catch (e) { return 'fail'; }
+    }
+
+    function addToLibrary(code) {
+        const r = doAddToLibrary(code);
+        const c = String(code || '').trim().toUpperCase();
+        if (r === 'added') { showToast('已加入番号库：' + c); invalidateLibCache(); refreshLibBadges(); }
+        else if (r === 'exists') { showToast('番号库已有：' + c); invalidateLibCache(); refreshLibBadges(); }
+        else if (r === 'noapi') { showToast('未安装 Enhanced_Media_Helper，无法加入番号库'); }
+        else { showToast('加入番号库失败'); }
+    }
+
+    // 返回 'removed' | 'missing' | 'noapi' | 'fail'
+    function doRemoveFromLibrary(code) {
+        const c = String(code || '').trim().toUpperCase();
+        if (!c) return 'fail';
+        let api = null;
+        try {
+            api = _pageWin.EMH_API || (typeof window !== 'undefined' && window.EMH_API) || null;
+        } catch (e) { api = null; }
+        if (!api || typeof api.removeCode !== 'function') return 'noapi';
+        try {
+            const r = api.removeCode(c) || {};
+            if (r.ok) return 'removed';
+            if (r.missing) return 'missing';
+            return 'fail';
+        } catch (e) { return 'fail'; }
+    }
+
+    function removeFromLibrary(code) {
+        const r = doRemoveFromLibrary(code);
+        const c = String(code || '').trim().toUpperCase();
+        if (r === 'removed') { showToast('已从番号库移除：' + c); invalidateLibCache(); refreshLibBadges(); }
+        else if (r === 'missing') { showToast('番号库中没有：' + c); invalidateLibCache(); refreshLibBadges(); }
+        else if (r === 'noapi') { showToast('未安装 Enhanced_Media_Helper，无法操作番号库'); }
+        else { showToast('移除失败'); }
+    }
+
+    // ── 番号库状态缓存（30s 有效期；EMH 未装时为 null）──
+    let _libCache = null;
+    function loadLibCache() {
+        let api = null;
+        try {
+            api = _pageWin.EMH_API || (typeof window !== 'undefined' && window.EMH_API) || null;
+        } catch (e) { api = null; }
+        if (!api || typeof api.getAll !== 'function') { _libCache = null; return null; }
+        try {
+            const items = api.getAll() || [];
+            const map = Object.create(null);
+            items.forEach((it) => {
+                if (it && it.code) map[String(it.code).toUpperCase()] = it.status || 'unmarked';
+            });
+            _libCache = { map: map, t: Date.now() };
+            return _libCache;
+        } catch (e) { _libCache = null; return null; }
+    }
+    /** 查询某番号是否在库：null=EMH 未装；{inLib,status} */
+    function libStateOf(code) {
+        if (!_libCache || Date.now() - _libCache.t > 30000) loadLibCache();
+        if (!_libCache) return null;
+        const c = String(code || '').trim().toUpperCase();
+        if (!c) return null;
+        return { inLib: c in _libCache.map, status: _libCache.map[c] || 'unmarked' };
+    }
+    function invalidateLibCache() { _libCache = null; }
+
+    /** 同步页面高亮块 ✓ 徽标与面板/弹窗 chip 的 ＋/✓ 徽标 */
+    function refreshLibBadges() {
+        try {
+            document.querySelectorAll('.' + NS + '-code-mark').forEach((el) => {
+                const c = el.getAttribute('data-jcs-code') || '';
+                const st = c ? libStateOf(c) : null;
+                if (st) el.setAttribute('data-jcs-lib', st.inLib ? '1' : '0');
+                else if (el.hasAttribute('data-jcs-lib')) el.removeAttribute('data-jcs-lib');
+            });
+        } catch (e) { /* ignore */ }
+        try {
+            document.querySelectorAll('#' + NS + '-list .jcs-chip[data-code], #' + NS + '-mobi-codes .jcs-chip[data-code]').forEach((btn) => {
+                const badge = btn.querySelector('.jcs-chip-badge');
+                if (!badge) return;
+                const c = btn.getAttribute('data-code') || '';
+                const st = c ? libStateOf(c) : null;
+                if (!st) { badge.style.display = 'none'; return; }
+                badge.style.display = '';
+                const inLib = !!(st && st.inLib);
+                badge.textContent = inLib ? '✓' : '＋';
+                badge.classList.toggle('in-lib', inLib);
+                badge.setAttribute('data-lib', inLib ? '1' : '0');
+                badge.title = inLib ? '已在番号库（点击移除）' : '加入番号库';
+                if (!inLib) badge.classList.remove('confirm');
+            });
+        } catch (e) { /* ignore */ }
+    }
+
+    /** chip 尾部 ＋/✓ 徽标：＋=入库；✓=已在库（两段式点击确认移除） */
+    function bindChipLibBadge(badge, code) {
+        if (!badge || !code || badge.dataset.jcsBadgeBound === '1') return;
+        badge.dataset.jcsBadgeBound = '1';
+        const c = String(code).trim().toUpperCase();
+        badge.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!badge.classList.contains('in-lib')) {
+                const r = doAddToLibrary(c);
+                if (r === 'added' || r === 'exists') { invalidateLibCache(); refreshLibBadges(); }
+                else if (r === 'noapi') showToast('未安装 Enhanced_Media_Helper，无法加入番号库');
+                else showToast('加入番号库失败');
+                return;
+            }
+            // 已在库：再点一次确认移除（3s 内），防止误触
+            if (badge.classList.contains('confirm')) {
+                const r = doRemoveFromLibrary(c);
+                if (r === 'removed' || r === 'missing') { invalidateLibCache(); refreshLibBadges(); }
+                else if (r === 'noapi') showToast('未安装 Enhanced_Media_Helper，无法操作番号库');
+                else showToast('移除失败');
+                return;
+            }
+            badge.classList.add('confirm');
+            badge.textContent = '×';
+            badge.title = '再点一次确认移除';
+            clearTimeout(badge._jcsT);
+            badge._jcsT = setTimeout(() => {
+                badge.classList.remove('confirm');
+                badge.textContent = '✓';
+                badge.title = '已在番号库（点击移除）';
+            }, 3000);
+        };
+    }
+
+    // 选源 picker 操作按钮的内联 SVG 图标（跟随 currentColor）
+    const PICK_ICON = {
+        sub: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><line x1="7" y1="10" x2="17" y2="10"/><line x1="7" y1="14" x2="13" y2="14"/></svg>',
+        copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+        plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+        check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+        shot: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>'
+    };
+
+    // ── 当前番号操作条（外链 picker / 内页弹窗头部共用）──
+    // 字幕 / 复制 / 入库 三个图标按钮；样式随容器上下文统一（picker=圆角小按钮，弹窗头部=方角大按钮），
+    // 状态/反馈一致（入库 ＋/✓、复制 ✓ 反馈 900ms）。返回 { root, setCode(code) }。
+    let _codeActions = null;
+    // 操作按钮定义：图标 / title / 依赖 EMH（未装时隐藏）
+    const CODE_ACT_DEF = {
+        sub: { icon: 'sub', title: '搜索字幕', emh: false },
+        copy: { icon: 'copy', title: '复制番号', emh: false },
+        lib: { icon: 'plus', title: '加入番号库', emh: true },
+        shot: { icon: 'shot', title: '截图预览', emh: true }
+    };
+    function buildCodeActions(container, opts) {
+        const o = opts || {};
+        const onSub = typeof o.onSub === 'function' ? o.onSub : null;
+        if (!container || container.querySelector('.jcs-act-btn')) return null;
+        // 按配置过滤/折叠按钮（设置 → 操作 tab）；全部关闭时不挂载
+        const ca = normalizeCodeActions(state && state.codeActions);
+        let mainHtml = '';
+        let foldHtml = '';
+        let hasFold = false;
+        Object.keys(CODE_ACT_DEF).forEach((k) => {
+            const c = ca[k];
+            if (!c || !c.on) return;
+            const d = CODE_ACT_DEF[k];
+            const btn = '<button type="button" class="jcs-act-btn" data-act="' + k + '" title="' + d.title + '">' +
+                PICK_ICON[d.icon] + '</button>';
+            if (c.fold) {
+                hasFold = true;
+                foldHtml += btn;
+            } else {
+                mainHtml += btn;
+            }
+        });
+        let html = mainHtml;
+        if (hasFold) {
+            html += '<button type="button" class="jcs-act-btn is-more" data-act="more" title="更多操作" aria-haspopup="true">⋯</button>' +
+                '<div class="jcs-act-pop" hidden>' + foldHtml + '</div>';
+        }
+        if (!html) return null;
+        const root = document.createElement('span');
+        root.className = 'jcs-code-actions';
+        root.innerHTML = html;
+        container.appendChild(root);
+        const pop = root.querySelector('.jcs-act-pop');
+        const closePop = () => {
+            if (!pop || pop.hidden) return;
+            pop.hidden = true;
+            const mb = root.querySelector('.jcs-act-btn.is-more');
+            if (mb) mb.classList.remove('is-on');
+        };
+        let code = '';
+        root.addEventListener('click', (e) => {
+            const b = e.target && e.target.closest ? e.target.closest('.jcs-act-btn') : null;
+            if (!b || !code) return;
+            const act = b.getAttribute('data-act') || '';
+            if (act === 'more') {
+                if (pop) {
+                    if (pop.hidden) {
+                        pop.hidden = false;
+                        b.classList.add('is-on');
+                    } else {
+                        closePop();
+                    }
+                }
+                return;
+            }
+            closePop();
+            if (act === 'sub') {
+                if (onSub) onSub(code);
+                else openSubtitleSearch(code);
+                return;
+            }
+            if (act === 'copy') {
+                copyCode(code);
+                b.classList.add('is-done');
+                b.innerHTML = PICK_ICON.check;
+                clearTimeout(b._jcsT);
+                b._jcsT = setTimeout(() => {
+                    b.classList.remove('is-done');
+                    b.innerHTML = PICK_ICON.copy;
+                }, 900);
+                return;
+            }
+            if (act === 'lib') {
+                if (b.classList.contains('in-lib')) {
+                    showToast('已在番号库：' + code);
+                    return;
+                }
+                const r = doAddToLibrary(code);
+                if (r === 'added' || r === 'exists') {
+                    invalidateLibCache();
+                    refreshLibBadges();
+                    b.classList.add('in-lib');
+                    b.innerHTML = PICK_ICON.check;
+                    b.title = '已在番号库';
+                    if (r === 'added') showToast('已加入番号库：' + code);
+                } else if (r === 'noapi') {
+                    showToast('未安装 Enhanced_Media_Helper，无法加入番号库');
+                } else {
+                    showToast('加入番号库失败');
+                }
+                return;
+            }
+            if (act === 'shot') {
+                let api = null;
+                try {
+                    api = _pageWin.EMH_API || (typeof window !== 'undefined' && window.EMH_API) || null;
+                } catch (err) { api = null; }
+                if (!api || typeof api.previewAvwiki !== 'function') {
+                    showToast('Enhanced_Media_Helper 版本过低：需 3.6.4+ 才能预览截图');
+                    return;
+                }
+                // 灯箱为全屏模态：先收起选源面板，避免遮挡预览
+                try { if (isPickerOpen()) closeProviderPicker(); } catch (err) { /* ignore */ }
+                showToast('正在获取 AVWikiDB 截图…');
+                try {
+                    api.previewAvwiki(code, {
+                        force: !!e.shiftKey,
+                        onDone: (errMsg) => {
+                            // 成功时 EMH 已自行打开灯箱；失败把原因带回 scanner 显示
+                            if (errMsg) showToast('截图预览失败：' + errMsg);
+                        }
+                    });
+                } catch (err) {
+                    showToast('截图预览失败');
+                }
+            }
+        });
+        // 点击操作条外部关闭 ⋯ 菜单（document 级只绑一次）
+        if (!buildCodeActions._docBound) {
+            buildCodeActions._docBound = true;
+            document.addEventListener('click', (e) => {
+                document.querySelectorAll('.jcs-act-pop:not([hidden])').forEach((p) => {
+                    const actions = p.closest('.jcs-code-actions');
+                    if (!actions || !actions.contains(e.target)) {
+                        p.hidden = true;
+                        const mb = actions && actions.querySelector('.jcs-act-btn.is-more');
+                        if (mb) mb.classList.remove('is-on');
+                    }
+                });
+            }, true);
+        }
+        return {
+            root: root,
+            setCode: function (c) {
+                code = String(c || '').trim().toUpperCase();
+                const st = code ? libStateOf(code) : null;
+                // 依赖 EMH 的按钮（入库/截图）：EMH 未装时隐藏
+                root.querySelectorAll('.jcs-act-btn[data-act="lib"], .jcs-act-btn[data-act="shot"]').forEach((b) => {
+                    b.style.display = st ? '' : 'none';
+                });
+                const libBtn = root.querySelector('.jcs-act-btn[data-act="lib"]');
+                if (!libBtn) return;
+                const inLib = !!(st && st.inLib);
+                libBtn.classList.toggle('in-lib', inLib);
+                libBtn.innerHTML = inLib ? PICK_ICON.check : PICK_ICON.plus;
+                libBtn.title = inLib ? '已在番号库' : '加入番号库';
+            }
+        };
+    }
+
+    /** 弹窗操作条挂载（幂等；容器不存在时跳过；rebuild=true 时清空重建——配置变更后调用） */
+    function ensureCodeActions(rebuild) {
+        const container = document.getElementById(NS + '-code-actions');
+        if (!container) return null;
+        const needRebuild = rebuild === true || !_codeActions || !_codeActions.root || !_codeActions.root.isConnected;
+        if (needRebuild) {
+            // 重建前清空旧按钮，避免按旧配置渲染的按钮残留
+            try {
+                while (container.firstChild) container.removeChild(container.firstChild);
+            } catch (e) { /* ignore */ }
+            _codeActions = buildCodeActions(container);
+            if (_codeActions && state.active) {
+                try { _codeActions.setCode(state.active); } catch (e) { /* ignore */ }
+            }
+        }
+        return _codeActions;
+    }
+
+    /** 当前番号操作栏整体刷新：番号标签 + 操作条状态；无当前番号时隐藏整栏 */
+    function updateCodeBar(rebuild) {
+        const bar = document.getElementById(NS + '-code-bar');
+        const label = document.getElementById(NS + '-code-bar-code');
+        const has = !!(state.active);
+        if (bar) bar.style.display = has ? '' : 'none';
+        if (label) {
+            label.textContent = state.active || '';
+            label.title = state.active || '';
+        }
+        ensureCodeActions(rebuild === true);
+        if (_codeActions) {
+            try { _codeActions.setCode(state.active || ''); } catch (e) { /* ignore */ }
+        }
+    }
+
     function chipTitleText(opts) {
         const o = opts || {};
         if (o.title) return o.title;
         return preferExternalSearch()
-            ? '点击：选搜索网站（新标签打开）· Alt+点击：复制'
-            : '点击：复制 · 双击：在本页打开搜索';
+            ? '点击：选搜索网站（新标签打开）· Alt+点击：复制 · Alt+Shift+点击：加入番号库'
+            : '点击：复制 · 双击：在本页打开搜索 · Alt+Shift+点击：加入番号库';
     }
 
     function bindChipCopy(btn, opts) {
@@ -705,6 +1168,13 @@
         btn.addEventListener('click', (e) => {
             const code = btn.getAttribute('data-code') || '';
             if (!code) return;
+            // Alt+Shift+点击：加入番号库
+            if (e.altKey && e.shiftKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                addToLibrary(code);
+                return;
+            }
             const ext = preferExternalSearch();
             if (e.altKey || e.metaKey || e.ctrlKey) {
                 e.preventDefault();
@@ -1366,17 +1836,6 @@
 
     // ─── 可配置搜索源 ───────────────────────────────────────
 
-    /** X-Frame-Options 拒绝 iframe 的站（hostname 含 javdb），此类源跨域时强制 fetch 自渲染 */
-    function isFetchForcedHost(url) {
-        try {
-            const u = String(url || '').toLowerCase();
-            const host = (u.match(/^https?:\/\/([^\/?#]+)/i) || [null, u.split('/')[0]])[1] || '';
-            return host.split('.').some((part) => part.indexOf('javdb') >= 0);
-        } catch (e) {
-            return false;
-        }
-    }
-
     /** 搜索源 URL 与当前页面是否同源（X-Frame-Options: SAMEORIGIN 放行同源嵌入，iframe 可用） */
     function isSameOriginUrl(url) {
         try {
@@ -1386,6 +1845,17 @@
         } catch (e) {
             return false;
         }
+    }
+
+    function normalizeProviderMode(mode) {
+        const value = String(mode || '').trim().toLowerCase();
+        return value === 'auto' || value === 'iframe' || value === 'fetch' ? value : 'auto';
+    }
+
+    function previewModeLabel(mode) {
+        return normalizeProviderMode(mode) === 'fetch'
+            ? 'GM 自渲染'
+            : normalizeProviderMode(mode) === 'iframe' ? 'iframe' : '自动';
     }
 
     function normalizeProvider(p, idx) {
@@ -1398,7 +1868,7 @@
             name: String(p.name || '').trim() || id,
             hint: String(p.hint || '').trim(),
             url: url,
-            mode: (p.mode === 'fetch' || isFetchForcedHost(url)) ? 'fetch' : 'iframe'
+            mode: normalizeProviderMode(p.mode)
         };
     }
 
@@ -1410,7 +1880,7 @@
                 if (list.length) return list;
             }
         } catch (e) { /* ignore */ }
-        return DEFAULT_PROVIDERS.map((p) => Object.assign({}, p));
+        return DEFAULT_PROVIDERS.map((p, i) => normalizeProvider(p, i)).filter(Boolean);
     }
 
     function getProviders() {
@@ -1421,7 +1891,7 @@
     function saveProviders(list) {
         const clean = (list || []).map(normalizeProvider).filter(Boolean);
         if (!clean.length) {
-            providersCache = DEFAULT_PROVIDERS.map((p) => Object.assign({}, p));
+            providersCache = DEFAULT_PROVIDERS.map((p, i) => normalizeProvider(p, i)).filter(Boolean);
             storeRemove(PROVIDERS_KEY);
             return providersCache;
         }
@@ -1509,6 +1979,22 @@
         const o = normalizeHlOpts(hl);
         o.nativeSelectors = '';
         return o;
+    }
+
+    function loadCodeActions() {
+        let base = Object.assign({}, DEFAULT_CODE_ACTIONS);
+        try {
+            const raw = storeGetJson(CODE_ACT_KEY, null);
+            if (raw && typeof raw === 'object') base = normalizeCodeActions(raw);
+        } catch (e) { /* ignore */ }
+        state.codeActions = base;
+        return state.codeActions;
+    }
+
+    function saveCodeActions(ca) {
+        state.codeActions = normalizeCodeActions(ca);
+        storeSetJson(CODE_ACT_KEY, state.codeActions);
+        return state.codeActions;
     }
 
     function loadHlOpts() {
@@ -1656,6 +2142,67 @@
             } catch (e) { /* ignore */ }
         }
         return n;
+    }
+
+    /** 检测 Enhanced_Media_Helper 桥是否可用（不依赖状态缓存，直接查主 world） */
+    function isEmhInstalled() {
+        try {
+            const api = _pageWin.EMH_API || (typeof window !== 'undefined' && window.EMH_API) || null;
+            return !!(api && typeof api.addCode === 'function');
+        } catch (e) { return false; }
+    }
+
+    function syncCodeActionsUi() {
+        const ca = normalizeCodeActions(state.codeActions);
+        const emhOk = isEmhInstalled();
+        // EMH 未装：顶部提示 + 依赖 EMH 的按钮行置灰
+        const hint = document.getElementById(NS + '-ca-emh-hint');
+        if (hint) {
+            if (emhOk) hint.classList.remove('is-on');
+            else hint.classList.add('is-on');
+        }
+        Object.keys(DEFAULT_CODE_ACTIONS).forEach((k) => {
+            const needEmh = !!(CODE_ACT_DEF[k] && CODE_ACT_DEF[k].emh);
+            const on = document.getElementById(NS + '-ca-' + k);
+            if (on) {
+                on.checked = !!(ca[k] && ca[k].on);
+                // 依赖 EMH 的按钮在 EMH 未装时不可用：置灰但保留配置值（装上后自动恢复可编辑）
+                on.disabled = needEmh && !emhOk;
+            }
+            const fold = document.getElementById(NS + '-ca-' + k + '-fold');
+            if (fold) {
+                fold.checked = !!(ca[k] && ca[k].fold);
+                fold.disabled = !(ca[k] && ca[k].on) || (needEmh && !emhOk);
+            }
+        });
+    }
+
+    function bindCodeActionsUi() {
+        Object.keys(DEFAULT_CODE_ACTIONS).forEach((k) => {
+            const on = document.getElementById(NS + '-ca-' + k);
+            if (on && on.dataset.jcsBound !== '1') {
+                on.dataset.jcsBound = '1';
+                on.addEventListener('change', () => {
+                    const ca = normalizeCodeActions(state.codeActions);
+                    ca[k] = { on: !!on.checked, fold: !!(ca[k] && ca[k].fold) };
+                    saveCodeActions(ca);
+                    const fold = document.getElementById(NS + '-ca-' + k + '-fold');
+                    if (fold) fold.disabled = !on.checked;
+                    // 立即生效：强制重建已挂载的操作条（预览弹窗内）；选源面板下次打开自动生效
+                    try { updateCodeBar(true); } catch (e) { /* ignore */ }
+                });
+            }
+            const fold = document.getElementById(NS + '-ca-' + k + '-fold');
+            if (fold && fold.dataset.jcsBound !== '1') {
+                fold.dataset.jcsBound = '1';
+                fold.addEventListener('change', () => {
+                    const ca = normalizeCodeActions(state.codeActions);
+                    ca[k] = { on: !!(ca[k] && ca[k].on), fold: !!fold.checked };
+                    saveCodeActions(ca);
+                    try { updateCodeBar(true); } catch (e) { /* ignore */ }
+                });
+            }
+        });
     }
 
     function syncHlOptsUi() {
@@ -2442,6 +2989,36 @@
         return sanitizeFilename(lang ? (base + '_' + lang + '.' + ext) : (base + '.' + ext));
     }
 
+    function supportsTampermonkeyCookiePartition() {
+        let handler = '';
+        let version = '';
+        try {
+            const info = (typeof GM_info !== 'undefined' && GM_info) ? GM_info : null;
+            handler = String(info && info.scriptHandler || '').trim().toLowerCase();
+            version = String(info && info.version || '').trim();
+        } catch (e) {
+            return false;
+        }
+        if (handler !== 'tampermonkey') return false;
+        const m = /^(\d+)(?:\.(\d+))?(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?$/.exec(version);
+        if (!m) return false;
+        const major = Number(m[1]);
+        const minor = Number(m[2] || 0);
+        if (!isFinite(major) || !isFinite(minor)) return false;
+        return major > 5 || (major === 5 && minor >= 2);
+    }
+
+    function getCookiePartitionForUrl(url) {
+        if (!supportsTampermonkeyCookiePartition()) return null;
+        try {
+            const target = new URL(String(url || ''));
+            if (!/^https?:$/i.test(target.protocol) || !target.origin || target.origin === 'null') return null;
+            return { topLevelSite: target.origin };
+        } catch (e) {
+            return null;
+        }
+    }
+
     function gmRequest(opts) {
         const o = opts || {};
         const gm = (typeof GM_xmlhttpRequest === 'function' && GM_xmlhttpRequest)
@@ -2479,6 +3056,12 @@
                 if (o.data != null) req.data = o.data;
                 if (o.binary != null) req.binary = o.binary;
                 if (o.overrideMimeType) req.overrideMimeType = o.overrideMimeType;
+                if (Object.prototype.hasOwnProperty.call(o, 'withCredentials')) {
+                    req.withCredentials = o.withCredentials;
+                }
+                if (Object.prototype.hasOwnProperty.call(o, 'cookiePartition')) {
+                    req.cookiePartition = o.cookiePartition;
+                }
                 gm(req);
             } catch (e) {
                 finish(reject, e || new Error('gm fail'));
@@ -3221,9 +3804,9 @@
         const c = String(code || '').trim();
         if (!c) return '';
         if (preferExternalSearch()) {
-            return c + ' · 点击选搜索网站（新标签打开）· Alt+复制' + (native ? ' · Ctrl+点击打开原网页' : '');
+            return c + ' · 点击选搜索网站（新标签打开）· Alt+复制 · Alt+Shift+点击加入番号库' + (native ? ' · Ctrl+点击打开原网页' : '');
         }
-        return c + ' · 点击在本页搜索 · Alt+复制' + (native ? ' · Ctrl+点击打开原网页' : '');
+        return c + ' · 点击在本页搜索 · Alt+复制 · Alt+Shift+点击加入番号库' + (native ? ' · Ctrl+点击打开原网页' : '');
     }
 
     /** 是否为整卡链接（含图/多块结构）——不可套用行内高亮样式，否则布局错乱 */
@@ -3242,6 +3825,9 @@
         if (!el || !code) return;
         el.classList.add(NS + '-code-mark');
         el.setAttribute('data-jcs-code', code);
+        // 已在番号库的高亮块右上角显示 ✓ 徽标（EMH 未装时无状态）
+        const st0 = libStateOf(code);
+        if (st0) el.setAttribute('data-jcs-lib', st0.inLib ? '1' : '0');
         el.setAttribute('title', codeLinkTitle(code, true).replace('Ctrl+点击打开原网页', '点卡片其他区域进详情'));
         el.setAttribute('role', 'button');
         el.setAttribute('tabindex', '0');
@@ -3249,7 +3835,16 @@
         el.dataset.jcsMarkBound = '1';
         const onAct = (e) => {
             if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
-            if (e.ctrlKey || e.metaKey || e.shiftKey || (e.button != null && e.button === 1)) return;
+            if (e.ctrlKey || e.metaKey || (e.button != null && e.button === 1)) return;
+            // Alt+Shift+点击：加入番号库（跨脚本桥，EMH 未安装时 toast 提示）
+            if (e.altKey && e.shiftKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+                addToLibrary(code);
+                return;
+            }
+            if (e.shiftKey) return;
             e.preventDefault();
             e.stopPropagation();
             if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
@@ -3847,6 +4442,16 @@ time.${NS}-code-mark:hover{
   color:#fff!important;
   box-shadow:0 1px 6px rgba(212,83,74,.35)
 }
+/* 已在番号库的高亮块：右上角 ✓ 徽标（仅在库时显示，避免视觉噪音） */
+.${NS}-code-mark::after{
+  content:'✓';position:absolute;top:-7px;right:-7px;z-index:3;
+  min-width:13px;height:13px;padding:0 2px;border-radius:999px;box-sizing:border-box;
+  font-size:8.5px;font-weight:800;line-height:13px;text-align:center;
+  background:var(--jcs-accent);color:#fff;box-shadow:0 0 0 1px rgba(255,255,255,.3);
+  opacity:0;transform:scale(.5);pointer-events:none;
+  transition:opacity .12s ease,transform .12s ease
+}
+.${NS}-code-mark[data-jcs-lib="1"]::after{opacity:1;transform:scale(1)}
 #${NS}-host{
   position:fixed;inset:0;z-index:2147483000;pointer-events:none;margin:0;padding:0;border:0;
   overflow:visible;transform:none!important;contain:none!important;
@@ -4058,6 +4663,34 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
   background:var(--jcs-accent-dim);color:var(--jcs-accent2);
   box-shadow:0 0 0 1px var(--jcs-accent-line) inset
 }
+#${NS}-cfg .jcs-source-tabs{
+  display:flex;gap:6px;padding:2px;border:1px solid var(--jcs-line);border-radius:var(--jcs-radius-md);
+  background:var(--jcs-fill-2);width:max-content;max-width:100%;box-sizing:border-box
+}
+#${NS}-cfg .jcs-source-tab{
+  height:32px;padding:0 13px;border:0;border-radius:var(--jcs-radius-sm);background:transparent;color:var(--jcs-muted);
+  cursor:pointer;font:inherit;font-size:11.5px;font-weight:750;white-space:nowrap
+}
+#${NS}-cfg .jcs-source-tab:hover{color:var(--jcs-soft);background:var(--jcs-fill)}
+#${NS}-cfg .jcs-source-tab:focus-visible{outline:none;box-shadow:var(--jcs-focus)}
+#${NS}-cfg .jcs-source-tab.is-on{background:var(--jcs-accent-dim);color:var(--jcs-accent2)}
+#${NS}-cfg .jcs-source-pane{display:none!important;flex-direction:column;gap:12px;min-width:0}
+#${NS}-cfg .jcs-source-pane.is-on{display:flex!important}
+#${NS}-cfg .jcs-blacklist-form{display:flex;gap:8px;align-items:center}
+#${NS}-cfg .jcs-blacklist-form input{
+  flex:1;min-width:0;height:36px;box-sizing:border-box;padding:0 11px;border-radius:var(--jcs-radius-sm);
+  border:1px solid var(--jcs-line);background:var(--jcs-surface);color:var(--jcs-text);font:inherit;font-size:12px;outline:none
+}
+#${NS}-cfg .jcs-blacklist-form input:focus{border-color:var(--jcs-accent-line);box-shadow:var(--jcs-focus)}
+#${NS}-cfg .jcs-blacklist-list{display:flex;flex-direction:column;gap:7px}
+#${NS}-cfg .jcs-blacklist-row{
+  display:flex;align-items:center;gap:8px;min-height:36px;padding:0 10px;border:1px solid var(--jcs-line);
+  border-radius:var(--jcs-radius-sm);background:var(--jcs-surface);font:12px var(--jcs-mono);color:var(--jcs-soft)
+}
+#${NS}-cfg .jcs-blacklist-row code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#${NS}-cfg .jcs-blacklist-row small{color:var(--jcs-muted);font-size:11px}
+#${NS}-cfg .jcs-blacklist-row button{height:28px;padding:0 8px;border:1px solid var(--jcs-line);border-radius:var(--jcs-radius-xs);background:var(--jcs-fill);color:var(--jcs-muted);cursor:pointer;font:inherit;font-size:11px}
+#${NS}-cfg .jcs-blacklist-row button:hover{color:var(--jcs-text);background:var(--jcs-fill-hover)}
 /* 站点常把 div{overflow:visible!important}，必须 !important 才能出滚动条 */
 #${NS}-cfg .jcs-cfg-body{
   flex:1 1 auto!important;min-height:0!important;max-height:none!important;height:auto!important;
@@ -4142,6 +4775,10 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
   display:flex;align-items:center;justify-content:space-between;gap:12px;
   padding:8px 0;border-top:1px solid var(--jcs-line)
 }
+#${NS}-cfg .jcs-ca-row .jcs-ca-name{flex:1;min-width:0}
+#${NS}-cfg .jcs-ca-row .jcs-ca-name b{display:block;font-size:12.5px;font-weight:700;color:var(--jcs-soft)}
+#${NS}-cfg .jcs-ca-row .jcs-ca-name em{display:block;font-size:11.5px;color:var(--jcs-muted);font-style:normal;margin-top:2px;line-height:1.4}
+#${NS}-cfg .jcs-ca-row .jcs-ca-opts{display:inline-flex;align-items:center;gap:8px;flex:0 0 auto}
 #${NS}-cfg .jcs-switch-row:first-of-type{border-top:0;padding-top:0}
 #${NS}-cfg .jcs-switch-row > div{min-width:0;flex:1}
 #${NS}-cfg .jcs-switch-row b{display:block;font-size:12.5px;font-weight:700;color:var(--jcs-soft)}
@@ -4239,6 +4876,11 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
   font-size:10px;font-weight:750;background:var(--jcs-accent-dim);color:var(--jcs-accent2);
   border:1px solid var(--jcs-accent-line)
 }
+#${NS}-cfg .jcs-prow-mode{
+  display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:999px;
+  font-size:10px;font-weight:700;background:var(--jcs-fill);color:var(--jcs-muted);
+  border:1px solid var(--jcs-line)
+}
 #${NS}-cfg .jcs-prow-main code{
   display:block;margin-top:4px;padding:0;border:0;background:transparent;
   font-size:11px;font-weight:500;color:var(--jcs-muted);word-break:break-all;line-height:1.35;
@@ -4291,14 +4933,17 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
 #${NS}-cfg .jcs-form label{
   display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--jcs-muted);font-weight:700;min-width:0
 }
-#${NS}-cfg .jcs-form input{
+#${NS}-cfg .jcs-form input,
+#${NS}-cfg .jcs-form select{
   width:100%;max-width:100%;height:38px;box-sizing:border-box;
   border-radius:10px;border:1px solid var(--jcs-line)!important;background:var(--jcs-surface)!important;
   color:var(--jcs-text)!important;padding:0 12px!important;margin:0!important;
   font:inherit!important;font-size:13px!important;outline:none;min-width:0;
   transition:border-color .12s ease,box-shadow .12s ease
 }
-#${NS}-cfg .jcs-form input:focus{
+#${NS}-cfg .jcs-form select{cursor:pointer}
+#${NS}-cfg .jcs-form input:focus,
+#${NS}-cfg .jcs-form select:focus{
   border-color:var(--jcs-accent-line)!important;box-shadow:0 0 0 3px var(--jcs-accent-dim)
 }
 #${NS}-cfg .jcs-form input.is-invalid{
@@ -4527,6 +5172,18 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
   background:var(--jcs-accent-dim)!important;border-color:var(--jcs-accent-line)!important;color:var(--jcs-accent2)!important
 }
 #${NS}-panel .jcs-chip:active,#${NS}-panel #${NS}-list .jcs-chip:active{transform:scale(.97)!important}
+/* chip 尾部入库徽标：＋=未入库；✓=已在库；confirm=待确认移除 */
+#${NS}-panel .jcs-chip .jcs-chip-badge,#${NS}-mobi-codes .jcs-chip .jcs-chip-badge{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-width:16px;height:16px;padding:0 3px;margin-left:6px;border-radius:999px;
+  font-size:9.5px;font-weight:800;line-height:1;box-sizing:border-box;
+  background:var(--jcs-accent-dim);border:1px solid var(--jcs-accent-line);color:var(--jcs-accent2);
+  cursor:pointer;transition:background .12s ease,color .12s ease,border-color .12s ease
+}
+#${NS}-panel .jcs-chip .jcs-chip-badge:hover{background:var(--jcs-accent);color:#fff}
+#${NS}-panel .jcs-chip .jcs-chip-badge.in-lib{background:var(--jcs-accent);border-color:var(--jcs-accent);color:#fff}
+#${NS}-panel .jcs-chip .jcs-chip-badge.in-lib:hover{background:var(--jcs-accent-dim);border-color:var(--jcs-accent-line);color:var(--jcs-accent2)}
+#${NS}-panel .jcs-chip .jcs-chip-badge.confirm{background:var(--jcs-danger);border-color:var(--jcs-danger);color:#fff}
 #${NS}-panel .jcs-empty,#${NS}-panel #${NS}-list .jcs-empty{
   color:var(--jcs-empty)!important;font-size:11.5px!important;padding:28px 10px!important;
   width:100%!important;text-align:center!important;flex:1 0 100%!important;
@@ -4784,6 +5441,7 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
   font-size:12px;font-weight:700;border:1px solid var(--jcs-chip-line);
   background:var(--jcs-fill-2);color:var(--jcs-soft);
   -webkit-tap-highlight-color:transparent;white-space:nowrap;
+  display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;
   opacity:0;transform:translateY(4px) scale(.96);
   transition:background .14s ease,border-color .14s ease,color .14s ease,
     transform .14s ease,box-shadow .14s ease,opacity .16s ease
@@ -4803,14 +5461,6 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
 }
 #${NS}-pick .jcs-pick-btn:active{
   transform:scale(.96);box-shadow:none
-}
-#${NS}-pick .jcs-pick-btn.is-copy{
-  border-style:dashed;color:var(--jcs-muted);font-weight:650
-}
-#${NS}-pick .jcs-pick-btn.is-copy:hover{color:var(--jcs-text)}
-#${NS}-pick .jcs-pick-btn.is-copied{
-  background:var(--jcs-accent-dim)!important;border-color:var(--jcs-accent-line)!important;
-  color:var(--jcs-accent2)!important;border-style:solid!important
 }
 a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
   outline:2px solid var(--jcs-accent-line)!important;outline-offset:2px;
@@ -5007,8 +5657,71 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
   animation:jcs-spin .7s linear infinite
 }
 @keyframes jcs-spin{to{transform:rotate(360deg)}}
-#${NS}-pick .jcs-pick-btn.is-sub{
-  border-style:solid;color:var(--jcs-accent2);border-color:var(--jcs-accent-line);background:var(--jcs-accent-dim)
+/* 当前番号操作条（picker 与弹窗内操作栏共用同一套按钮逻辑，样式随容器上下文统一）：
+   picker 内=圆角小按钮与选源按钮一致；操作栏=方角按钮与工具区一致；
+   状态/反馈一致：已在库(in-lib)与反馈(is-done)均为 accent 高亮 */
+#${NS}-pick .jcs-code-actions{display:inline-flex;gap:6px;align-items:center}
+#${NS}-pick .jcs-act-btn{
+  display:inline-flex;align-items:center;justify-content:center;
+  height:30px;min-width:34px;padding:0 10px;border-radius:999px;cursor:pointer;font:inherit;
+  font-size:12px;font-weight:700;border:1px solid var(--jcs-chip-line);
+  background:var(--jcs-fill-2);color:var(--jcs-soft);
+  -webkit-tap-highlight-color:transparent;white-space:nowrap;
+  transition:background .14s ease,border-color .14s ease,color .14s ease,transform .14s ease
+}
+#${NS}-pick .jcs-act-btn:hover{
+  background:var(--jcs-accent-dim);border-color:var(--jcs-accent-line);color:var(--jcs-accent2);
+  transform:translateY(-1px)
+}
+#${NS}-pick .jcs-act-btn:active{transform:scale(.96)}
+/* 弹窗内操作栏：当前番号标签 + 操作按钮（对象与操作紧贴，头部不再承载番号操作） */
+#${NS}-win .jcs-code-bar{
+  display:flex;align-items:center;gap:8px;
+  padding:6px 12px;border-bottom:1px solid var(--jcs-line);
+  background:var(--jcs-fill-2);flex:0 0 auto
+}
+#${NS}-win .jcs-code-bar-label{
+  flex:0 1 auto;min-width:0;font-size:12px;font-weight:800;color:var(--jcs-accent2);
+  letter-spacing:.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-variant-numeric:tabular-nums
+}
+#${NS}-win .jcs-code-bar .jcs-code-actions{display:inline-flex;gap:4px;align-items:center;margin-left:auto}
+#${NS}-win .jcs-code-bar .jcs-act-btn{
+  height:30px;min-width:34px;padding:0 10px;border-radius:10px;
+  border:1px solid var(--jcs-line);background:var(--jcs-fill);color:var(--jcs-text);
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font:inherit;
+  transition:background var(--jcs-fast) ease,border-color var(--jcs-fast) ease,transform var(--jcs-fast) ease
+}
+#${NS}-win .jcs-code-bar .jcs-act-btn:hover{background:var(--jcs-fill-hover);border-color:var(--jcs-chip-line)}
+#${NS}-win .jcs-code-bar .jcs-act-btn:active{transform:scale(.95)}
+/* 图标与状态（两处共用） */
+#${NS}-pick .jcs-act-btn svg,#${NS}-win .jcs-code-bar .jcs-act-btn svg{width:13px;height:13px;flex:0 0 auto}
+#${NS}-pick .jcs-act-btn.in-lib,
+#${NS}-win .jcs-code-bar .jcs-act-btn.in-lib{
+  border-style:solid;background:var(--jcs-accent-dim);border-color:var(--jcs-accent-line);color:var(--jcs-accent2)
+}
+#${NS}-pick .jcs-act-btn.is-done,
+#${NS}-win .jcs-code-bar .jcs-act-btn.is-done{
+  background:var(--jcs-accent-dim)!important;border-color:var(--jcs-accent-line)!important;
+  color:var(--jcs-accent2)!important;border-style:solid!important
+}
+/* ⋯ 更多菜单（折叠按钮）：相对定位 + 上方弹出 */
+#${NS}-pick .jcs-code-actions,
+#${NS}-win .jcs-code-bar .jcs-code-actions{position:relative}
+#${NS}-pick .jcs-act-pop,
+#${NS}-win .jcs-code-bar .jcs-act-pop{
+  position:absolute;right:0;bottom:calc(100% + 6px);z-index:60;
+  display:flex;flex-direction:column;gap:4px;padding:6px;
+  border-radius:12px;background:var(--jcs-panel);border:1px solid var(--jcs-line);
+  box-shadow:var(--jcs-shadow-sm)
+}
+#${NS}-pick .jcs-act-pop[hidden],
+#${NS}-win .jcs-code-bar .jcs-act-pop[hidden]{display:none}
+#${NS}-pick .jcs-act-pop .jcs-act-btn,
+#${NS}-win .jcs-code-bar .jcs-act-pop .jcs-act-btn{width:100%}
+#${NS}-pick .jcs-act-btn.is-more.is-on,
+#${NS}-win .jcs-code-bar .jcs-act-btn.is-more.is-on{
+  background:var(--jcs-accent-dim);border-color:var(--jcs-accent-line);color:var(--jcs-accent2)
 }
 #${NS}-win .jcs-tip{
   position:absolute;left:0;right:0;bottom:0;z-index:3;padding:6px 10px;font-size:10px;color:var(--jcs-muted);
@@ -5513,10 +6226,23 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             btn.setAttribute('data-code', c);
             btn.textContent = c;
             btn.title = chipTitleText();
+            // 入库状态徽标：＋=未入库（点击入库）；✓=已在库（两段式点击移除）
+            const st = c ? libStateOf(c) : null;
+            if (st) {
+                const badge = document.createElement('span');
+                badge.className = 'jcs-chip-badge';
+                badge.setAttribute('data-lib', st.inLib ? '1' : '0');
+                badge.textContent = st.inLib ? '✓' : '＋';
+                badge.title = st.inLib ? '已在番号库（点击移除）' : '加入番号库';
+                if (st.inLib) badge.classList.add('in-lib');
+                bindChipLibBadge(badge, c);
+                btn.appendChild(badge);
+            }
             frag.appendChild(btn);
         }
         list.appendChild(frag);
         list.querySelectorAll('.jcs-chip').forEach((btn) => bindChipCopy(btn));
+        try { refreshLibBadges(); } catch (e) { /* ignore */ }
         if (prevScroll > 0) {
             try { list.scrollTop = prevScroll; } catch (e) { /* ignore */ }
         }
@@ -5558,7 +6284,6 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
       <div class="jcs-actions">
         <button type="button" class="jcs-icon" id="${NS}-pprev" title="上一个" aria-label="上一个">‹</button>
         <button type="button" class="jcs-icon" id="${NS}-pnext" title="下一个" aria-label="下一个">›</button>
-        <button type="button" class="jcs-btn" id="${NS}-psub" title="字幕搜索">字幕</button>
         <button type="button" class="jcs-btn" id="${NS}-pext" title="用浏览器新标签打开当前搜索">外链</button>
         <button type="button" class="jcs-btn" id="${NS}-pext-mode" title="打开方式：新标签 / 本页预览">新标签</button>
         <button type="button" class="jcs-icon" id="${NS}-ptheme" title="切换主题" aria-label="切换主题">☀</button>
@@ -5575,6 +6300,10 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
       </aside>
       <div class="jcs-content">
         <div id="${NS}-mobi-codes" aria-label="本页番号"></div>
+        <div class="jcs-code-bar" id="${NS}-code-bar">
+          <span class="jcs-code-bar-label" id="${NS}-code-bar-code"></span>
+          <span id="${NS}-code-actions"></span>
+        </div>
         <div class="jcs-tools">
           <div class="jcs-segbox" id="${NS}-providers"></div>
           <div class="jcs-tools-search">
@@ -5613,6 +6342,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         <div class="jcs-cfg-tabs" role="tablist" aria-label="设置分类">
           <button type="button" class="jcs-cfg-tab is-on" data-tab="general" role="tab" aria-selected="true">常规</button>
           <button type="button" class="jcs-cfg-tab" data-tab="highlight" role="tab" aria-selected="false">高亮</button>
+          <button type="button" class="jcs-cfg-tab" data-tab="actions" role="tab" aria-selected="false">操作</button>
           <button type="button" class="jcs-cfg-tab" data-tab="sources" role="tab" aria-selected="false">搜索源</button>
           <button type="button" class="jcs-cfg-tab" data-tab="backup" role="tab" aria-selected="false">备份</button>
         </div>
@@ -5680,7 +6410,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
               <div class="jcs-card-hd">
                 <div>
                   <strong>本地文件</strong>
-                  <p class="jcs-card-desc">导出/导入<strong>所有网站</strong>配置（搜索源/高亮/主题 + 各站打开方式等）。不含搜索历史与 WebDAV 密码。</p>
+                  <p class="jcs-card-desc">导出/导入<strong>所有网站</strong>配置（搜索源/域名黑名单/高亮/主题 + 各站打开方式等）。不含搜索历史与 WebDAV 密码。</p>
                 </div>
               </div>
               <div class="jcs-badge-row" id="${NS}-cfg-store-badge"></div>
@@ -5807,35 +6537,101 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
               </div>
             </div>
           </div>
-          <div class="jcs-cfg-pane" data-pane="sources" role="tabpanel">
+          <div class="jcs-cfg-pane" data-pane="actions" role="tabpanel">
             <div class="jcs-card">
-              <div class="jcs-src-toolbar">
-                <p>点名称设为当前源；✎ 编辑；× 删除。网址可用 <code>{code}</code> / <code>{CODE}</code> / <code>{code_lower}</code>。</p>
-                <div class="jcs-src-toolbar-btns">
-                  <button type="button" class="jcs-btn" id="${NS}-cfg-reset" title="恢复内置搜索源">恢复默认</button>
-                  <button type="button" class="jcs-btn solid" id="${NS}-fadd" title="在下方表单添加新搜索源">＋ 添加</button>
-                </div>
-              </div>
-              <div class="jcs-plist" id="${NS}-plist" role="list"></div>
-            </div>
-            <div class="jcs-form-card" id="${NS}-form-card">
-              <div class="jcs-form-hd">
+              <div class="jcs-card-hd">
                 <div>
-                  <strong id="${NS}-form-title">添加搜索源</strong>
-                  <span id="${NS}-form-sub">填写名称与网址模板后保存</span>
+                  <strong>当前番号操作</strong>
+                  <p class="jcs-card-desc">选源面板与预览弹窗操作栏里的按钮。可分别显示/隐藏，也可收进「⋯」更多菜单。改动立即生效。</p>
                 </div>
               </div>
-              <div class="jcs-form">
-                <label>显示名称<input id="${NS}-fname" type="text" placeholder="例如 Jable" autocomplete="off" spellcheck="false" /></label>
-                <label>ID（可选）<input id="${NS}-fid" type="text" placeholder="自动生成" autocomplete="off" spellcheck="false" /></label>
-                <label class="full">网址模板<input id="${NS}-furl" type="url" inputmode="url" placeholder="https://example.com/search?q={code}" autocomplete="off" spellcheck="false" /></label>
-                <label class="full">备注（可选）<input id="${NS}-fhint" type="text" placeholder="例如：磁力 / 在线播放" autocomplete="off" spellcheck="false" /></label>
+              <p class="jcs-callout is-warn" id="${NS}-ca-emh-hint">Enhanced_Media_Helper 未安装：「加入番号库」「截图预览」依赖它，相关开关已置灰，按钮也不会显示。</p>
+              <div class="jcs-switch-row jcs-ca-row">
+                <div class="jcs-ca-name"><b>字幕搜索</b><em>搜索当前番号字幕。</em></div>
+                <span class="jcs-ca-opts">
+                  <label class="jcs-switch" title="显示按钮"><input type="checkbox" id="${NS}-ca-sub" /><i></i></label>
+                  <label class="jcs-switch" title="收进「⋯」更多菜单"><input type="checkbox" id="${NS}-ca-sub-fold" /><i></i></label>
+                </span>
               </div>
-              <p class="jcs-form-tip" id="${NS}-form-tip">提示：保存可用 <kbd>Enter</kbd>，取消编辑可用 <kbd>Esc</kbd></p>
-              <div class="jcs-form-foot">
-                <button type="button" class="jcs-btn" id="${NS}-fcancel" hidden>取消</button>
-                <button type="button" class="jcs-btn" id="${NS}-fnew">清空</button>
-                <button type="button" class="jcs-btn solid" id="${NS}-fsave">保存</button>
+              <div class="jcs-switch-row jcs-ca-row">
+                <div class="jcs-ca-name"><b>复制番号</b><em>复制当前番号文本到剪贴板。</em></div>
+                <span class="jcs-ca-opts">
+                  <label class="jcs-switch" title="显示按钮"><input type="checkbox" id="${NS}-ca-copy" /><i></i></label>
+                  <label class="jcs-switch" title="收进「⋯」更多菜单"><input type="checkbox" id="${NS}-ca-copy-fold" /><i></i></label>
+                </span>
+              </div>
+              <div class="jcs-switch-row jcs-ca-row">
+                <div class="jcs-ca-name"><b>加入番号库</b><em>写入 Enhanced_Media_Helper 番号库（需已安装该脚本）。</em></div>
+                <span class="jcs-ca-opts">
+                  <label class="jcs-switch" title="显示按钮"><input type="checkbox" id="${NS}-ca-lib" /><i></i></label>
+                  <label class="jcs-switch" title="收进「⋯」更多菜单"><input type="checkbox" id="${NS}-ca-lib-fold" /><i></i></label>
+                </span>
+              </div>
+              <div class="jcs-switch-row jcs-ca-row">
+                <div class="jcs-ca-name"><b>截图预览</b><em>从 AVWikiDB 抓取当前番号宫格截图（需已安装该脚本，Shift+点击强制刷新）。</em></div>
+                <span class="jcs-ca-opts">
+                  <label class="jcs-switch" title="显示按钮"><input type="checkbox" id="${NS}-ca-shot" /><i></i></label>
+                  <label class="jcs-switch" title="收进「⋯」更多菜单"><input type="checkbox" id="${NS}-ca-shot-fold" /><i></i></label>
+                </span>
+              </div>
+              <p class="jcs-mode-hint" style="margin:0">左开关 = 显示按钮；右开关 = 收进「⋯」更多菜单（点击 ⋯ 展开）。全部关闭时操作栏不再显示操作按钮（当前番号标签仍保留）。</p>
+            </div>
+          </div>
+          <div class="jcs-cfg-pane" data-pane="sources" role="tabpanel">
+            <div class="jcs-source-tabs" role="tablist" aria-label="搜索源设置">
+              <button type="button" class="jcs-source-tab is-on" data-source-tab="providers" role="tab" aria-selected="true">搜索源</button>
+              <button type="button" class="jcs-source-tab" data-source-tab="blacklist" role="tab" aria-selected="false">域名黑名单</button>
+            </div>
+            <div class="jcs-source-pane is-on" data-source-pane="providers">
+              <div class="jcs-card">
+                <div class="jcs-src-toolbar">
+                  <p>点名称设为当前源；✎ 编辑；× 删除。网址可用 <code>{code}</code> / <code>{CODE}</code> / <code>{code_lower}</code>。</p>
+                  <div class="jcs-src-toolbar-btns">
+                    <button type="button" class="jcs-btn" id="${NS}-cfg-reset" title="恢复内置搜索源">恢复默认</button>
+                    <button type="button" class="jcs-btn solid" id="${NS}-fadd" title="在下方表单添加新搜索源">＋ 添加</button>
+                  </div>
+                </div>
+                <div class="jcs-plist" id="${NS}-plist" role="list"></div>
+              </div>
+              <div class="jcs-form-card" id="${NS}-form-card">
+                <div class="jcs-form-hd">
+                  <div>
+                    <strong id="${NS}-form-title">添加搜索源</strong>
+                    <span id="${NS}-form-sub">填写名称与网址模板后保存</span>
+                  </div>
+                </div>
+                <div class="jcs-form">
+                  <label>显示名称<input id="${NS}-fname" type="text" placeholder="例如 Jable" autocomplete="off" spellcheck="false" /></label>
+                  <label>ID（可选）<input id="${NS}-fid" type="text" placeholder="自动生成" autocomplete="off" spellcheck="false" /></label>
+                  <label class="full">网址模板<input id="${NS}-furl" type="url" inputmode="url" placeholder="https://example.com/search?q={code}" autocomplete="off" spellcheck="false" /></label>
+                  <label class="full">备注（可选）<input id="${NS}-fhint" type="text" placeholder="例如：磁力 / 在线播放" autocomplete="off" spellcheck="false" /></label>
+                  <label>预览方式<select id="${NS}-fmode">
+                    <option value="auto">自动（优先 iframe，失败后新窗口）</option>
+                    <option value="iframe">iframe（强制）</option>
+                    <option value="fetch">GM 自渲染（强制）</option>
+                  </select></label>
+                </div>
+                <p class="jcs-form-tip" id="${NS}-form-tip">提示：保存可用 <kbd>Enter</kbd>，取消编辑可用 <kbd>Esc</kbd></p>
+                <div class="jcs-form-foot">
+                  <button type="button" class="jcs-btn" id="${NS}-fcancel" hidden>取消</button>
+                  <button type="button" class="jcs-btn" id="${NS}-fnew">清空</button>
+                  <button type="button" class="jcs-btn solid" id="${NS}-fsave">保存</button>
+                </div>
+              </div>
+            </div>
+            <div class="jcs-source-pane" data-source-pane="blacklist">
+              <div class="jcs-card">
+                <div class="jcs-card-hd">
+                  <div>
+                    <strong>搜索源域名黑名单</strong>
+                    <p>命中后强制新窗口打开，不会使用 iframe 或 GM 请求。内置域名不可删除；请求失败的搜索源会自动加入用户黑名单。</p>
+                  </div>
+                </div>
+                <div class="jcs-blacklist-form">
+                  <input id="${NS}-provider-blacklist-input" type="text" inputmode="url" placeholder="输入域名，例如 example.com" autocomplete="off" spellcheck="false" />
+                  <button type="button" class="jcs-btn solid" id="${NS}-provider-blacklist-add">添加</button>
+                </div>
+                <div class="jcs-blacklist-list" id="${NS}-provider-blacklist-list" role="list"></div>
               </div>
             </div>
           </div>
@@ -5851,6 +6647,8 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         root.querySelector('#' + NS + '-pclose').onclick = close;
         root.addEventListener('click', (e) => { if (e.target === root && !isMobile()) close(); });
         // Esc 统一由 bindGlobalHotkeys 处理
+        // 当前番号操作栏（番号标签 + 字幕/复制/入库），挂载并同步状态
+        updateCodeBar();
 
         root.querySelector('#' + NS + '-pgo').onclick = () => {
             const q = (root.querySelector('#' + NS + '-pinput').value || '').trim();
@@ -5863,10 +6661,6 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 runPopupSearch(q);
             }
         });
-        root.querySelector('#' + NS + '-psub').onclick = () => {
-            const code = state.active || (root.querySelector('#' + NS + '-pinput').value || '').trim();
-            openSubtitleSearch(code);
-        };
         root.querySelector('#' + NS + '-pext').onclick = () => {
             const code = state.active || (root.querySelector('#' + NS + '-pinput').value || '').trim();
             window.open(buildProviderUrl(code, state.provider), '_blank', 'noopener,noreferrer');
@@ -5932,14 +6726,32 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         ).join('');
         // 弹窗内：始终在大窗内搜索，不降级旁出选源
         box.querySelectorAll('.jcs-chip').forEach((btn) => {
-            btn.title = '点击搜索 · Alt+点击复制';
+            btn.title = '点击搜索 · Alt+点击复制 · Alt+Shift+点击加入番号库';
             btn.onclick = (e) => {
                 const code = btn.getAttribute('data-code') || '';
                 if (!code) return;
+                if (e.altKey && e.shiftKey) {
+                    addToLibrary(code);
+                    return;
+                }
                 if (e.altKey || e.metaKey) copyCode(code);
                 else runPopupSearch(code);
             };
+            // 入库状态徽标（触屏常显，点击不走 chip 主行为）
+            const code = btn.getAttribute('data-code') || '';
+            const st = code ? libStateOf(code) : null;
+            if (st) {
+                const badge = document.createElement('span');
+                badge.className = 'jcs-chip-badge';
+                badge.setAttribute('data-lib', st.inLib ? '1' : '0');
+                badge.textContent = st.inLib ? '✓' : '＋';
+                badge.title = st.inLib ? '已在番号库（点击移除）' : '加入番号库';
+                if (st.inLib) badge.classList.add('in-lib');
+                bindChipLibBadge(badge, code);
+                btn.appendChild(badge);
+            }
         });
+        try { refreshLibBadges(); } catch (e) { /* ignore */ }
     }
 
     function renderProviders() {
@@ -6113,6 +6925,8 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         state.active = normalized;
         state.viewed[normalized] = 1;
         saveHist(normalized);
+        // 当前番号操作栏（番号标签 + 入库状态）同步刷新
+        try { updateCodeBar(); } catch (e) { /* ignore */ }
         if (state.codes.indexOf(normalized) < 0) {
             state.codes = uniqCodes([normalized].concat(state.codes));
         }
@@ -6394,31 +7208,18 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             '<button type="button" class="jcs-pick-btn" data-id="' + String(p.id).replace(/"/g, '') +
             '" title="' + String(p.hint || '新窗口打开').replace(/"/g, '') + '">' +
             String(p.name || p.id).replace(/</g, '') + '</button>'
-        ).join('') +
-            '<button type="button" class="jcs-pick-btn is-sub" data-act="sub" title="搜索字幕">字幕</button>' +
-            '<button type="button" class="jcs-pick-btn is-copy" data-act="copy" title="复制番号">复制</button>';
+        ).join('');
+
+        // 当前番号操作条（字幕/复制/入库）与弹窗头部共用同一套按钮逻辑
+        const acts = buildCodeActions(list, {
+            onSub: (c2) => { closeProviderPicker(); openSubtitleSearch(c2); }
+        });
+        if (acts) acts.setCode(c);
 
         list.querySelectorAll('.jcs-pick-btn').forEach((btn) => {
             btn.onclick = (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                const act = btn.getAttribute('data-act') || '';
-                if (act === 'copy') {
-                    copyCode(c);
-                    btn.classList.add('is-copied');
-                    const old = btn.textContent;
-                    btn.textContent = '已复制';
-                    setTimeout(() => {
-                        btn.textContent = old;
-                        btn.classList.remove('is-copied');
-                    }, 900);
-                    return;
-                }
-                if (act === 'sub') {
-                    closeProviderPicker();
-                    openSubtitleSearch(c);
-                    return;
-                }
                 btn.style.transform = 'scale(.94)';
                 openExternalProvider(c, btn.getAttribute('data-id') || '');
                 closeProviderPicker();
@@ -6553,7 +7354,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         const frame = document.getElementById(NS + '-frame');
         const fetchBox = document.getElementById(NS + '-fetch');
         const p = getProvider(state.provider);
-        const isFetch = !!(p && (autoFetchProviders[p.id] || (p.mode === 'fetch' && !isSameOriginUrl(p.url))));
+        const isFetch = providerPreviewUsesFetch(p);
         if (box) box.classList.remove('show');
         if (frame) {
             try { frame.style.visibility = isFetch ? 'hidden' : ''; } catch (e) { /* ignore */ }
@@ -6561,62 +7362,140 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         if (fetchBox) fetchBox.hidden = !isFetch;
     }
 
+    function frameLogUrl(url) {
+        try {
+            const u = new URL(String(url || ''));
+            u.username = '';
+            u.password = '';
+            return u.origin + u.pathname;
+        } catch (e) {
+            return '';
+        }
+    }
+
+    function frameLogPolicyUri(value) {
+        const raw = String(value || '');
+        if (/^(inline|self|about:blank)$/i.test(raw)) return raw;
+        if (/^(data|blob):/i.test(raw)) return raw.split(':')[0] + ':';
+        return frameLogUrl(raw);
+    }
+
+    function logFrameDiagnostic(reason, details) {
+        try {
+            if (typeof console === 'undefined' || typeof console.warn !== 'function') return;
+            console.warn('[JCS frame]', reason, Object.assign({
+                pageHost: location.hostname || '',
+                targetUrl: frameLogUrl(state.frameUrl),
+                provider: state.provider || '',
+                code: state.active || ''
+            }, details || {}));
+        } catch (e) { /* ignore logging failures */ }
+    }
+
+    let frameErrorBinding = null;
+    let frameErrorElement = null;
+
+    function clearFrameErrorBinding(frame) {
+        if (frameErrorElement && frameErrorBinding) {
+            try { frameErrorElement.removeEventListener('error', frameErrorBinding); } catch (e) { /* ignore */ }
+        }
+        frameErrorElement = frame || null;
+        frameErrorBinding = null;
+    }
+
+    function bindFrameErrorForNavigation(frame, url, provider) {
+        clearFrameErrorBinding(frame);
+        const expectedUrl = url;
+        const expectedProvider = provider;
+        const onError = (e) => {
+            if (state.frameUrl !== expectedUrl || isProviderHostBlacklisted(expectedProvider)) return;
+            logFrameDiagnostic('iframe load error; browser did not expose a specific cause', {
+                eventType: e && e.type || 'error',
+                sameOrigin: isSameOriginUrl(expectedUrl),
+                action: 'provider-blacklist-and-external'
+            });
+            markProviderHostBlacklisted(expectedProvider || expectedUrl);
+            showFrameFallback(expectedUrl, '本页预览加载失败。可能是本站或搜索站不允许嵌套显示，请用新标签打开。');
+        };
+        frame.addEventListener('error', onError);
+        frameErrorElement = frame;
+        frameErrorBinding = onError;
+    }
+
+    let frameLoadBinding = null;
+    let frameLoadElement = null;
+
+    function clearFrameLoadBinding(frame) {
+        if (frameLoadElement && frameLoadBinding) {
+            try { frameLoadElement.removeEventListener('load', frameLoadBinding); } catch (e) { /* ignore */ }
+        }
+        frameLoadElement = frame || null;
+        frameLoadBinding = null;
+    }
+
+    function bindFrameLoadForNavigation(frame, url, provider) {
+        clearFrameLoadBinding(frame);
+        const expectedUrl = url;
+        const expectedProvider = provider;
+        const onLoad = () => {
+            if (state.frameUrl !== expectedUrl || !frame.src || frame.src === 'about:blank') return;
+            if (isProviderHostBlacklisted(expectedProvider)) return;
+            try {
+                const doc = frame.contentDocument;
+                if (!doc) {
+                    logFrameDiagnostic('iframe loaded but contentDocument is unavailable', {
+                        sameOrigin: isSameOriginUrl(expectedUrl),
+                        action: 'head-probe'
+                    });
+                    probeFrameBlock(expectedUrl, state.active || '', expectedProvider);
+                    return;
+                }
+                const t = String((doc.title || '') + ' ' + (doc.body && doc.body.innerText || '')).slice(0, 500);
+                const deniedText = t.match(/该内容被屏蔽|拒绝连接|refused to connect|blocked by|ERR_BLOCKED|X-Frame-Options|frame-ancestors/i);
+                if (deniedText) {
+                    logFrameDiagnostic('target page reported iframe embedding rejection', {
+                        signal: deniedText[0],
+                        action: 'provider-blacklist-and-external'
+                    });
+                    markProviderHostBlacklisted(expectedProvider || expectedUrl);
+                    showFrameFallback(expectedUrl, '搜索站拒绝在页面里显示，请用新标签打开。');
+                }
+            } catch (e) {
+                logFrameDiagnostic('iframe loaded but parent DOM read was blocked by same-origin policy', {
+                    error: String((e && e.message) || e || 'unknown'),
+                    action: 'head-probe'
+                });
+                probeFrameBlock(expectedUrl, state.active || '', expectedProvider);
+                hideFrameFallback();
+            }
+        };
+        frame.addEventListener('load', onLoad);
+        frameLoadElement = frame;
+        frameLoadBinding = onLoad;
+    }
+
     function bindFrameGuard(root) {
         if (!root || bindFrameGuard._bound) return;
         bindFrameGuard._bound = true;
         const frame = root.querySelector('#' + NS + '-frame');
-        if (frame) {
-            frame.addEventListener('error', () => {
-                if (!state.frameUrl) return;
-                markHostFrameBlocked();
-                const code = state.active || '';
-                const p = getProvider(state.provider);
-                if (p && autoFallbackFetch(code, p)) return;
-                showFrameFallback(state.frameUrl, '本页预览加载失败。可能是本站或搜索站不允许嵌套显示，请用新标签打开。');
-            });
-            frame.addEventListener('load', () => {
-                if (!state.frameUrl || !frame.src || frame.src === 'about:blank') return;
-                // 同源可读时若是浏览器错误页，切回退；跨域成功则保持嵌入
-                try {
-                    const doc = frame.contentDocument;
-                    if (!doc) {
-                        // 跨域或错误页：尝试 HEAD 探测目标站是否声明拒绝嵌入
-                        const code = state.active || '';
-                        const p = getProvider(state.provider);
-                        probeFrameBlock(state.frameUrl, code, p);
-                        return;
-                    }
-                    const t = String((doc.title || '') + ' ' + (doc.body && doc.body.innerText || '')).slice(0, 500);
-                    if (/该内容被屏蔽|拒绝连接|refused to connect|blocked by|ERR_BLOCKED|X-Frame-Options|frame-ancestors/i.test(t)) {
-                        markHostFrameBlocked();
-                        const code = state.active || '';
-                        const p = getProvider(state.provider);
-                        if (p && autoFallbackFetch(code, p)) return;
-                        showFrameFallback(state.frameUrl, '搜索站拒绝在页面里显示，请用新标签打开。');
-                    }
-                } catch (e) {
-                    // 跨域：能 load 且无 CSP 报错，视为嵌入成功；同时 HEAD 探测 XFO（跨域拒绝是 JS 盲区）
-                    const code = state.active || '';
-                    const p = getProvider(state.provider);
-                    probeFrameBlock(state.frameUrl, code, p);
-                    hideFrameFallback();
-                }
-            });
-        }
+        if (frame) clearFrameLoadBinding(frame);
         document.addEventListener('securitypolicyviolation', (e) => {
             if (!state.frameUrl) return;
             const dir = String((e && (e.effectiveDirective || e.violatedDirective)) || '').toLowerCase();
             if (!/frame-src|child-src|default-src|frame-ancestors/.test(dir)) return;
             const blocked = String((e && (e.blockedURI || e.documentURI)) || '');
-            if (blocked && state.frameUrl && blocked.indexOf(state.frameUrl.slice(0, 48)) < 0
-                && state.frameUrl.indexOf(blocked.slice(0, 32)) < 0
-                && blocked !== 'inline' && !/\.html?$/i.test(blocked)) {
-                // 仍可能是 frame-src 拦截本次 src
-            }
+            const sourceHost = providerHostname(state.frameUrl);
+            const blockedHost = providerHostname(blocked);
+            if (!/^https:/i.test(blocked) || !sourceHost || !blockedHost || blockedHost !== sourceHost) return;
+            if (isProviderHostBlacklisted(state.frameUrl)) return;
+            logFrameDiagnostic('current page CSP blocked iframe embedding', {
+                directive: dir,
+                blockedURI: frameLogPolicyUri(blocked),
+                documentURI: frameLogPolicyUri(e && e.documentURI),
+                action: 'provider-blacklist-and-external'
+            });
             markHostFrameBlocked();
-            const code = state.active || '';
-            const p = getProvider(state.provider);
-            if (p && autoFallbackFetch(code, p)) return;
+            markProviderHostBlacklisted(getProvider(state.provider) || state.frameUrl);
             showFrameFallback(state.frameUrl, '本站安全策略不允许嵌套显示该搜索页，已改为请用新标签打开。');
         });
     }
@@ -6629,6 +7508,13 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
     const autoFetchProviders = Object.create(null);
     /** 本会话已对某源发起过嵌入探测（防重复 HEAD） */
     const frameProbePending = Object.create(null);
+
+    function providerPreviewUsesFetch(provider) {
+        return !!(provider && (
+            provider.mode === 'fetch'
+            || (provider.mode === 'auto' && autoFetchProviders[provider.id])
+        ));
+    }
 
     /** GM 响应头是否声明拒绝嵌入（X-Frame-Options / CSP frame-ancestors）；sameOrigin 时 SAMEORIGIN/'self' 放行 */
     function frameDeniedByHeaders(headers, sameOrigin) {
@@ -6650,9 +7536,9 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         return false;
     }
 
-    /** 对 iframe 型源做一次 HEAD 探测：目标响应头拒绝嵌入 → 自动转 fetch 自渲染（会话记住） */
+    /** 对 iframe 型源做一次 HEAD 探测：目标响应头拒绝嵌入 → 加入源黑名单并改用新标签 */
     function probeFrameBlock(url, code, provider) {
-        if (!provider || provider.mode === 'fetch' || autoFetchProviders[provider.id] || frameProbePending[provider.id]) return;
+        if (!provider || isProviderHostBlacklisted(provider) || provider.mode !== 'auto' || frameProbePending[provider.id]) return;
         // 同源：X-Frame-Options SAMEORIGIN 放行，iframe 必然可嵌入，无需探测
         if (isSameOriginUrl(url)) return;
         frameProbePending[provider.id] = 1;
@@ -6665,24 +7551,33 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 'Accept': 'text/html,application/xhtml+xml'
             }
         }).then((res) => {
-            if (!frameDeniedByHeaders(res && res.responseHeaders, false)) return; // 允许嵌入，保持 iframe
-            autoFetchProviders[provider.id] = 1;
+            const headers = String((res && res.responseHeaders) || '');
+            if (!frameDeniedByHeaders(headers, false)) return; // 允许嵌入，保持 iframe
+            const policyHeaders = headers.split(/\r?\n/)
+                .filter((line) => /^(x-frame-options|content-security-policy)\s*:/i.test(line))
+                .join('\n')
+                .slice(0, 1200);
+            logFrameDiagnostic('target response headers forbid iframe embedding', {
+                probe: 'HEAD',
+                status: res && res.status,
+                policyHeaders: policyHeaders || '(header value unavailable)',
+                action: 'provider-blacklist-and-external'
+            });
+            markProviderHostBlacklisted(provider);
             if (state.frameUrl === url && state.active === code) {
-                loadFetchPreview(code, provider);
+                showFrameFallback(url, '搜索站响应头拒绝在页面里显示，请用新标签打开。');
             }
-        }).catch(() => { /* HEAD 失败（405/403 等）：不打扰 iframe 现状 */ });
-    }
-
-    /** iframe 明确失败（error/CSP 违规/拒绝文案）时尝试自动降级 fetch；返回 true 表示已接管 */
-    function autoFallbackFetch(code, provider) {
-        if (!provider || autoFetchProviders[provider.id]) return false;
-        // 同源源即使 mode:'fetch' 也走 iframe；iframe 失败时可降级 fetch（但同源本就应成功，兜底）
-        const gm = (typeof GM_xmlhttpRequest === 'function')
-            || (typeof GM !== 'undefined' && GM && typeof GM.xmlHttpRequest === 'function');
-        if (!gm) return false;
-        autoFetchProviders[provider.id] = 1;
-        loadFetchPreview(code, provider);
-        return true;
+        }).catch((e) => {
+            logFrameDiagnostic('HEAD iframe policy probe failed', {
+                probe: 'HEAD',
+                error: String((e && e.message) || e || 'unknown'),
+                action: 'provider-blacklist-and-external'
+            });
+            markProviderHostBlacklisted(provider);
+            if (state.frameUrl === url && state.active === code) {
+                showFrameFallback(url, '搜索站无法完成嵌入探测，请用新标签打开。');
+            }
+        });
     }
 
     /** 通用结果提取（未知站点兜底）：抓页面所有 a[href]，过滤导航/静态/短文本，去重 */
@@ -6720,25 +7615,100 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             const m = pUrl.match(/^(https?:\/\/[^\/?#]+)/i);
             if (m) referer = m[1] + '/';
         } catch (e) { /* ignore */ }
-        return gmRequest({
+        const req = {
             url: url,
             method: 'GET',
             timeout: 20000,
-            acceptStatuses: [200],
+            withCredentials: true,
+            // 仅搜索 HTML 保留 Cloudflare 常见 challenge 状态；其他 gmRequest 仍按默认状态失败。
+            acceptStatuses: [200, 403, 429, 503],
             headers: {
                 'Referer': referer,
                 'Accept': 'text/html,application/xhtml+xml',
                 'User-Agent': navigator.userAgent
             }
-        }).then((res) => (res && res.responseText) || '');
+        };
+        const cookiePartition = getCookiePartitionForUrl(url);
+        if (cookiePartition) req.cookiePartition = cookiePartition;
+        return gmRequest(req).then((res) => ({
+            html: (res && res.responseText) || '',
+            responseUrl: String((res && (res.finalUrl || res.responseURL)) || url || ''),
+            status: res && typeof res.status === 'number' ? res.status : 0,
+            statusText: String((res && res.statusText) || ''),
+            responseHeaders: String((res && res.responseHeaders) || '')
+        }));
     }
 
-    function renderFetchResults(html, code, provider) {
+    /** 仅识别明确的 Cloudflare challenge 标志，不把普通 Cloudflare 页面文案当作挑战页 */
+    function detectCloudflareChallenge(html, doc, url, responseHeaders) {
+        const raw = String(html || '');
+        const targetUrl = String(url || '');
+        const headers = String(responseHeaders || '');
+        if (/^cf-mitigated\s*:\s*challenge\s*$/im.test(headers)) return 'cf-mitigated: challenge';
+        const urlSignal = targetUrl.match(
+            /(?:\/cdn-cgi\/challenge-platform(?:[/?#]|$)|(?:^|:\/\/)?challenges\.cloudflare\.com(?:[/:?#]|$)|(?:^|[/?&#])(?:cf-chl-[^/?&#]*|__cf_chl_tk|cf-turnstile)(?:[=/?&#]|$))/i
+        );
+        if (urlSignal) return urlSignal[0];
+
+        const htmlSignal = raw.match(
+            /(?:\/cdn-cgi\/challenge-platform(?:[/?#]|$)|(?:cf-chl-[\w-]+|__cf_chl_tk)|data-cf-chl-[\w-]+|_cf_chl_opt)/i
+        );
+        if (htmlSignal) return htmlSignal[0];
+
+        // 结构化挑战页兜底：要求出现明确的挑战容器/响应字段，而非普通页面文字。
+        try {
+            if (doc && doc.querySelector && doc.querySelector(
+                '#challenge-stage, #challenge-error-title, form[action*="/cdn-cgi/challenge-platform"], input[name="cf-turnstile-response"]'
+            )) return 'Cloudflare challenge structure';
+        } catch (e) { /* ignore malformed response DOM */ }
+        return '';
+    }
+
+    function renderFetchResults(result, code, provider) {
+        const payload = result && typeof result === 'object' ? result : { html: result, responseUrl: '' };
+        const html = String(payload.html || '');
+        const responseUrl = String(payload.responseUrl || '');
+        const status = typeof payload.status === 'number' ? payload.status : 0;
+        const statusText = String(payload.statusText || '');
+        const responseHeaders = String(payload.responseHeaders || '');
         const fetchBox = document.getElementById(NS + '-fetch');
         const items = [];
         let doc = null;
         try {
-            doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+            doc = new DOMParser().parseFromString(html, 'text/html');
+            const challengeSignal = detectCloudflareChallenge(
+                html,
+                doc,
+                responseUrl || state.frameUrl,
+                responseHeaders
+            );
+            if (challengeSignal) {
+                logFrameDiagnostic('Cloudflare challenge detected in search HTML', {
+                    signal: challengeSignal,
+                    responseUrl: frameLogUrl(responseUrl || state.frameUrl),
+                    status,
+                    action: 'external-fallback'
+                });
+                markProviderHostBlacklisted(provider);
+                if (fetchBox) fetchBox.hidden = true;
+                showFrameFallback(
+                    responseUrl || state.frameUrl || buildProviderUrl(code, provider.id),
+                    '检测到 Cloudflare challenge，请在新标签页顶层打开搜索站完成验证，验证后再重试。'
+                );
+                return;
+            }
+            if (status && status !== 200) {
+                logFrameDiagnostic('search HTML returned non-success HTTP status', {
+                    status,
+                    statusText,
+                    responseUrl: frameLogUrl(responseUrl || state.frameUrl),
+                    action: 'external-fallback'
+                });
+                markProviderHostBlacklisted(provider);
+                if (fetchBox) fetchBox.hidden = true;
+                showFrameFallback(state.frameUrl || buildProviderUrl(code, provider.id), '该搜索站需要登录会话或反爬校验，请用新标签打开。');
+                return;
+            }
             doc.querySelectorAll('.movie-list .item, .movie-item').forEach((el) => {
                 const a = el.querySelector('a[href^="/v/"]') || el.querySelector('a[href]');
                 if (!a) return;
@@ -6766,6 +7736,22 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             }
         } catch (e) { /* ignore */ }
         if (!items.length) {
+            const raw = html;
+            const title = String((doc && doc.title) || '');
+            const hasPassword = !!(doc && doc.querySelector('input[type="password"]'));
+            const loginPage = /login|sign\s*in|登录|登入/i.test(title)
+                || (hasPassword && /login|sign\s*in|登录|登入/i.test(raw.slice(0, 12000)));
+            const antiBot = raw.match(/captcha|challenge|verify you are human|access denied|turnstile|人机验证|验证您是人类|访问被拒绝/i);
+            logFrameDiagnostic(antiBot
+                ? 'search HTML returned an anti-bot challenge page'
+                : loginPage
+                    ? 'search HTML returned a login page'
+                    : 'search HTML returned no parseable results', {
+                    htmlLength: raw.length,
+                    signal: antiBot ? antiBot[0] : (loginPage ? (title || 'password form') : ''),
+                    action: 'external-fallback'
+                });
+            if (antiBot || loginPage) markProviderHostBlacklisted(provider);
             if (fetchBox) fetchBox.hidden = true;
             showFrameFallback(state.frameUrl || buildProviderUrl(code, provider.id), '搜索没有返回结果，请点下方网站，用新标签打开。');
             return;
@@ -6790,11 +7776,17 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         const gen = fetchGen;
         const url = buildProviderUrl(code, provider.id);
         state.frameUrl = url;
+        if (isProviderHostBlacklisted(provider)) {
+            showFrameFallback(url, '该搜索源域名已在黑名单中，请在新标签页顶层打开并完成验证。');
+            return;
+        }
         if (title) title.textContent = code + ' · ' + provider.name;
         if (tip) tip.textContent = url;
         clearTimeout(state.frameWatch);
         hideFrameFallback();
         if (frame) {
+            clearFrameErrorBinding(frame);
+            clearFrameLoadBinding(frame);
             try { frame.src = 'about:blank'; } catch (e) { /* ignore */ }
             try { frame.style.visibility = 'hidden'; } catch (e) { /* ignore */ }
         }
@@ -6802,11 +7794,16 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             fetchBox.hidden = false;
             fetchBox.innerHTML = '<div class="jcs-fetch-loading">正在请求 ' + escapeHtml(provider.name) + '，请稍候…</div>';
         }
-        fetchSearchHtml(url, provider).then((html) => {
+        fetchSearchHtml(url, provider).then((result) => {
             if (gen !== fetchGen) return; // 已切源/重搜，丢弃过期结果
-            renderFetchResults(html, code, provider);
-        }).catch(() => {
+            renderFetchResults(result, code, provider);
+        }).catch((e) => {
             if (gen !== fetchGen) return; // 已切源/重搜，过期失败不再降级覆盖新预览
+            logFrameDiagnostic('search HTML request failed', {
+                error: String((e && e.message) || e || 'unknown'),
+                action: 'external-fallback'
+            });
+            markProviderHostBlacklisted(provider);
             if (fetchBox) fetchBox.hidden = true;
             showFrameFallback(url, '该搜索站需要登录会话或反爬校验，请用新标签打开。');
         });
@@ -6819,22 +7816,45 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         const tip = document.getElementById(NS + '-ptip');
         const title = document.getElementById(NS + '-ptitle');
         const p = getProvider(state.provider);
-        // fetch 型源走 GM 自渲染，仅当跨域（同源时 X-Frame-Options SAMEORIGIN 放行 iframe，更可靠）
-        if (p && (autoFetchProviders[p.id] || (p.mode === 'fetch' && !isSameOriginUrl(p.url)))) {
-            loadFetchPreview(code, p);
-            return;
-        }
         const url = buildProviderUrl(code, p.id);
         state.frameUrl = url;
         if (title) title.textContent = code + ' · ' + p.name;
         if (tip) tip.textContent = url;
 
+        // 搜索源黑名单优先级最高：不走 iframe、GM fetch 或自动降级，只提示用户在新标签验证。
+        if (frame) {
+            clearFrameErrorBinding(frame);
+            clearFrameLoadBinding(frame);
+        }
+        if (isProviderHostBlacklisted(p)) {
+            clearTimeout(state.frameWatch);
+            if (frame) {
+                try { frame.src = 'about:blank'; } catch (e) { /* ignore */ }
+            }
+            showFrameFallback(url, '该搜索源域名已在黑名单中，请在新标签页顶层打开并完成验证。');
+            return;
+        }
+
+        // fetch 强制模式始终自渲染；auto 仅在明确探测/失败后记忆为 fetch
+        if (p && providerPreviewUsesFetch(p)) {
+            loadFetchPreview(code, p);
+            return;
+        }
+
         const userExt = isUserPreferExternal();
-        const autoBlock = isHostFrameBlocked() || pageMetaBlocksFrames();
-        const skipEmbed = !o.forceEmbed && (userExt || autoBlock);
+        const metaBlock = pageMetaBlocksFrames();
+        const autoBlock = isHostFrameBlocked() || metaBlock;
+        const forceIframe = p && p.mode === 'iframe';
+        const skipEmbed = metaBlock || (!o.forceEmbed && !forceIframe && (userExt || isHostFrameBlocked()));
         if (skipEmbed) {
             if (frame) {
                 try { frame.src = 'about:blank'; } catch (e) { /* ignore */ }
+            }
+            if (metaBlock) {
+                logFrameDiagnostic('current page meta CSP disallows iframe embedding', {
+                    policy: 'meta',
+                    action: 'mark-block-and-external-fallback'
+                });
             }
             if (autoBlock) markHostFrameBlocked();
             showFrameFallback(
@@ -6848,10 +7868,13 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
 
         hideFrameFallback();
         if (frame) {
+            bindFrameErrorForNavigation(frame, url, p);
+            bindFrameLoadForNavigation(frame, url, p);
             // 先 blank 再赋 src，确保重复搜索同一 URL 也会触发 load
             try {
                 if (frame.getAttribute('src') === url) frame.src = 'about:blank';
             } catch (e) { /* ignore */ }
+            frame.referrerPolicy = 'origin';
             frame.src = url;
         }
         // 部分浏览器 CSP 拦截不派发 error，短延时后若已记入黑名单则展示回退
@@ -6883,12 +7906,14 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 name: p.name,
                 url: p.url,
                 hint: p.hint || '',
-                mode: p.mode === 'fetch' ? 'fetch' : 'iframe'
+                mode: normalizeProviderMode(p.mode)
             })),
             providerActive: loadProviderId(),
+            providerBlacklist: loadProviderBlacklist(),
             theme: state.theme || loadTheme(),
             // 选择器按站存在 sites[].hlSelectors；全局 hl 不含选择器
             hl: hlOptsForGlobalStore(state.hl),
+            codeActions: storeGetJson(CODE_ACT_KEY, null),
             sub: { useOriginalName: !!state.subUseOriginalName },
             panelLayout: storeGetJson(PANEL_KEY, null),
             fabPos: storeGetJson(FAB_POS_KEY, null)
@@ -6909,6 +7934,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 frameAllowHosts: normalizeHostList(storeGetJson(FRAME_ALLOW_KEY, [])),
                 frameBlockHosts: normalizeHostList(storeGetJson(FRAME_BLOCK_KEY, [])),
                 preferExtHosts: normalizeHostList(storeGetJson(EXT_MODE_KEY, [])),
+                providerBlacklist: loadProviderBlacklist(),
                 sites: sites
             })
         };
@@ -6976,11 +8002,12 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 frameAllowHosts: (bundle.data && bundle.data.frameAllowHosts) || bundle.frameAllowHosts,
                 frameBlockHosts: (bundle.data && bundle.data.frameBlockHosts) || bundle.frameBlockHosts,
                 preferExtHosts: (bundle.data && bundle.data.preferExtHosts) || bundle.preferExtHosts,
+                providerBlacklist: (bundle.data && bundle.data.providerBlacklist) || bundle.providerBlacklist,
                 sites: bundle.sites || (bundle.data && bundle.data.sites) || null
             })
             : (bundle.data && typeof bundle.data === 'object')
                 ? bundle.data
-                : (bundle.providers || bundle.hl || bundle.theme != null || bundle.sites ? bundle : null);
+                : (bundle.providers || bundle.providerBlacklist || bundle.hl || bundle.theme != null || bundle.sites ? bundle : null);
         if (!data || typeof data !== 'object') throw new Error('缺少配置数据');
 
         // 搜索源
@@ -7040,6 +8067,11 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             if (pe.length) storeSetJson(EXT_MODE_KEY, pe);
             else if (!mergeProviders) storeRemove(EXT_MODE_KEY);
         } catch (e) { /* ignore */ }
+        try {
+            const pb = mergeHostLists(loadProviderBlacklist(), data.providerBlacklist, !mergeProviders);
+            if (pb.length) saveProviderBlacklist(pb);
+            else if (!mergeProviders) storeRemove(PROVIDER_BLACKLIST_KEY);
+        } catch (e) { /* ignore */ }
 
         // 站点总表（含各站 hlSelectors）须先于高亮合成
         const sitesIn = data.sites || bundle.sites || null;
@@ -7065,6 +8097,10 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         }
         loadHlOpts();
 
+        // 当前番号操作按钮（操作 tab）
+        if (data.codeActions && typeof data.codeActions === 'object') {
+            saveCodeActions(data.codeActions);
+        }
         // 布局（仅在有值时写入）
         if (data.panelLayout && typeof data.panelLayout === 'object') {
             storeSetJson(PANEL_KEY, data.panelLayout);
@@ -7082,7 +8118,9 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         applyExtModeUi();
         try { renderProviders(); } catch (e) { /* ignore */ }
         try { renderConfigList(); } catch (e) { /* ignore */ }
+        try { renderProviderBlacklist(); } catch (e) { /* ignore */ }
         try { syncHlOptsUi(); } catch (e) { /* ignore */ }
+        try { syncCodeActionsUi(); } catch (e) { /* ignore */ }
         try { syncConfigGeneralUi(); } catch (e) { /* ignore */ }
         try {
             const orig = document.getElementById(NS + '-sub-orig');
@@ -7301,6 +8339,42 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         root.querySelectorAll('.jcs-cfg-tab').forEach((tab) => {
             tab.onclick = () => setConfigTab(tab.getAttribute('data-tab') || 'general');
         });
+        root.querySelectorAll('.jcs-source-tab').forEach((tab) => {
+            tab.onclick = () => setSourceConfigTab(tab.getAttribute('data-source-tab') || 'providers');
+        });
+        const providerBlacklistInput = root.querySelector('#' + NS + '-provider-blacklist-input');
+        const addProviderBlacklist = () => {
+            const host = normalizeProviderBlacklistInput(providerBlacklistInput && providerBlacklistInput.value);
+            if (!host) {
+                showToast('请输入有效域名（例如 example.com）');
+                if (providerBlacklistInput) providerBlacklistInput.focus();
+                return;
+            }
+            if (isBuiltinProviderBlacklistHost(host)) {
+                showToast('该域名属于内置黑名单，无需重复添加');
+                return;
+            }
+            const list = loadProviderBlacklist();
+            if (list.indexOf(host) >= 0) {
+                showToast('该域名已在黑名单中');
+                return;
+            }
+            saveProviderBlacklist(list.concat(host));
+            if (providerBlacklistInput) providerBlacklistInput.value = '';
+            renderProviderBlacklist();
+            showToast('已加入搜索源黑名单：' + host);
+            if (state.active && isSearchPopupOpen()) loadFrame(state.active);
+        };
+        const addProviderBlacklistBtn = root.querySelector('#' + NS + '-provider-blacklist-add');
+        if (addProviderBlacklistBtn) addProviderBlacklistBtn.onclick = addProviderBlacklist;
+        if (providerBlacklistInput) {
+            providerBlacklistInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addProviderBlacklist();
+                }
+            });
+        }
         const closeBtn = root.querySelector('#' + NS + '-cfg-close');
         if (closeBtn) closeBtn.onclick = () => toggleConfig(false);
 
@@ -7681,7 +8755,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         const fsave = root.querySelector('#' + NS + '-fsave');
         if (fsave) fsave.onclick = () => saveConfigForm();
         // 表单 Enter 保存 / Esc 取消
-        ['fname', 'fid', 'furl', 'fhint'].forEach((k) => {
+        ['fname', 'fid', 'furl', 'fhint', 'fmode'].forEach((k) => {
             const el = root.querySelector('#' + NS + '-' + k);
             if (!el) return;
             el.addEventListener('keydown', (e) => {
@@ -7701,7 +8775,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
     }
 
     function setConfigTab(tab) {
-        const id = ['general', 'highlight', 'sources', 'backup'].indexOf(tab) >= 0 ? tab : 'general';
+        const id = ['general', 'highlight', 'actions', 'sources', 'backup'].indexOf(tab) >= 0 ? tab : 'general';
         state.cfgTab = id;
         const cfg = document.getElementById(NS + '-cfg');
         if (!cfg) return;
@@ -7717,8 +8791,9 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             pane.removeAttribute('hidden');
             pane.setAttribute('aria-hidden', on ? 'false' : 'true');
         });
-        if (id === 'sources') renderConfigList();
+        if (id === 'sources') setSourceConfigTab(state.cfgSourceTab || 'providers');
         if (id === 'highlight') syncHlOptsUi();
+        if (id === 'actions') { syncCodeActionsUi(); bindCodeActionsUi(); }
         if (id === 'general' || id === 'backup') syncConfigGeneralUi();
         if (id === 'backup') syncWebdavUi();
         // 切换到搜索源/备份时滚回顶部
@@ -7952,6 +9027,47 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         });
     }
 
+    function renderProviderBlacklist() {
+        const box = document.getElementById(NS + '-provider-blacklist-list');
+        if (!box) return;
+        const builtins = DEFAULT_PROVIDER_BLACKLIST_HOSTS.map((host) =>
+            '<div class="jcs-blacklist-row" role="listitem"><code>' + escapeHtml(host) + '</code><small>内置</small></div>'
+        ).join('');
+        const user = loadProviderBlacklist().map((host) =>
+            '<div class="jcs-blacklist-row" role="listitem"><code>' + escapeHtml(host) + '</code>' +
+            '<button type="button" data-host="' + escapeHtml(host) + '" title="删除用户黑名单">删除</button></div>'
+        ).join('');
+        box.innerHTML = (builtins + user) || '<div class="jcs-empty-src">暂无黑名单</div>';
+        box.querySelectorAll('button[data-host]').forEach((btn) => {
+            btn.onclick = () => {
+                const host = btn.getAttribute('data-host') || '';
+                if (!removeProviderBlacklistHost(host)) return;
+                renderProviderBlacklist();
+                showToast('已移除搜索源黑名单：' + host);
+                if (state.active && isSearchPopupOpen()) loadFrame(state.active);
+            };
+        });
+    }
+
+    function setSourceConfigTab(tab) {
+        const id = tab === 'blacklist' ? 'blacklist' : 'providers';
+        state.cfgSourceTab = id;
+        const cfg = document.getElementById(NS + '-cfg');
+        if (!cfg) return;
+        cfg.querySelectorAll('.jcs-source-tab').forEach((el) => {
+            const on = el.getAttribute('data-source-tab') === id;
+            el.classList.toggle('is-on', on);
+            el.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        cfg.querySelectorAll('.jcs-source-pane').forEach((pane) => {
+            const on = pane.getAttribute('data-source-pane') === id;
+            pane.classList.toggle('is-on', on);
+            pane.setAttribute('aria-hidden', on ? 'false' : 'true');
+        });
+        if (id === 'providers') renderConfigList();
+        else renderProviderBlacklist();
+    }
+
     function renderConfigList() {
         const box = document.getElementById(NS + '-plist');
         if (!box) return;
@@ -8001,6 +9117,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 '<strong><i class="jcs-dot" aria-hidden="true"></i><span>' + name + '</span>' +
                 (active ? '<span class="jcs-prow-tag">使用中</span>' : '') +
                 (editing ? '<span class="jcs-prow-tag">编辑中</span>' : '') +
+                '<span class="jcs-prow-mode">' + escapeHtml(previewModeLabel(p.mode)) + '</span>' +
                 '</strong>' +
                 '<code>' + url + '</code>' +
                 (hint ? '<small>' + hint + '</small>' : '') +
@@ -8194,6 +9311,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         const name = document.getElementById(NS + '-fname');
         const url = document.getElementById(NS + '-furl');
         const hint = document.getElementById(NS + '-fhint');
+        const mode = document.getElementById(NS + '-fmode');
         if (idEl) {
             idEl.value = p.id;
             idEl.dataset.editId = p.id;
@@ -8201,6 +9319,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         if (name) name.value = p.name || '';
         if (url) url.value = p.url || '';
         if (hint) hint.value = p.hint || '';
+        if (mode) mode.value = normalizeProviderMode(p.mode);
         updateConfigFormMode();
         renderConfigList();
         scrollFormIntoView();
@@ -8224,6 +9343,8 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             el.value = '';
             if (k === 'fid') delete el.dataset.editId;
         });
+        const mode = document.getElementById(NS + '-fmode');
+        if (mode) mode.value = 'auto';
         updateConfigFormMode();
         renderConfigList();
         if (o.toast) showToast(o.toast);
@@ -8241,6 +9362,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         const nameEl = document.getElementById(NS + '-fname');
         const urlEl = document.getElementById(NS + '-furl');
         const hintEl = document.getElementById(NS + '-fhint');
+        const modeEl = document.getElementById(NS + '-fmode');
         const name = (nameEl && nameEl.value || '').trim();
         const url = (urlEl && urlEl.value || '').trim();
         if (!name) {
@@ -8265,7 +9387,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         const item = normalizeProvider({
             id, name, url,
             hint: (hintEl && hintEl.value) || '',
-            mode: (prevMode && prevMode.mode) || undefined
+            mode: (modeEl && modeEl.value) || (prevMode && prevMode.mode) || 'auto'
         });
         if (!item) {
             showToast('保存失败，请检查填写内容');
@@ -8384,7 +9506,10 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             return;
         }
         // 禁嵌站且未开大窗：番号边上弹出小按钮，点源新窗口打开
-        if (preferExternalSearch()) {
+        const currentProvider = getProvider(state.provider || loadProviderId());
+        const forceIframe = currentProvider && currentProvider.mode === 'iframe'
+            && !isProviderHostBlacklisted(currentProvider);
+        if (preferExternalSearch() && !forceIframe) {
             let anchor = o.anchor || null;
             if (!anchor && o.event && o.event.currentTarget) anchor = o.event.currentTarget;
             openProviderPicker(normalized || code, anchor);
@@ -8425,6 +9550,8 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 setTimeout(runLinkify, 0);
             }
         }
+        // 同步页面高亮块与 chip 的入库徽标状态（库缓存命中时为纯内存操作）
+        try { refreshLibBadges(); } catch (e) { /* ignore */ }
         return state.codes;
     }
 
@@ -8461,12 +9588,23 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             probe.tabIndex = -1;
             probe.style.cssText = 'position:fixed;width:0;height:0;opacity:0;pointer-events:none;border:0;left:-9999px;top:0';
             probe.referrerPolicy = 'no-referrer';
-            // 用稳定外域探测 frame-src；失败/拦截都只记策略，不展示 UI
+            // 用稳定外域探测 frame-src；仅安全策略事件可确认禁止嵌入，不展示 UI
             probe.src = 'https://example.com/';
-            probe.addEventListener('error', () => finish(true));
+            probe.addEventListener('error', (e) => {
+                logFrameDiagnostic('hidden frame policy probe failed; cause is not exposed by the browser', {
+                    probe: 'https://example.com/',
+                    eventType: e && e.type || 'error',
+                    action: 'do-not-mark-blocked'
+                });
+                finish(false);
+            });
             (document.documentElement || document.body).appendChild(probe);
             setTimeout(() => finish(false), 1200);
         } catch (e) {
+            logFrameDiagnostic('hidden frame policy probe could not be created', {
+                error: String((e && e.message) || e || 'unknown'),
+                action: 'do-not-mark-blocked'
+            });
             finish(false);
         }
     }
@@ -8710,6 +9848,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         state.theme = loadTheme();
         loadSubOpts();
         loadHlOpts();
+        loadCodeActions();
         applyTheme(state.theme);
         bindCboxParentBridge();
 
@@ -8815,6 +9954,8 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         },
         getCodes: () => state.codes.slice(),
         copyCode: copyCode,
+        addToLibrary: addToLibrary,
+        removeFromLibrary: removeFromLibrary,
         getTheme: () => state.theme || loadTheme(),
         setTheme: setTheme,
         toggleTheme: toggleTheme,
