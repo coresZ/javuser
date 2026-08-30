@@ -1,6 +1,6 @@
 # jav-code-scanner ↔ Enhanced_Media_Helper 集成指南
 
-> 跨脚本桥协议（2026-08）。scanner v1.5.71+ / EMH v3.6.5+。
+> 跨脚本桥协议（2026-08）。scanner v1.5.71+ / EMH v3.7.2+（桥本体 3.6.1+）。
 > 本文档描述两个油猴脚本之间"番号库"协作的全部机制、时序、降级行为与扩展方法。
 
 ## 背景：为什么要"桥"
@@ -28,7 +28,7 @@ window.__EMH_API__ = api;     // 幂等标记
 - 需要 `@grant unsafeWindow`（Violentmonkey 严格模式必需）；
 - **检测**：scanner `isEmhInstalled()` 查 `EMH_API.addCode` 是否为函数。
 
-### API 参考（EMH 3.6.5）
+### API 参考（EMH 3.7.2）
 
 | 方法 | 返回 | 版本 | 说明 |
 |---|---|---|---|
@@ -41,8 +41,23 @@ window.__EMH_API__ = api;     // 幂等标记
 | `openPanel()` | — | 3.6.1 | 打开 EMH 面板 |
 | `refresh()` | — | 3.6.1 | 刷新指示器/面板 |
 | `previewAvwiki(code, {force, onDone})` | `{ok}` | 3.6.3 / 回调 3.6.4 | 打开 AVWikiDB 宫格截图灯箱；`onDone(errMsg, preview)` 异步回传结果（errMsg 空串=成功） |
+| `exportData(filter?)` | `{version, exportDate, filter, items}` | 3.7.0 | 导出番号库（`all`/`favorite`/`watched`/`unmarked`/`trash`，缺省 `all`） |
+| `importData(data, mode?)` | `{success, message}` | 3.7.0 | 导入（`merge` 缺省 / `replace` 覆盖；清洗：大写、remarks 字符串化、磁力归一） |
+| `getWebdavOpts()` | `{url,user,file,encrypt,hasPass,hasSecret}` | 3.7.0 | 只回传密码存在位，明文不出脚本存储 |
+| `saveWebdavOpts(partial)` | `{url,file,encrypt}` | 3.7.0 | 合并保存设置，不回传密码 |
+| `webdavTest(opts?)` | Promise→`{ok,status,url,mode,exists?}` | 3.7.0 | 测试连接（PROPFIND→GET 兜底）；`opts` 缺省用已存设置 |
+| `webdavUpload(opts?)` | Promise→`{url,bytes,encrypted}` | 3.7.0 | 上传 `exportData('all')` 全量备份 |
+| `webdavDownload(opts?)` | Promise→`{text,encrypted,url,data,items}` | 3.7.0 | 下载并解密解析；恢复由调用方 `importData(data, mode)` 完成 |
 
-### scanner 侧消费点
+### 反向桥：EMH WebDAV 卡读取 jav 已存设置（v3.7.1+）
+
+EMH 的「WebDAV 云端备份」设置卡顶部分区会检测 `unsafeWindow.JavCodeKit`：
+
+- **读**：`JavCodeKit.getWebdavOpts()` → `{url, user, file, hasPass, encrypt, hasSecret}`；EMH 一键导入 **服务器 + 账号 + 加密开关**（文件名除外——EMH 固定 `emh-library.json`，与 jav 的 `jcs-config.json` 区分互不覆盖）
+- **密码不跨脚本**：jav 的桥与 EMH 的桥一致，出于安全不回传明文密码；`hasPass=true` 时 EMH 卡内提示「jav 已存密码，此处需手动输入一次」
+- 未检测到 jav 配置（未装 scanner / jav 未填 WebDAV）时该分区显示独立填写提示，不影响本卡使用
+
+## scanner 侧消费点
 
 | 消费点 | 位置（scanner） | 机制 |
 |---|---|---|

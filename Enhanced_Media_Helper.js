@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           Enhanced_Media_Helper
-// @version        3.6.5
+// @version        3.7.2
 // @description    Code Manager Panel with javgg site support (Preact + htm) + magnet screenshot preview + Linear UI
 // @author         cores
 // @match          https://javgg.net/tag/to-be-release/*
@@ -41,6 +41,7 @@
 // @require        https://cdn.jsdelivr.net/npm/preact@10.19.6/dist/preact.umd.js
 // @require        https://cdn.jsdelivr.net/npm/preact@10.19.6/hooks/dist/hooks.umd.js
 // @require        https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.umd.js
+// @require        https://update.greasyfork.org/scripts/593538/1916639/webdev-component.js
 // @icon           data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==
 // @grant          GM_setValue
 // @grant          GM_getValue
@@ -51,6 +52,7 @@
 // @connect        1cili.com
 // @connect        whatslink.info
 // @connect        avwikidb.com
+// @connect        *
 // @run-at         document-start
 // @noframes
 // @license        MPL
@@ -1124,6 +1126,466 @@
         }
     };
 
+    // ===== WebDAV 云端备份（内核为 Greasy Fork 库 webdev-library.user.js，先供 EMH 使用） =====
+    // 设置存 GM key `emh_webdav_v1`（账号密码仅本机脚本存储，不随备份导出）；
+    // 上传 = CODE_LIBRARY.exportData('all') 全量，下载后经 CODE_LIBRARY.importData 合并/覆盖恢复；
+    // 任意用户自定义 WebDAV 主机需要 @connect *，油猴首次访问会弹一次放行确认。
+    // 组件源码由 tools/sync-webdev.js 维护，请勿手改标记块之间的内容。
+
+    // webdevRequest：Promise 化 GM_xmlhttpRequest（acceptStatuses 白名单判定成功，status 0 兜底）
+    function webdevRequest(o) {
+        const gm = (typeof GM_xmlhttpRequest === 'function' && GM_xmlhttpRequest)
+            || (typeof GM !== 'undefined' && GM && typeof GM.xmlHttpRequest === 'function' && GM.xmlHttpRequest)
+            || null;
+        if (!gm) return Promise.reject(new Error('当前环境不支持跨域请求'));
+        return new Promise((resolve, reject) => {
+            let done = false;
+            const finish = (fn, arg) => {
+                if (done) return;
+                done = true;
+                fn(arg);
+            };
+            try {
+                const req = {
+                    method: o.method || 'GET',
+                    url: o.url,
+                    timeout: o.timeout || 20000,
+                    headers: o.headers || {},
+                    onload: (res) => {
+                        const st = res && typeof res.status === 'number' ? res.status : 0;
+                        const okList = Array.isArray(o.acceptStatuses) ? o.acceptStatuses : null;
+                        // 部分环境成功时 status 为 0；WebDAV PUT 常见 201/204
+                        const ok = okList
+                            ? (st === 0 || okList.indexOf(st) >= 0)
+                            : (st === 0 || (st >= 200 && st < 300));
+                        if (ok) finish(resolve, res);
+                        else finish(reject, new Error('HTTP ' + st + (res && res.statusText ? ' ' + res.statusText : '')));
+                    },
+                    onerror: () => finish(reject, new Error('网络请求失败')),
+                    ontimeout: () => finish(reject, new Error('请求超时')),
+                    onabort: () => finish(reject, new Error('请求已中止'))
+                };
+                if (o.data != null) req.data = o.data;
+                gm(req);
+            } catch (e) {
+                finish(reject, e instanceof Error ? e : new Error('请求失败'));
+            }
+        });
+    }
+
+    /*__WEBDEV_COMPONENT_BEGIN__*/
+/**
+ * 共享 WebDAV 客户端组件 v1.0.0（发布名 WebdevComponent · Greasy Fork 库 593538）
+ * 真源 = 本文件 webdev-library.user.js（元数据头 + 组件体一体）；先供 Enhanced_Media_Helper 使用，后续可给 jav-code-scanner。
+ *
+ * 设计原则：
+ * - 纯逻辑组件：不引用 GM_*、不引用任何脚本全局对象；浏览器 UMD + CommonJS（Node 测试）双出口。
+ * - 实例化 `createWebdev(env)`，依赖全部由消费方注入：
+ *     storage        { get(key, fallback), set(key, value) }  设置持久化（每个脚本各自的 GM 存储）
+ *     request        (opts) => Promise<res>                   网络适配器（GM_xmlhttpRequest 等）
+ *     exportPayload  () => string                             备份载荷生成器（如番号库全量 JSON）
+ *     以及 key / defaultFile / encMark 三套命名空间常量
+ * - 凭据安全：账号/密码只经注入的 storage 按脚本隔离保存；加密备份采用 AES-256-GCM + PBKDF2-SHA256（120k 迭代）。
+ * - 备份协议与 jav-code-scanner 同构（PUT/GET JSON 文件；加密包为信封格式），ENC_MARK 按消费方独立。
+ *
+ * 同步说明（真源 = 本文件，即 Greasy Fork 库页面源码）：
+ * - 修改流程：① 编辑本文件 → ② 回填 Greasy Fork 库页面（https://greasyfork.org/scripts/593538）→ ③ 运行 `node tools/sync-webdev.js` 同步嵌入 Enhanced_Media_Helper.js 标记块（勿手改嵌入副本）
+ * - UMD 幂等：同名全局已存在时不再覆盖，保证「@require 库 + 内嵌副本」同时存在时无冲突
+ */
+(function (root, factory) {
+    if (typeof module === 'object' && module.exports) {
+        module.exports = factory();
+    } else {
+        if (!root.WebdevComponent) root.WebdevComponent = factory();
+    }
+}(typeof self !== 'undefined' ? self : this, function () {
+    'use strict';
+
+    const VERSION = '1.0.0';
+
+    /**
+     * 创建 WebDAV 客户端实例。
+     * @param {object} env
+     * @param {string} [env.key='webdev_opts_v1']        设置存储键名
+     * @param {string} [env.defaultFile='webdev-backup.json'] 默认备份文件名
+     * @param {string} [env.encMark='webdev-aes-gcm-v1'] 加密备份信封标记
+     * @param {{get:Function, set:Function}} [env.storage]     设置持久化适配器
+     * @param {Function} [env.request]     网络适配器；opts={method,url,headers,data,timeout,acceptStatuses}，resolve 原始响应 / reject Error
+     * @param {Function} [env.exportPayload] 备份载荷生成器，返回明文 JSON 字符串
+     */
+    function createWebdev(env) {
+        const o = env || {};
+        const cfg = {
+            key: String(o.key || 'webdev_opts_v1'),
+            defaultFile: String(o.defaultFile || 'webdev-backup.json'),
+            encMark: String(o.encMark || 'webdev-aes-gcm-v1')
+        };
+        const storage = o.storage || { get: () => null, set: () => {} };
+        const request = typeof o.request === 'function' ? o.request : null;
+        const exportPayload = typeof o.exportPayload === 'function' ? o.exportPayload : null;
+
+        // ===== 设置 =====
+
+        // 归一化设置对象：URL/用户名/密码/文件名/加密开关/加密密码
+        function normalize(raw) {
+            const s = raw && typeof raw === 'object' ? raw : {};
+            return {
+                url: String(s.url || '').trim(),
+                user: String(s.user || '').trim(),
+                pass: String(s.pass || ''),
+                file: String(s.file || cfg.defaultFile).trim() || cfg.defaultFile,
+                encrypt: s.encrypt === true || s.encrypt === '1' || s.encrypt === 1,
+                secret: String(s.secret || '')
+            };
+        }
+
+        function load() {
+            let raw = null;
+            try { raw = storage.get(cfg.key, null); } catch (e) { raw = null; }
+            return normalize(raw);
+        }
+
+        function save(partial) {
+            const next = normalize(Object.assign({}, load(), partial || {}));
+            try { storage.set(cfg.key, next); } catch (e) { /* ignore */ }
+            return next;
+        }
+
+        // ===== base64 工具（UTF-8 安全） =====
+
+        function b64EncodeUtf8(str) {
+            try {
+                return btoa(unescape(encodeURIComponent(String(str || ''))));
+            } catch (e) {
+                try { return btoa(String(str || '')); } catch (e2) { return ''; }
+            }
+        }
+
+        function bytesToB64(bytes) {
+            const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+            let s = '';
+            const chunk = 0x8000;
+            for (let i = 0; i < u8.length; i += chunk) {
+                s += String.fromCharCode.apply(null, u8.subarray(i, i + chunk));
+            }
+            return btoa(s);
+        }
+
+        function b64ToBytes(b64) {
+            const bin = atob(String(b64 || ''));
+            const out = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+            return out;
+        }
+
+        // ===== AES-256-GCM（PBKDF2-SHA256，120k 迭代，与 jav-code-scanner 同参数） =====
+
+        function hasSubtleCrypto() {
+            try {
+                const cryptoObj = (typeof window !== 'undefined' && window.crypto)
+                    || (typeof globalThis !== 'undefined' && globalThis.crypto)
+                    || null;
+                return !!(cryptoObj && cryptoObj.subtle && typeof cryptoObj.getRandomValues === 'function');
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function deriveAesKey(password, saltBytes) {
+            const enc = new TextEncoder();
+            return crypto.subtle.importKey('raw', enc.encode(String(password || '')), 'PBKDF2', false, ['deriveKey'])
+                .then((base) => crypto.subtle.deriveKey(
+                    {
+                        name: 'PBKDF2',
+                        salt: saltBytes,
+                        iterations: 120000,
+                        hash: 'SHA-256'
+                    },
+                    base,
+                    { name: 'AES-GCM', length: 256 },
+                    false,
+                    ['encrypt', 'decrypt']
+                ));
+        }
+
+        // 明文 → 加密 JSON 包（AES-256-GCM + PBKDF2）
+        function encryptPayload(plainText, password) {
+            if (!hasSubtleCrypto()) return Promise.reject(new Error('当前浏览器不支持 WebCrypto 加密'));
+            const pwd = String(password || '');
+            if (pwd.length < 4) return Promise.reject(new Error('加密密码至少 4 位'));
+            const salt = crypto.getRandomValues(new Uint8Array(16));
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const data = new TextEncoder().encode(String(plainText || ''));
+            return deriveAesKey(pwd, salt).then((key) => crypto.subtle.encrypt(
+                { name: 'AES-GCM', iv: iv },
+                key,
+                data
+            )).then((cipherBuf) => JSON.stringify({
+                app: 'webdev-component',
+                enc: cfg.encMark,
+                v: 1,
+                kdf: 'PBKDF2-SHA256',
+                iter: 120000,
+                salt: bytesToB64(salt),
+                iv: bytesToB64(iv),
+                ct: bytesToB64(new Uint8Array(cipherBuf)),
+                createdAt: new Date().toISOString()
+            }, null, 2));
+        }
+
+        function isEncryptedPayload(text) {
+            try {
+                const p = typeof text === 'string' ? JSON.parse(text) : text;
+                return !!(p && typeof p === 'object' && p.enc === cfg.encMark && p.ct && p.salt && p.iv);
+            } catch (e) {
+                return false;
+            }
+        }
+
+        // 加密包 → 明文 JSON 字符串
+        function decryptPayload(encText, password) {
+            if (!hasSubtleCrypto()) return Promise.reject(new Error('当前浏览器不支持 WebCrypto 解密'));
+            let p;
+            try {
+                p = typeof encText === 'string' ? JSON.parse(encText) : encText;
+            } catch (e) {
+                return Promise.reject(new Error('加密包无法解析'));
+            }
+            if (!p || p.enc !== cfg.encMark || !p.ct || !p.salt || !p.iv) {
+                return Promise.reject(new Error('不是本脚本的加密备份'));
+            }
+            const pwd = String(password || '');
+            if (!pwd) return Promise.reject(new Error('请填写加密密码'));
+            let salt; let iv; let ct;
+            try {
+                salt = b64ToBytes(p.salt);
+                iv = b64ToBytes(p.iv);
+                ct = b64ToBytes(p.ct);
+            } catch (e) {
+                return Promise.reject(new Error('加密包数据损坏'));
+            }
+            return deriveAesKey(pwd, salt).then((key) => crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv: iv },
+                key,
+                ct
+            )).then((buf) => new TextDecoder().decode(buf)).catch(() => {
+                throw new Error('解密失败，请检查加密密码');
+            });
+        }
+
+        // 若是加密包则解密，否则原样返回
+        function maybeDecryptText(text, password) {
+            if (!isEncryptedPayload(text)) return Promise.resolve(String(text || ''));
+            return decryptPayload(text, password);
+        }
+
+        // ===== URL / 认证 =====
+
+        // base 允许为目录或完整文件 URL；以 .json 结尾且未指定 file 时视为完整文件 URL
+        function joinUrl(base, file) {
+            let b = String(base || '').trim();
+            if (!b) return '';
+            if (/\.json(\?|#|$)/i.test(b) && !file) return b;
+            b = b.replace(/\/+$/, '');
+            const f = String(file || cfg.defaultFile).trim().replace(/^\/+/, '') || cfg.defaultFile;
+            // base 已以文件名结尾时不再追加
+            if (b.toLowerCase().endsWith('/' + f.toLowerCase()) || b.toLowerCase().endsWith(f.toLowerCase())) {
+                return b;
+            }
+            return b + '/' + f;
+        }
+
+        function authHeader(opts) {
+            const s = normalize(opts);
+            if (!s.user && !s.pass) return {};
+            return { Authorization: 'Basic ' + b64EncodeUtf8(s.user + ':' + s.pass) };
+        }
+
+        function targetUrl(opts) {
+            const s = normalize(opts || load());
+            return joinUrl(s.url, s.file);
+        }
+
+        // ===== 网络 =====
+
+        function _request(opts) {
+            if (!request) return Promise.reject(new Error('未注入 request 适配器'));
+            return request(opts);
+        }
+
+        // ===== 业务动作 =====
+
+        // 测试连通性：先 PROPFIND，失败再 GET（部分盘只开了文件读写）
+        function testConnection(opts) {
+            const s = normalize(opts || load());
+            const url = joinUrl(s.url, s.file);
+            if (!url) return Promise.reject(new Error('请填写 WebDAV 地址'));
+            if (!/^https?:\/\//i.test(url)) return Promise.reject(new Error('WebDAV 地址需以 http(s):// 开头'));
+            const headers = Object.assign({ 'Accept': '*/*', 'Depth': '0' }, authHeader(s));
+            return _request({
+                method: 'PROPFIND',
+                url: url,
+                headers: headers,
+                timeout: 15000,
+                acceptStatuses: [200, 207, 404]
+            }).then((res) => {
+                return { ok: true, status: res && res.status, url: url, mode: 'PROPFIND' };
+            }).catch(() => _request({
+                method: 'GET',
+                url: url,
+                headers: Object.assign({ 'Accept': '*/*' }, authHeader(s)),
+                timeout: 15000,
+                acceptStatuses: [200, 404]
+            }).then((res) => ({
+                ok: true,
+                status: res && res.status,
+                url: url,
+                mode: 'GET',
+                exists: !!(res && res.status === 200)
+            })));
+        }
+
+        // 上传备份（exportPayload() 生成载荷；加密时为加密 JSON 包）
+        function uploadLibrary(opts) {
+            const s = normalize(opts || load());
+            const url = joinUrl(s.url, s.file);
+            if (!url) return Promise.reject(new Error('请填写 WebDAV 地址'));
+            if (!/^https?:\/\//i.test(url)) return Promise.reject(new Error('WebDAV 地址需以 http(s):// 开头'));
+            if (!exportPayload) return Promise.reject(new Error('未注入 exportPayload 适配器'));
+            const plain = String(exportPayload());
+            const bodyP = s.encrypt
+                ? encryptPayload(plain, s.secret)
+                : Promise.resolve(plain);
+            return bodyP.then((body) => {
+                const headers = Object.assign({
+                    'Content-Type': 'application/json; charset=utf-8',
+                    'Accept': '*/*'
+                }, authHeader(s));
+                return _request({
+                    method: 'PUT',
+                    url: url,
+                    headers: headers,
+                    data: body,
+                    timeout: 30000,
+                    acceptStatuses: [200, 201, 204, 207]
+                }).then(() => ({
+                    url: url,
+                    bytes: body.length,
+                    encrypted: !!s.encrypt
+                }));
+            });
+        }
+
+        // 下载并解析远端备份（加密包按设置的加密密码解密；返回 data 供消费方 importData 合并/覆盖）
+        function downloadLibrary(opts) {
+            const s = normalize(opts || load());
+            const url = joinUrl(s.url, s.file);
+            if (!url) return Promise.reject(new Error('请填写 WebDAV 地址'));
+            if (!/^https?:\/\//i.test(url)) return Promise.reject(new Error('WebDAV 地址需以 http(s):// 开头'));
+            const headers = Object.assign({
+                'Accept': 'application/json, text/plain, */*'
+            }, authHeader(s));
+            return _request({
+                method: 'GET',
+                url: url,
+                headers: headers,
+                timeout: 30000,
+                acceptStatuses: [200]
+            }).then((res) => {
+                const text = res && (res.responseText != null ? res.responseText : res.response);
+                if (text == null || String(text).trim() === '') throw new Error('远端文件为空');
+                const raw = String(text);
+                // 加密包必须解密；明文直接解析
+                return maybeDecryptText(raw, s.secret).then((plain) => {
+                    let data;
+                    try {
+                        data = JSON.parse(plain);
+                    } catch (e) {
+                        throw new Error('远端文件不是有效的 JSON 备份');
+                    }
+                    if (!data || !Array.isArray(data.items)) {
+                        throw new Error('远端备份格式不正确（缺少 items 数组）');
+                    }
+                    return {
+                        text: plain,
+                        encrypted: isEncryptedPayload(raw),
+                        url: url,
+                        data: data,
+                        items: data.items.length
+                    };
+                });
+            });
+        }
+
+        return {
+            VERSION: VERSION,
+            KEY: cfg.key,
+            DEFAULT_FILE: cfg.defaultFile,
+            ENC_MARK: cfg.encMark,
+            normalize: normalize,
+            load: load,
+            save: save,
+            b64EncodeUtf8: b64EncodeUtf8,
+            bytesToB64: bytesToB64,
+            b64ToBytes: b64ToBytes,
+            hasSubtleCrypto: hasSubtleCrypto,
+            deriveAesKey: deriveAesKey,
+            encryptPayload: encryptPayload,
+            isEncryptedPayload: isEncryptedPayload,
+            decryptPayload: decryptPayload,
+            maybeDecryptText: maybeDecryptText,
+            joinUrl: joinUrl,
+            authHeader: authHeader,
+            targetUrl: targetUrl,
+            testConnection: testConnection,
+            uploadLibrary: uploadLibrary,
+            downloadLibrary: downloadLibrary
+        };
+    }
+
+    return { VERSION: VERSION, createWebdev: createWebdev };
+}));
+/*__WEBDEV_COMPONENT_END__*/
+
+    // EMH 实例化共享 WebDAV 组件：注入 GM 存储 / GM 请求 / 番号库载荷。
+    // 组件来源：@require 的 Greasy Fork 库 → 沙箱全局（内嵌副本）→ 页面主 world；UMD 幂等保证不重复定义
+    const WebdevComp = (typeof WebdevComponent !== 'undefined' && WebdevComponent)
+        || (typeof unsafeWindow !== 'undefined' && unsafeWindow && unsafeWindow.WebdevComponent)
+        || null;
+    const WEBDAV = (WebdevComp && typeof WebdevComp.createWebdev === 'function')
+        ? WebdevComp.createWebdev({
+            key: 'emh_webdav_v1',
+            defaultFile: 'emh-library.json',
+            encMark: 'emh-aes-gcm-v1',
+            storage: {
+                get: (k, d) => { try { return typeof GM_getValue === 'function' ? GM_getValue(k, d) : d; } catch (e) { return d; } },
+                set: (k, v) => { try { if (typeof GM_setValue === 'function') GM_setValue(k, v); } catch (e) {} }
+            },
+            request: webdevRequest,
+            exportPayload: () => JSON.stringify(CODE_LIBRARY.exportData('all'), null, 2)
+        })
+        : null;
+    if (!WEBDAV) console.error('EMH: webdev-component 未就绪（@require 失败且内嵌副本缺失）');
+
+    // 读取 jav-code-scanner 已保存的 WebDAV 设置（仅服务器/账号/加密开关可跨脚本读取；
+    // jav 的桥出于安全不返回密码 —— hasPass 仅表示「jav 已存密码」，使用侧需手动输入一次）
+    function javWebdavOpts() {
+        try {
+            const kit = (typeof unsafeWindow !== 'undefined' && unsafeWindow && unsafeWindow.JavCodeKit) ? unsafeWindow.JavCodeKit : null;
+            if (!kit || typeof kit.getWebdavOpts !== 'function') return null;
+            const o = kit.getWebdavOpts();
+            if (!o || !o.url) return null;
+            return {
+                url: String(o.url || ''),
+                user: String(o.user || ''),
+                hasPass: !!o.hasPass,
+                encrypt: !!o.encrypt
+            };
+        } catch (e) {
+            return null;
+        }
+    }
+
     // avwikidb 作品页宫格截图预览（按番号抓取，独立于 whatslink 磁力预览）
     const AVWIKI_PREVIEW = {
         BASE: 'https://avwikidb.com/work/',
@@ -1873,6 +2335,7 @@
                 selectedIndex: -1,
                 helpOpen: false,
                 menuOpen: false,
+                webdavOpen: false,
                 menuStats: null,
                 lastSyncTimestamp: null,
                 revision: 0
@@ -2032,7 +2495,7 @@
             `;
         }
 
-        function HeaderMenu({ onClose, onClear, onOpenStandalone, stats }) {
+        function HeaderMenu({ onClose, onClear, onOpenStandalone, onOpenWebdav, stats }) {
             return html`
                 <div class="emh-header-menu-backdrop" onClick=${onClose}></div>
                 <div class="emh-header-menu">
@@ -2044,6 +2507,8 @@
                         <button type="button" class="emh-header-menu-item emh-header-menu-item-plain" onClick=${onOpenStandalone}>在新标签页打开</button>
                     ` : ''}
                     <button type="button" class="emh-header-menu-item" onClick=${onClear}>清除全部预览缓存</button>
+                    <div class="emh-header-menu-title">备份</div>
+                    <button type="button" class="emh-header-menu-item emh-header-menu-item-plain" onClick=${onOpenWebdav}>WebDAV 云端备份</button>
                 </div>
             `;
         }
@@ -2071,6 +2536,198 @@
                         </ul>
                         <div class="emh-panel-modal-buttons">
                             <button class="btn btn-outline emh-panel-modal-cancel" onClick=${onClose}>关闭</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // WebDAV 云端备份设置模态：jav 导入 + 服务器 + 备份文件（固定名）+ 恢复策略 + 保存/测试/上传/恢复
+        function WebdavModal({ onClose }) {
+            if (!WEBDAV) {
+                return html`
+                    <div class="emh-panel-modal" style="display:flex;" onClick=${onClose}>
+                        <div class="emh-panel-modal-content">
+                            <h3>WebDAV 组件未加载</h3>
+                            <p class="emh-webdav-status err">webdev-component 加载失败，请检查 @require 地址或刷新页面重试。</p>
+                            <div class="emh-panel-modal-buttons">
+                                <button type="button" class="btn btn-outline emh-panel-modal-cancel" onClick=${onClose}>关闭</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            const initial = WEBDAV.load();
+            const jav = useState(() => javWebdavOpts())[0];
+            const [form, setForm] = useState({
+                url: initial.url,
+                user: initial.user,
+                pass: initial.pass,
+                encrypt: initial.encrypt,
+                secret: initial.secret,
+                merge: true
+            });
+            const [status, setStatus] = useState({ text: '', type: '' });
+            const [busy, setBusy] = useState(false);
+            const setVal = (k) => (e) => {
+                const v = e && e.target ? (e.target.type === 'checkbox' ? e.target.checked : e.target.value) : e;
+                setForm(f => ({ ...f, [k]: v }));
+            };
+            // 文件名固定 emh-library.json（与 jav 的 jcs-config.json 区分，互不覆盖），不可修改
+            const opts = () => WEBDAV.normalize({
+                url: form.url, user: form.user, pass: form.pass,
+                file: WEBDAV.DEFAULT_FILE, encrypt: form.encrypt, secret: form.secret
+            });
+            const show = (text, type) => setStatus({ text, type });
+
+            const importJav = () => {
+                const j = javWebdavOpts();
+                if (!j) { show('未检测到 jav-code-scanner 的 WebDAV 配置', 'err'); return; }
+                setForm(f => ({ ...f, url: j.url, user: j.user, encrypt: j.encrypt }));
+                if (j.hasPass) {
+                    show('已导入 jav 的服务器与账号；其密码需手动输入一次（桥不返回密码）', 'info');
+                    UTILS.showToast('已从 jav 导入服务器与账号（密码请手动补填）', 'success');
+                } else {
+                    show('已从 jav 导入服务器与账号', 'ok');
+                    UTILS.showToast('已从 jav 导入 WebDAV 设置', 'success');
+                }
+            };
+
+            const saveSettings = () => {
+                WEBDAV.save(opts());
+                show('设置已保存（账号密码仅存本机脚本存储）', 'ok');
+                UTILS.showToast('WebDAV 设置已保存', 'success');
+            };
+
+            const testConn = () => {
+                setBusy(true);
+                show('正在测试连接…', 'info');
+                WEBDAV.testConnection(opts()).then((r) => {
+                    const extra = r.mode === 'GET'
+                        ? (r.exists === false ? '（目标文件不存在，可上传）' : '（目标文件已存在）')
+                        : '（HTTP ' + r.status + '）';
+                    UTILS.showToast('WebDAV 连接测试成功', 'success');
+                    show(`连接成功：${r.mode} · ${r.url} ${extra}`, 'ok');
+                }).catch((e) => {
+                    const msg = '连接失败：' + ((e && e.message) || '未知错误');
+                    UTILS.showToast(msg, 'error');
+                    show(msg, 'err');
+                }).then(() => setBusy(false));
+            };
+
+            // 前置校验：地址必填；开启加密时加密密码至少 4 位
+            const guardReady = () => {
+                const o = opts();
+                if (!o.url) { show('请先填写 WebDAV 地址', 'err'); return null; }
+                if (o.encrypt && String(o.secret || '').length < 4) { show('开启加密需填写至少 4 位加密密码', 'err'); return null; }
+                return o;
+            };
+
+            const upload = () => {
+                const o = guardReady();
+                if (!o) return;
+                setBusy(true);
+                show(o.encrypt ? '正在加密并上传…' : '正在上传到 WebDAV…', 'info');
+                WEBDAV.save(o);
+                WEBDAV.uploadLibrary(o).then((r) => {
+                    const msg = (r.encrypted ? '已加密上传' : '已上传') + '（' + r.bytes + ' 字节）· ' + r.url;
+                    UTILS.showToast(r.encrypted ? '加密备份已上传' : 'WebDAV 上传成功', 'success');
+                    show(msg, 'ok');
+                }).catch((e) => {
+                    const msg = 'WebDAV 上传失败：' + ((e && e.message) || '未知错误');
+                    UTILS.showToast(msg, 'error');
+                    show(msg, 'err');
+                }).then(() => setBusy(false));
+            };
+
+            const download = () => {
+                const o = guardReady();
+                if (!o) return;
+                setBusy(true);
+                show('正在从 WebDAV 下载…', 'info');
+                WEBDAV.save(o);
+                WEBDAV.downloadLibrary(o).then((pack) => {
+                    const mode = form.merge ? 'merge' : 'replace';
+                    const res = CODE_LIBRARY.importData(pack.data, mode);
+                    const msg = (pack.encrypted ? '已解密并恢复' : '已从 WebDAV 恢复') +
+                        ` ${pack.items} 条番号（${form.merge ? '合并' : '覆盖'}）` +
+                        (res && res.success === false ? '；' + res.message : '');
+                    UTILS.showToast(res && res.success === false ? res.message : msg, res && res.success === false ? 'error' : 'success');
+                    show(msg, res && res.success === false ? 'err' : 'ok');
+                }).catch((e) => {
+                    const msg = 'WebDAV 恢复失败：' + ((e && e.message) || '未知错误');
+                    UTILS.showToast(msg, 'error');
+                    show(msg, 'err');
+                }).then(() => setBusy(false));
+            };
+
+            const passPh = jav && jav.hasPass ? 'jav 已存密码，此处需手动输入一次' : '可选';
+
+            return html`
+                <div class="emh-panel-modal" style="display:flex;" onClick=${onClose}>
+                    <div class="emh-panel-modal-content emh-webdav-modal-content" onClick=${e => e.stopPropagation()}>
+                        <h3><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> WebDAV 云端备份</h3>
+                        <p class="emh-webdav-desc">上传/下载番号库到坚果云、Nextcloud、群晖等。账号密码仅保存在本机脚本存储，绝不写入备份文件。</p>
+                        ${initial.url ? html`
+                            <p class="emh-webdav-saved">已保存：${initial.url} · 账号 ${initial.user || '—'} · 加密 ${initial.encrypt ? '开' : '关'}</p>
+                        ` : ''}
+                        <div class="emh-webdav-section">
+                            <div class="emh-webdav-section-title">从 jav-code-scanner 导入</div>
+                            ${jav ? html`
+                                <div class="emh-webdav-jav">
+                                    <span class="emh-webdav-jav-desc">检测到 jav 已配置：${jav.url}${jav.hasPass ? ' · jav 已存密码' : ''}</span>
+                                    <button type="button" class="btn btn-outline emh-webdav-jav-btn" onClick=${importJav} disabled=${busy}>导入服务器/账号</button>
+                                </div>
+                            ` : html`
+                                <div class="emh-webdav-jav emh-webdav-jav-empty">未检测到 jav-code-scanner 的 WebDAV 配置，本卡独立填写即可</div>
+                            `}
+                        </div>
+                        <div class="emh-webdav-section">
+                            <div class="emh-webdav-section-title">服务器</div>
+                            <label class="emh-webdav-full">服务器地址（目录或完整文件 URL）
+                                <input type="url" value=${form.url} onInput=${setVal('url')} autocomplete="off" spellcheck="false" placeholder="https://dav.example.com/dav/" />
+                            </label>
+                            <div class="emh-webdav-grid">
+                                <label>用户名
+                                    <input type="text" value=${form.user} onInput=${setVal('user')} autocomplete="username" spellcheck="false" placeholder="可选" />
+                                </label>
+                                <label>密码 / 应用密码
+                                    <input type="password" value=${form.pass} onInput=${setVal('pass')} autocomplete="current-password" placeholder=${passPh} />
+                                </label>
+                            </div>
+                        </div>
+                        <div class="emh-webdav-section">
+                            <div class="emh-webdav-section-title">备份文件</div>
+                            <label class="emh-webdav-full">文件名（固定，与 jav 的 jcs-config.json 区分开，互不覆盖）
+                                <input type="text" class="emh-webdav-file" value=${WEBDAV.DEFAULT_FILE} disabled title="备份文件名固定为 ${WEBDAV.DEFAULT_FILE}，不可修改" />
+                            </label>
+                            <label class="emh-webdav-check">
+                                <input type="checkbox" checked=${form.encrypt} onChange=${setVal('encrypt')} />
+                                <span><b>加密上传</b><em>AES-256-GCM。云端只存密文；恢复时用同一加密密码解密。</em></span>
+                            </label>
+                            <label class="emh-webdav-full" style=${form.encrypt ? '' : 'opacity:.55;'}>加密密码（与 WebDAV 密码不同）
+                                <input type="password" value=${form.secret} onInput=${setVal('secret')} disabled=${!form.encrypt} autocomplete="new-password" placeholder="开启加密后必填，请自行牢记" />
+                            </label>
+                        </div>
+                        <div class="emh-webdav-section">
+                            <div class="emh-webdav-section-title">恢复策略</div>
+                            <label class="emh-webdav-check">
+                                <input type="checkbox" checked=${form.merge} onChange=${setVal('merge')} />
+                                <span><b>恢复时合并导入</b><em>保留现有番号并更新同名项；关闭则整包覆盖。</em></span>
+                            </label>
+                        </div>
+                        <div class="emh-webdav-buttons emh-webdav-buttons-secondary">
+                            <button type="button" class="btn btn-outline" onClick=${saveSettings} disabled=${busy}>保存设置</button>
+                            <button type="button" class="btn btn-outline" onClick=${testConn} disabled=${busy}>测试连接</button>
+                        </div>
+                        <div class="emh-webdav-buttons">
+                            <button type="button" class="btn my-btn-primary" onClick=${upload} disabled=${busy}>上传备份</button>
+                            <button type="button" class="btn my-btn-primary" onClick=${download} disabled=${busy}>从云端恢复</button>
+                        </div>
+                        <p class="emh-webdav-status ${status.type}" role="status">${status.text}</p>
+                        <p class="emh-webdav-hint">坚果云请用「应用密码」。加密密码仅存本机，丢失将无法解密云端备份。首次连接新服务器需在脚本权限弹窗中放行一次。</p>
+                        <div class="emh-webdav-close">
+                            <button type="button" class="btn btn-outline" onClick=${onClose}>关闭</button>
                         </div>
                     </div>
                 </div>
@@ -2800,6 +3457,8 @@
                 closeDetail: () => PanelStore.set({ detail: null }),
                 toggleTheme: () => { THEME.set(THEME.next()); PanelStore.set({}); },
                 toggleHelp: () => PanelStore.set({ helpOpen: !PanelStore.state.helpOpen }),
+                openWebdav: () => PanelStore.set({ menuOpen: false, webdavOpen: true }),
+                closeWebdav: () => PanelStore.set({ webdavOpen: false }),
                 toggleMenu: () => {
                     // 打开时计算一次缓存统计并存入 state，避免菜单打开期间每次渲染全量扫描
                     const opening = !PanelStore.state.menuOpen;
@@ -2876,6 +3535,7 @@
                 const key = e.key;
                 if (key === 'Escape') {
                     if (st.menuOpen) { e.preventDefault(); actions.toggleMenu(); return; }
+                    if (st.webdavOpen) { e.preventDefault(); actions.closeWebdav(); return; }
                     if (st.helpOpen) { e.preventDefault(); actions.toggleHelp(); return; }
                     if (st.prompt) { e.preventDefault(); actions.cancelPrompt(); return; }
                     if (st.confirm) { e.preventDefault(); actions.cancelConfirm(); return; }
@@ -2887,7 +3547,7 @@
                 const ae = document.activeElement;
                 if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
                 if (key === '?') { e.preventDefault(); actions.toggleHelp(); return; }
-                if (st.helpOpen || st.menuOpen || st.prompt || st.confirm || st.magnetSearch || st.batchProgress) return;
+                if (st.helpOpen || st.menuOpen || st.webdavOpen || st.prompt || st.confirm || st.magnetSearch || st.batchProgress) return;
                 if (st.detail) {
                     if (key === 'r' || key === 'R') { e.preventDefault(); actions.kbdRefreshPreview(); }
                     return;
@@ -3164,7 +3824,8 @@
                             <${MagnetListModal} magnetSearch=${st.magnetSearch} onPick=${actions.fetchMagnetDetail} onClose=${actions.closeMagnetSearch} />
                             <${BatchProgressModal} progress=${st.batchProgress} />
                             ${st.helpOpen ? html`<${HelpModal} onClose=${actions.toggleHelp} />` : ''}
-                            ${st.menuOpen ? html`<${HeaderMenu} onClose=${actions.toggleMenu} onClear=${actions.clearPreviewCaches} onOpenStandalone=${window.__EMH_STANDALONE ? null : actions.openStandalone} stats=${st.menuStats} />` : ''}
+                            ${st.menuOpen ? html`<${HeaderMenu} onClose=${actions.toggleMenu} onClear=${actions.clearPreviewCaches} onOpenStandalone=${window.__EMH_STANDALONE ? null : actions.openStandalone} onOpenWebdav=${actions.openWebdav} stats=${st.menuStats} />` : ''}
+                            ${st.webdavOpen ? html`<${WebdavModal} onClose=${actions.closeWebdav} />` : ''}
                             ${st.detail ? (() => {
                                 const detailItem = CODE_LIBRARY.getItem(st.detail) || (trashList.find(i => i.code.toUpperCase() === st.detail.toUpperCase())) || null;
                                 const detailInTrash = detailItem ? trashList.some(i => i.code.toUpperCase() === detailItem.code.toUpperCase()) : false;
@@ -3225,12 +3886,12 @@
             },
 
             togglePanel: function() {
-                PanelStore.state.visible ? PanelStore.set({ visible: false, multiSelectMode: false, selectedItems: [], helpOpen: false }) : PanelStore.set({ visible: true });
+                PanelStore.state.visible ? PanelStore.set({ visible: false, multiSelectMode: false, selectedItems: [], helpOpen: false, webdavOpen: false }) : PanelStore.set({ visible: true });
             },
 
             showPanel: function() { PanelStore.set({ visible: true }); },
 
-            hidePanel: function() { PanelStore.set({ visible: false, multiSelectMode: false, selectedItems: [], helpOpen: false }); },
+            hidePanel: function() { PanelStore.set({ visible: false, multiSelectMode: false, selectedItems: [], helpOpen: false, webdavOpen: false }); },
 
             refreshPanelContent: function() { PanelStore.refresh(); },
 
@@ -3495,6 +4156,68 @@
                         white-space: nowrap; flex-shrink: 0;
                     }
                     .emh-help-desc { color: var(--emh-text-secondary); }
+                    .emh-webdav-modal-content { max-width: 460px; text-align: left; max-height: 84vh; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--emh-border-strong) transparent; }
+                    .emh-webdav-modal-content::-webkit-scrollbar { width: 6px; }
+                    .emh-webdav-modal-content::-webkit-scrollbar-thumb { background: var(--emh-border-strong); border-radius: 3px; }
+                    .emh-webdav-desc { font-size: 12px; color: var(--emh-text-secondary); line-height: 1.6; margin: -8px 0 12px; }
+                    .emh-webdav-saved {
+                        margin: 0 0 4px; padding: 6px 10px; border-radius: var(--emh-radius-sm);
+                        background: var(--emh-primary-soft); color: var(--emh-primary);
+                        font-size: 11px; line-height: 1.5; word-break: break-all;
+                    }
+                    .emh-webdav-section {
+                        margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--emh-border);
+                        display: flex; flex-direction: column; gap: 10px;
+                    }
+                    .emh-webdav-section-title { font-size: 11px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; color: var(--emh-text-muted); }
+                    .emh-webdav-jav {
+                        display: flex; align-items: center; gap: 10px;
+                        padding: 8px 10px; border: 1px solid var(--emh-border);
+                        border-radius: var(--emh-radius-sm); background: var(--emh-bg);
+                    }
+                    .emh-webdav-jav-desc { flex: 1; min-width: 0; font-size: 11px; color: var(--emh-text-secondary); line-height: 1.5; word-break: break-all; }
+                    .emh-webdav-jav-btn { margin-left: 0; min-height: 30px; flex-shrink: 0; }
+                    .emh-webdav-jav-empty { font-size: 11px; color: var(--emh-text-muted); padding: 6px 2px; }
+                    .emh-webdav-section > label:not(.emh-webdav-check), .emh-webdav-grid label {
+                        display: flex; flex-direction: column; gap: 5px;
+                        font-size: 12px; font-weight: 600; color: var(--emh-text);
+                    }
+                    .emh-webdav-section input:not([type="checkbox"]), .emh-webdav-grid input {
+                        width: 100%; box-sizing: border-box; padding: 8px 10px;
+                        border: 1px solid var(--emh-border); border-radius: var(--emh-radius-sm);
+                        font-size: 13px; outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+                        font-family: inherit; color: var(--emh-text); background: var(--emh-bg);
+                    }
+                    .emh-webdav-section input:not([type="checkbox"]):focus, .emh-webdav-grid input:focus {
+                        border-color: var(--emh-primary); box-shadow: 0 0 0 3px var(--emh-focus-ring); background: var(--emh-surface);
+                    }
+                    .emh-webdav-section input[disabled] { opacity: 0.6; cursor: not-allowed; }
+                    .emh-webdav-file { font-family: var(--emh-font-mono); letter-spacing: 0.2px; }
+                    .emh-webdav-section label.emh-webdav-check {
+                        flex-direction: row; align-items: flex-start; gap: 8px;
+                        font-weight: 400; cursor: pointer; padding: 8px 10px;
+                        border: 1px solid var(--emh-border); border-radius: var(--emh-radius-sm);
+                        background: var(--emh-bg);
+                    }
+                    .emh-webdav-section label.emh-webdav-check input { margin-top: 2px; accent-color: var(--emh-primary); }
+                    .emh-webdav-section label.emh-webdav-check b { font-weight: 600; }
+                    .emh-webdav-section label.emh-webdav-check em {
+                        display: block; font-style: normal; font-size: 11px;
+                        color: var(--emh-text-muted); font-weight: 400; margin-top: 2px; line-height: 1.5;
+                    }
+                    .emh-webdav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+                    .emh-webdav-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+                    .emh-webdav-buttons-secondary { margin-top: 16px; }
+                    .emh-webdav-buttons + .emh-webdav-buttons { margin-top: 8px; }
+                    .emh-webdav-buttons .btn { margin-left: 0; flex: 1 1 auto; justify-content: center; min-height: 36px; }
+                    .emh-webdav-status { margin: 10px 0 0; font-size: 12px; line-height: 1.6; word-break: break-all; min-height: 16px; }
+                    .emh-webdav-status.ok { color: var(--emh-success); }
+                    .emh-webdav-status.err { color: var(--emh-danger); }
+                    .emh-webdav-status.info { color: var(--emh-text-secondary); }
+                    .emh-webdav-hint { margin: 8px 0 0; font-size: 11px; color: var(--emh-text-muted); line-height: 1.6; }
+                    .emh-webdav-close { display: flex; justify-content: center; margin-top: 16px; }
+                    .emh-webdav-close .btn { min-height: 36px; padding: 0 24px; }
+                    @media (max-width: 576px) { .emh-webdav-grid { grid-template-columns: 1fr; } }
                     .emh-selected-count { align-self: center; font-size: 12px; font-weight: 600; color: var(--emh-primary); letter-spacing: 0.2px; white-space: nowrap; }
                     .emh-detail-backdrop {
                         position: absolute; top: 0; left: 0; right: 0; bottom: 0;
@@ -3807,7 +4530,7 @@
         const api = {
             __ready: true,
             name: 'Enhanced_Media_Helper',
-            version: '3.6.5',
+            version: '3.7.2',
             // 添加番号；已存在时返回 { ok:false, exists:true }（不触发内部重复提示）
             addCode: (code, title, remarks) => {
                 const c = String(code == null ? '' : code).trim().toUpperCase();
@@ -3857,6 +4580,36 @@
             },
             getStatus: (code) => CODE_LIBRARY.getStatus(String(code == null ? '' : code).trim().toUpperCase()),
             getAll: () => CODE_LIBRARY.getAll().map(it => JSON.parse(JSON.stringify(it))),
+            // 导出/导入番号库（v3.7.0+；WebDAV 外部调用配套，导入清洗由 importData 执行）
+            exportData: (filter) => {
+                const f = ['all', 'favorite', 'watched', 'unmarked', 'trash'].includes(filter) ? filter : 'all';
+                return CODE_LIBRARY.exportData(f);
+            },
+            importData: (data, mode) => {
+                if (!data || typeof data !== 'object' || !Array.isArray(data.items)) {
+                    return { success: false, message: '数据格式不正确（缺少 items 数组）' };
+                }
+                return CODE_LIBRARY.importData(data, mode === 'replace' ? 'replace' : 'merge');
+            },
+            // ===== WebDAV 云端备份（v3.7.0+） =====
+            // 设置读取仅回传是否存在密码/加密密码的布尔位，明文密码不出脚本存储
+            getWebdavOpts: () => {
+                if (!WEBDAV) return { url: '', user: '', file: '', encrypt: false, hasPass: false, hasSecret: false };
+                const o = WEBDAV.load();
+                return { url: o.url, user: o.user, file: o.file, encrypt: o.encrypt, hasPass: !!o.pass, hasSecret: !!o.secret };
+            },
+            saveWebdavOpts: (partial) => {
+                if (!WEBDAV) return null;
+                const o = WEBDAV.save(partial || {});
+                return { url: o.url, file: o.file, encrypt: o.encrypt };
+            },
+            // 测试连接：resolve {ok,status,url,mode,exists?} / reject Error（均为 Promise）
+            webdavTest: (opts) => WEBDAV ? WEBDAV.testConnection(opts || WEBDAV.load()) : Promise.reject(new Error('WebDAV 组件未加载')),
+            // 上传：resolve {url,bytes,encrypted} / reject Error（均为 Promise）
+            webdavUpload: (opts) => WEBDAV ? WEBDAV.uploadLibrary(opts || WEBDAV.load()) : Promise.reject(new Error('WebDAV 组件未加载')),
+            // 下载：resolve {text,encrypted,url,data,items} / reject Error（均为 Promise）；
+            // 恢复需调用方自行 importData(data, 'merge'|'replace')
+            webdavDownload: (opts) => WEBDAV ? WEBDAV.downloadLibrary(opts || WEBDAV.load()) : Promise.reject(new Error('WebDAV 组件未加载')),
             openPanel: () => {
                 try { if (window.CodeManagerPanel && window.CodeManagerPanel.showPanel) window.CodeManagerPanel.showPanel(); } catch (e) {}
             },
