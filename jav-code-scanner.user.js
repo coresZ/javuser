@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         通用番号扫描 & 多源搜索
 // @namespace    http://tampermonkey.net/
-// @version      1.5.71
+// @version      1.5.72
 // @description  扫描页面番号、多源搜索；字幕/原名下载；页面高亮可配置；新标签/本页预览；iframe 白名单；CBox 轻量高亮；DMM CID；快捷键/主题；全站备份(WebDAV可加密)；window.JavCodeKit
 // @author       You
 // @include      *://*jav*/*
@@ -57,8 +57,8 @@
     if (_pageWin.JavCodeKit && _pageWin.JavCodeKit.__ready) return;
 
     const NS = 'jcs';
-    const STYLE_VER = '1.5.71';
-    const SCRIPT_VER = '1.5.71';
+    const STYLE_VER = '1.5.72';
+    const SCRIPT_VER = '1.5.72';
     const IS_CBOX = /(^|\.)cbox\.ws$/i.test(location.hostname || '');
     const CBOX_MSG_SOURCE = 'jcs-cbox';
     const ENC_MARK = 'jcs-aes-gcm-v1';
@@ -7639,6 +7639,87 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         }));
     }
 
+    /** 第 2 级：页面主 world fetch（真实浏览器上下文：cookie/TLS/UA 全齐；需站点 CORS 放行，失败无副作用） */
+    function fetchSearchHtmlViaPage(url, provider) {
+        return new Promise((resolve) => {
+            try {
+                const pw = _pageWin;
+                if (!pw || typeof pw.fetch !== 'function') { resolve({ ok: false }); return; }
+                let referer = 'https://javdb.com/';
+                try {
+                    const pUrl = String((provider && provider.url) || url || '');
+                    const m = pUrl.match(/^(https?:\/\/[^\/?#]+)/i);
+                    if (m) referer = m[1] + '/';
+                } catch (e) { /* ignore */ }
+                const ctrl = new AbortController();
+                const timer = setTimeout(() => ctrl.abort(), 20000);
+                pw.fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                        'Accept-Language': (typeof navigator !== 'undefined' && navigator.language ? navigator.language : 'zh-CN') + ',zh;q=0.9,en;q=0.8',
+                        'Referer': referer
+                    },
+                    credentials: 'include',
+                    signal: ctrl.signal
+                }).then((r) => {
+                    clearTimeout(timer);
+                    if (!r.ok) { resolve({ ok: false }); return; }
+                    r.text().then((html) => resolve({
+                        ok: true,
+                        result: {
+                            html: html || '',
+                            responseUrl: String(r.url || url),
+                            status: typeof r.status === 'number' ? r.status : 200,
+                            statusText: '',
+                            responseHeaders: ''
+                        }
+                    })).catch(() => resolve({ ok: false }));
+                }).catch(() => { clearTimeout(timer); resolve({ ok: false }); });
+            } catch (e) { resolve({ ok: false }); }
+        });
+    }
+
+    /** 第 3 级：CORS 代理链（复用 fetchTextViaProxies：直连 → allorigins → corsproxy） */
+    function fetchSearchHtmlViaProxy(url, provider) {
+        return fetchTextViaProxies(url).then((html) => ({
+            ok: true,
+            result: {
+                html: String(html || ''),
+                responseUrl: url,
+                status: 200,
+                statusText: '',
+                responseHeaders: ''
+            }
+        })).catch(() => ({ ok: false }));
+    }
+
+    /**
+     * 多级抓取搜索 HTML：GM 直连（带 UA/Referer/cookiePartition）→ 页面 fetch（浏览器上下文）→ 代理链。
+     * 非 2xx（403/429/503 等）自动逐级降级；全部失败才返回原始响应（调用方据此走外链兜底）。
+     */
+    function fetchSearchHtmlRobust(url, provider) {
+        return fetchSearchHtml(url, provider).then((result) => {
+            const st = result && typeof result.status === 'number' ? result.status : 0;
+            if ((!st || (st >= 200 && st < 300)) && !detectCloudflareChallenge(
+                String(result.html || ''),
+                null,
+                String(result.responseUrl || url),
+                String(result.responseHeaders || '')
+            )) {
+                return result;
+            }
+            // 2xx 但页面带 CF challenge 标记、或非 2xx：逐级降级
+            return fetchSearchHtmlViaPage(url, provider).then((r2) => {
+                if (r2.ok) return r2.result;
+                return fetchSearchHtmlViaProxy(url, provider).then((r3) => {
+                    if (r3.ok) return r3.result;
+                    return result; // 全部失败：返回原始结果，交给调用方现有 fallback
+                });
+            });
+        });
+    }
+
     /** 仅识别明确的 Cloudflare challenge 标志，不把普通 Cloudflare 页面文案当作挑战页 */
     function detectCloudflareChallenge(html, doc, url, responseHeaders) {
         const raw = String(html || '');
@@ -7794,7 +7875,8 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             fetchBox.hidden = false;
             fetchBox.innerHTML = '<div class="jcs-fetch-loading">正在请求 ' + escapeHtml(provider.name) + '，请稍候…</div>';
         }
-        fetchSearchHtml(url, provider).then((result) => {
+        // 多级抓取：GM 直连 → 页面 fetch → 代理链；403/CF 自动降级，全部失败才外链兜底
+        fetchSearchHtmlRobust(url, provider).then((result) => {
             if (gen !== fetchGen) return; // 已切源/重搜，丢弃过期结果
             renderFetchResults(result, code, provider);
         }).catch((e) => {

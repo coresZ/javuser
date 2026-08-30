@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           Enhanced_Media_Helper
-// @version        3.7.2
+// @version        3.7.3
 // @description    Code Manager Panel with javgg site support (Preact + htm) + magnet screenshot preview + Linear UI
 // @author         cores
 // @match          https://javgg.net/tag/to-be-release/*
@@ -52,6 +52,9 @@
 // @connect        1cili.com
 // @connect        whatslink.info
 // @connect        avwikidb.com
+// @connect        corsproxy.io
+// @connect        api.allorigins.win
+// @connect        corsproxy.org
 // @connect        *
 // @run-at         document-start
 // @noframes
@@ -1619,6 +1622,109 @@
             return this.BASE + encodeURIComponent(String(code || '').trim().toUpperCase()) + '/';
         },
 
+        // 浏览器特征请求头（CF/反爬检测友好；原实现只带单个 Accept 易被 403）
+        _browserHeaders: function() {
+            const h = {
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': (typeof navigator !== 'undefined' && navigator.language ? navigator.language : 'zh-CN') + ',zh;q=0.9,en;q=0.8',
+                'Referer': 'https://avwikidb.com/',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache'
+            };
+            try { h['User-Agent'] = navigator.userAgent; } catch (e) {}
+            return h;
+        },
+
+        // 第 1 级：GM 直连（补浏览器头 + 传当前页面 cookie，尽力贴近浏览器访问）
+        _gmFetch: function(url) {
+            return new Promise((resolve) => {
+                let cookie = '';
+                try { cookie = document.cookie || ''; } catch (e) {}
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: url,
+                    timeout: this.TIMEOUT,
+                    headers: this._browserHeaders(),
+                    cookie: cookie,
+                    onload: (res) => {
+                        const status = res && typeof res.status === 'number' ? res.status : 0;
+                        if (status < 200 || status >= 300) resolve({ ok: false, status: status, error: 'HTTP ' + status });
+                        else resolve({ ok: true, status: status, html: (res && res.responseText) || '' });
+                    },
+                    onerror: () => resolve({ ok: false, status: 0, error: '网络请求失败' }),
+                    ontimeout: () => resolve({ ok: false, status: 0, error: '请求超时' })
+                });
+            });
+        },
+
+        // 第 2 级：页面主 world fetch（真实浏览器上下文：cookie/TLS/UA 全齐；需站点 CORS 放行，失败无副作用）
+        _pwFetch: function(url) {
+            return new Promise((resolve) => {
+                try {
+                    const pw = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
+                    if (!pw || typeof pw.fetch !== 'function') {
+                        resolve({ ok: false, status: 0, error: '页面 fetch 不可用' });
+                        return;
+                    }
+                    const ctrl = new AbortController();
+                    const timer = setTimeout(() => ctrl.abort(), this.TIMEOUT);
+                    pw.fetch(url, {
+                        method: 'GET',
+                        headers: this._browserHeaders(),
+                        credentials: 'include',
+                        signal: ctrl.signal
+                    }).then((r) => {
+                        clearTimeout(timer);
+                        if (!r.ok) {
+                            resolve({ ok: false, status: r.status, error: 'HTTP ' + r.status });
+                            return;
+                        }
+                        r.text().then((html) => resolve({ ok: true, status: r.status, html: html }))
+                            .catch(() => resolve({ ok: false, status: r.status, error: '读取失败' }));
+                    }).catch(() => {
+                        clearTimeout(timer);
+                        resolve({ ok: false, status: 0, error: '页面 fetch 失败' });
+                    });
+                } catch (e) {
+                    resolve({ ok: false, status: 0, error: '页面 fetch 异常' });
+                }
+            });
+        },
+
+        // 第 3 级：CORS 代理链（部分反爬站对代理出口放行）
+        _proxyFetch: function(code) {
+            const url = this.codeUrl(code);
+            const proxies = [
+                (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
+                (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+                (u) => 'https://corsproxy.org/?' + encodeURIComponent(u)
+            ];
+            const self = this;
+            const tryChain = (i) => {
+                if (i >= proxies.length) {
+                    return Promise.resolve({ ok: false, status: 0, error: '代理链全部失败' });
+                }
+                return self._gmFetch(proxies[i](url)).then((r) => {
+                    if (r.ok) return r;
+                    return tryChain(i + 1);
+                });
+            };
+            return tryChain(0);
+        },
+
+        // 多级抓取 work 页 HTML：GM 直连 → 页面 fetch → 代理链。返回 {ok, status, html, error}
+        fetchHtml: function(code) {
+            const self = this;
+            return this._gmFetch(this.codeUrl(code)).then((r) => {
+                if (r.ok) return r;
+                // 403/网络失败：依次尝试浏览器上下文与代理链
+                return self._pwFetch(self.codeUrl(code)).then((r2) => {
+                    if (r2.ok) return r2;
+                    return self._proxyFetch(code);
+                });
+            });
+        },
+
         // 从 avwikidb work 页 HTML 提取宫格截图：优先 dmm 的 {cid}jp-N 场景图（#gallery），
         // 找不到时回退页内其它 jp/ps/pl 作品图；排除 logo/avatar/icon 等静态资源
         parseHtml: function(html) {
@@ -1712,53 +1818,39 @@
             const p = new Promise((resolve) => {
                 // 仅"最新且未被作废"的请求才缓存/提示，避免旧请求的结果污染新请求
                 const isLatest = () => !entry.superseded && this._inflight[itemCode] === entry && entry.latestSeq === this._requestSeq;
-                GM_xmlhttpRequest({
-                    method: 'GET',
-                    url: this.codeUrl(itemCode),
-                    timeout: this.TIMEOUT,
-                    headers: { 'Accept': 'text/html,application/xhtml+xml' },
-                    onload: (res) => {
-                        const status = res && typeof res.status === 'number' ? res.status : 0;
-                        const html = (res && res.responseText) || '';
-                        if (status < 200 || status >= 300) {
-                            const err = 'AVWikiDB 请求失败：HTTP ' + status;
-                            if (isLatest()) { failCache(err); UTILS.showToast(err, 'error'); }
-                            resolve({ error: err, preview: null });
-                            return;
-                        }
-                        const urls = this.parseHtml(html);
-                        if (!urls.length) {
-                            const err = 'AVWikiDB 未收录该番号或页面无宫格截图';
-                            if (isLatest()) { failCache(err); UTILS.showToast(err, 'warning'); }
-                            resolve({ error: err, preview: null });
-                            return;
-                        }
-                        const name = this.parseTitle(html);
-                        const preview = CODE_LIBRARY.sanitizeMagnetPreview({
-                            name: name || itemCode,
-                            type: 'AVWikiDB',
-                            screenshots: urls,
-                            fetchedAt: new Date().toISOString(),
-                            error: ''
-                        });
-                        if (isLatest()) {
-                            cache[itemCode] = preview;
-                            this._saveCache(cache);
-                            MAGNET_PREVIEW.open(urls, 0, [preview.name, 'AVWikiDB'].filter(Boolean).join(' · '));
-                            UTILS.showToast('已获取 AVWikiDB 截图 ' + urls.length + ' 张', 'success');
-                        }
-                        resolve({ error: '', preview });
-                    },
-                    onerror: () => {
-                        const err = 'AVWikiDB 网络请求失败';
+                // 多级抓取：GM 直连（浏览器特征头+cookie）→ 页面 fetch → 代理链；全程自动，无需用户先访问站点
+                this.fetchHtml(itemCode).then((r) => {
+                    if (!r.ok) {
+                        const err = r.error
+                            ? ('AVWikiDB ' + r.error)
+                            : ('AVWikiDB 请求失败：HTTP ' + r.status);
                         if (isLatest()) { failCache(err); UTILS.showToast(err, 'error'); }
                         resolve({ error: err, preview: null });
-                    },
-                    ontimeout: () => {
-                        const err = 'AVWikiDB 请求超时';
-                        if (isLatest()) { failCache(err); UTILS.showToast(err, 'error'); }
-                        resolve({ error: err, preview: null });
+                        return;
                     }
+                    const html = r.html || '';
+                    const urls = this.parseHtml(html);
+                    if (!urls.length) {
+                        const err = 'AVWikiDB 未收录该番号或页面无宫格截图';
+                        if (isLatest()) { failCache(err); UTILS.showToast(err, 'warning'); }
+                        resolve({ error: err, preview: null });
+                        return;
+                    }
+                    const name = this.parseTitle(html);
+                    const preview = CODE_LIBRARY.sanitizeMagnetPreview({
+                        name: name || itemCode,
+                        type: 'AVWikiDB',
+                        screenshots: urls,
+                        fetchedAt: new Date().toISOString(),
+                        error: ''
+                    });
+                    if (isLatest()) {
+                        cache[itemCode] = preview;
+                        this._saveCache(cache);
+                        MAGNET_PREVIEW.open(urls, 0, [preview.name, 'AVWikiDB'].filter(Boolean).join(' · '));
+                        UTILS.showToast('已获取 AVWikiDB 截图 ' + urls.length + ' 张', 'success');
+                    }
+                    resolve({ error: '', preview });
                 });
             });
             entry.p = p;
@@ -4530,7 +4622,7 @@
         const api = {
             __ready: true,
             name: 'Enhanced_Media_Helper',
-            version: '3.7.2',
+            version: '3.7.3',
             // 添加番号；已存在时返回 { ok:false, exists:true }（不触发内部重复提示）
             addCode: (code, title, remarks) => {
                 const c = String(code == null ? '' : code).trim().toUpperCase();
