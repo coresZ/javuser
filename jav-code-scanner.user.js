@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         通用番号扫描 & 多源搜索
 // @namespace    http://tampermonkey.net/
-// @version      1.5.72
-// @description  扫描页面番号、多源搜索；字幕/原名下载；页面高亮可配置；新标签/本页预览；iframe 白名单；CBox 轻量高亮；DMM CID；快捷键/主题；全站备份(WebDAV可加密)；window.JavCodeKit
+// @version      1.5.76
+// @description  扫描页面番号，多源搜索与页内预览（iframe/GM 自渲染、拒绝自动降级）、字幕/原名下载、页面高亮自定义、番号库协作（Enhanced_Media_Helper）、扩展宿主（第三方油猴库接入）、全站配置备份（WebDAV 可加密）、window.JavCodeKit 开放 API
 // @author       You
 // @include      *://*jav*/*
 // @include      https://btnets.net/*
@@ -57,8 +57,8 @@
     if (_pageWin.JavCodeKit && _pageWin.JavCodeKit.__ready) return;
 
     const NS = 'jcs';
-    const STYLE_VER = '1.5.72';
-    const SCRIPT_VER = '1.5.72';
+    const STYLE_VER = '1.5.76';
+    const SCRIPT_VER = '1.5.76';
     const IS_CBOX = /(^|\.)cbox\.ws$/i.test(location.hostname || '');
     const CBOX_MSG_SOURCE = 'jcs-cbox';
     const ENC_MARK = 'jcs-aes-gcm-v1';
@@ -74,6 +74,8 @@
     const FRAME_ALLOW_KEY = 'jcs_frame_allow_hosts_v1';
     const EXT_MODE_KEY = 'jcs_prefer_ext_hosts_v1';
     const PROVIDER_BLACKLIST_KEY = 'jcs_provider_blacklist_v1';
+    /** 扩展宿主：外部库 URL 列表（形态 B 注入源；扩展能力经 JavCodeKit.extensions 注册） */
+    const JCS_EXT_KEY = 'jcs_extensions_v1';
     const HL_OPT_KEY = 'jcs_hl_opts_v1';
     const SUB_OPT_KEY = 'jcs_sub_filename_v1';
     const SUB_HIST_KEY = 'jcs_sub_hist_v1';
@@ -85,7 +87,7 @@
     /** 脚本级配置键（跨站点共享；优先 GM 存储） */
     const STORE_KEYS = [
         PROVIDERS_KEY, PROVIDER_KEY, HIST_KEY, PANEL_KEY, FAB_POS_KEY, THEME_KEY,
-        FRAME_BLOCK_KEY, FRAME_ALLOW_KEY, EXT_MODE_KEY, PROVIDER_BLACKLIST_KEY, HL_OPT_KEY, SUB_OPT_KEY, SUB_HIST_KEY,
+        FRAME_BLOCK_KEY, FRAME_ALLOW_KEY, EXT_MODE_KEY, PROVIDER_BLACKLIST_KEY, JCS_EXT_KEY, HL_OPT_KEY, SUB_OPT_KEY, SUB_HIST_KEY,
         SITES_KEY, WEBDAV_KEY
     ];
 
@@ -480,6 +482,267 @@
         const p = String(pattern || '').toLowerCase().replace(/^\*\./, '').replace(/^\./, '');
         if (!h || !p) return false;
         return h === p || h.endsWith('.' + p);
+    }
+
+    // ─── 扩展宿主（Extension Contract v1，规范见 docs/jav-code-scanner/jcs-extension-contract.md）───
+    // 三类扩展点：actions（番号操作按钮）/ styles（全站样式）/ mounts（页面 DOM 挂载）
+    // 注册入口：JavCodeKit.extensions.register(manifest)；形态 B 的 URL 列表存 JCS_EXT_KEY
+    const EXT_LIMITS = { id: 64, name: 40, version: 20, act: 32, title: 20, icon: 2048 };
+    const EXT_DEFAULT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3.2"/></svg>';
+    const _extReg = new Map();      // id → { id, name, version, enabled, source, actions:[], styles:[], mounts:[] }（validateExtensionManifest 返回形状）
+    const _extCleanups = new Map(); // id → [fn]（逆序执行的卸载回调）
+    const _extSpaBound = { on: false, t: null };
+
+    function loadExtensionSources() {
+        const list = storeGetJson(JCS_EXT_KEY, []);
+        return Array.isArray(list) ? list.filter((it) => it && typeof it.url === 'string' && it.url) : [];
+    }
+
+    function saveExtensionSources(list) {
+        const clean = (Array.isArray(list) ? list : [])
+            .filter((it) => it && typeof it.url === 'string' && /^https?:\/\//i.test(it.url))
+            .slice(0, 20);
+        if (clean.length) storeSetJson(JCS_EXT_KEY, clean);
+        else storeRemove(JCS_EXT_KEY);
+        return clean;
+    }
+
+    /** 解析油猴元数据头 @name/@version（无元数据返回 null；只扫前 8KB） */
+    function parseExtensionScriptMeta(text) {
+        const head = String(text || '').slice(0, 8192);
+        const block = head.match(/\/\/ ==UserScript==([\s\S]*?)(?:\/\/ ==\/UserScript==|$)/i);
+        if (!block) return null;
+        const nameM = block[1].match(/@name\s+([^\n\r]+)/i);
+        if (!nameM) return null;
+        const name = nameM[1].trim().replace(/\s+/g, ' ').slice(0, 60);
+        if (!name) return null;
+        const verM = block[1].match(/@version\s+([^\n\r]+)/i);
+        return { name: name, version: verM ? verM[1].trim().slice(0, 20) : '' };
+    }
+
+    /** 添加前拉取一次脚本头，取 @name 作为列表显示名（失败回退主机名，不阻塞添加） */
+    function fetchExtensionMeta(url) {
+        return gmRequest({
+            url: url,
+            timeout: 15000,
+            headers: { 'Accept': 'text/javascript, */*' }
+        }).then((res) => parseExtensionScriptMeta(res && res.responseText));
+    }
+
+    /** match 数组命中当前站（契约 §6：缺省=全站；元素为 host glob，复用 hostMatchesPattern） */
+    function extMatchHit(match) {
+        if (match == null) return true;
+        const arr = Array.isArray(match) ? match : [match];
+        if (!arr.length) return true;
+        const host = location.hostname || '';
+        return arr.some((p) => hostMatchesPattern(host, p));
+    }
+
+    /** manifest 校验（契约 §4），不合格抛 Error */
+    function validateExtensionManifest(m) {
+        if (!m || typeof m !== 'object' || Array.isArray(m)) throw new Error('manifest 必须为对象');
+        const id = String(m.id || '').trim();
+        if (!id || id.length > EXT_LIMITS.id || !/^[a-z0-9][a-z0-9-]*$/i.test(id)) throw new Error('id 非法（kebab-case，≤' + EXT_LIMITS.id + ' 字符）');
+        const name = String(m.name || '').trim();
+        if (!name || name.length > EXT_LIMITS.name) throw new Error('name 非法（≤' + EXT_LIMITS.name + ' 字符）');
+        const ver = String(m.version || '').trim();
+        if (!ver || ver.length > EXT_LIMITS.version) throw new Error('version 非法（≤' + EXT_LIMITS.version + ' 字符）');
+        const acts = Array.isArray(m.actions) ? m.actions : [];
+        const actsSeen = new Set();
+        acts.forEach((a) => {
+            const act = String(a && a.act || '').trim();
+            if (!act || act.length > EXT_LIMITS.act) throw new Error('actions[].act 非法（≤' + EXT_LIMITS.act + ' 字符）');
+            if (actsSeen.has(act)) throw new Error('actions[].act 重复：' + act);
+            actsSeen.add(act);
+            const title = String(a && a.title || '').trim();
+            if (!title || title.length > EXT_LIMITS.title) throw new Error('actions[].title 非法（≤' + EXT_LIMITS.title + ' 字符）');
+            if (typeof a.onClick !== 'function') throw new Error('actions[].onClick 必须为函数');
+            if (a.icon != null && (typeof a.icon !== 'string' || !a.icon.includes('<svg') || a.icon.length > EXT_LIMITS.icon)) throw new Error('actions[].icon 非法（需含 <svg，≤' + EXT_LIMITS.icon + ' 字符）');
+        });
+        (Array.isArray(m.styles) ? m.styles : []).forEach((s) => {
+            if (!s || typeof s.css !== 'string' || !s.css.trim()) throw new Error('styles[].css 非法');
+        });
+        (Array.isArray(m.mounts) ? m.mounts : []).forEach((mn) => {
+            if (!mn || typeof mn.mount !== 'function') throw new Error('mounts[].mount 必须为函数');
+            if (!mn.match) throw new Error('mounts[].match 必填（禁止全站扫描，契约 §6）');
+        });
+        return {
+            id: id,
+            name: name,
+            version: ver,
+            actions: acts.map((a) => ({ act: String(a.act).trim(), title: String(a.title).trim(), icon: typeof a.icon === 'string' ? a.icon : '', onClick: a.onClick })),
+            styles: (Array.isArray(m.styles) ? m.styles : []).map((s) => ({ css: String(s.css), match: s.match == null ? null : s.match })),
+            mounts: (Array.isArray(m.mounts) ? m.mounts : []).map((mn) => ({ match: mn.match, mount: mn.mount, unmount: typeof mn.unmount === 'function' ? mn.unmount : null }))
+        };
+    }
+
+    function extCtx(code) {
+        const fns = [];
+        return {
+            code: code || '',
+            getCode: () => String(state.active || code || '').trim().toUpperCase(),
+            showToast: (msg, type) => showToast(String(msg == null ? '' : msg), type || 'info'),
+            onCleanup: (fn) => { if (typeof fn === 'function') fns.push(fn); },
+            _cleanupFns: fns
+        };
+    }
+
+    /** 激活一个扩展实例：styles 注入 + mounts 挂载（match 过滤），登记 cleanup */
+    function activateExtensionInstance(rec) {
+        const cleanups = _extCleanups.get(rec.id) || [];
+        rec.styles.forEach((s, i) => {
+            if (!extMatchHit(s.match)) return;
+            const el = document.createElement('style');
+            el.id = NS + '-ext-style-' + rec.id + '-' + i;
+            el.textContent = s.css;
+            (document.head || document.documentElement).appendChild(el);
+            cleanups.push(() => { try { el.remove(); } catch (e) {} });
+        });
+        rec.mounts.forEach((mn) => {
+            if (!extMatchHit(mn.match)) return;
+            const ctx = extCtx('');
+            try { mn.mount(ctx); } catch (e) { console.error('[JCS ext] mount 失败：' + rec.id, e); }
+            cleanups.push(() => {
+                try { if (mn.unmount) mn.unmount(ctx); } catch (e) { console.error('[JCS ext] unmount 失败：' + rec.id, e); }
+                (ctx._cleanupFns || []).slice().reverse().forEach((fn) => { try { fn(); } catch (e) {} });
+            });
+        });
+        _extCleanups.set(rec.id, cleanups);
+    }
+
+    /** 卸载：逆序执行全部 cleanup（契约 §7） */
+    function deactivateExtensionInstance(id) {
+        const cleanups = _extCleanups.get(id);
+        if (!cleanups) return;
+        cleanups.slice().reverse().forEach((fn) => { try { fn(); } catch (e) {} });
+        _extCleanups.delete(id);
+    }
+
+    /** 注册（同 id 覆盖旧版：先 cleanup 旧实例再激活新实例；契约 §4/§7） */
+    function registerExtension(manifest, source) {
+        const rec = validateExtensionManifest(manifest);
+        const prev = _extReg.get(rec.id);
+        if (prev) deactivateExtensionInstance(rec.id);
+        rec.enabled = prev ? prev.enabled : true;
+        // 库脚本（形态 B）注册时无法传 source：宿主按「当前注入中的 URL」自动归属
+        rec.source = String(source || (prev && prev.source) || _extInjectingUrl || 'script');
+        _extReg.set(rec.id, rec);
+        if (rec.enabled) activateExtensionInstance(rec);
+        // 形态 B：URL 注入的扩展回填列表名称/ID
+        if (rec.source && /^https?:\/\//i.test(rec.source)) {
+            const list = loadExtensionSources();
+            const it = list.find((x) => x.url === rec.source);
+            if (it && (it.id !== rec.id || it.name !== rec.name || it.lastStatus !== 'ok')) {
+                it.id = rec.id; it.name = rec.name; it.lastStatus = 'ok'; it.lastLoadAt = new Date().toISOString();
+                saveExtensionSources(list);
+                renderExtensionsTab();
+            }
+        }
+        showToast('已接入扩展：' + rec.name, 'success');
+        ensureCodeActions(true);
+        renderExtensionsTab();
+        return rec;
+    }
+
+    function unregisterExtension(id) {
+        const rec = _extReg.get(id);
+        if (!rec) return false;
+        deactivateExtensionInstance(id);
+        _extReg.delete(id);
+        ensureCodeActions(true);
+        renderExtensionsTab();
+        return true;
+    }
+
+    function isExtensionEnabled(id) {
+        const rec = _extReg.get(id);
+        return !!(rec && rec.enabled);
+    }
+
+    /** 扩展开关（会话级；页面刷新后 URL 注入/油猴注册即恢复启用） */
+    function setExtensionEnabled(id, on) {
+        const rec = _extReg.get(id);
+        if (!rec) return false;
+        const next = !!on;
+        if (rec.enabled === next) return true;
+        rec.enabled = next;
+        if (next) activateExtensionInstance(rec);
+        else deactivateExtensionInstance(id);
+        ensureCodeActions(true);
+        renderExtensionsTab();
+        return true;
+    }
+
+    /** SPA 导航：mounts 重放 unmount→mount（契约 §7；600ms 防抖） */
+    function bindExtSpaHook() {
+        if (_extSpaBound.on) return;
+        _extSpaBound.on = true;
+        const replay = () => {
+            clearTimeout(_extSpaBound.t);
+            _extSpaBound.t = setTimeout(() => {
+                Array.from(_extReg.values()).forEach((rec) => {
+                    if (!rec.enabled || !rec.mounts.length) return;
+                    deactivateExtensionInstance(rec.id);
+                    activateExtensionInstance(rec);
+                });
+            }, 600);
+        };
+        try {
+            ['pushState', 'replaceState'].forEach((k) => {
+                const orig = history[k];
+                if (typeof orig !== 'function') return;
+                history[k] = function () {
+                    const r = orig.apply(this, arguments);
+                    replay();
+                    return r;
+                };
+            });
+            window.addEventListener('popstate', replay);
+        } catch (e) { /* ignore */ }
+    }
+
+    /** 形态 B：按启用列表串行注入 <script src>（页面 world；boot 末尾调用） */
+    // 串行注入期间记录「当前加载中的 URL」：register 时无法传 source 的库脚本由宿主按注入序归属
+    let _extInjectingUrl = '';
+    function injectExtensionScripts() {
+        const list = loadExtensionSources();
+        const enabled = list.filter((it) => it.enabled !== false);
+        if (!enabled.length) return;
+        let i = 0;
+        const next = () => {
+            if (i >= enabled.length) {
+                _extInjectingUrl = '';
+                return;
+            }
+            const it = enabled[i++];
+            _extInjectingUrl = it.url;
+            const el = document.createElement('script');
+            el.src = it.url;
+            el.async = false;
+            el.dataset.jcsExt = it.id || '';
+            el.onload = () => {
+                // 加载成功：清掉历史失败标记 + 记录时间（注册成功与否由扩展调用 register 决定）
+                const patch = { lastStatus: 'ok', lastLoadAt: new Date().toISOString() };
+                saveExtensionSources(loadExtensionSources().map((x) => x.url === it.url ? Object.assign(x, patch) : x));
+                next();
+            };
+            el.onerror = () => {
+                it.lastStatus = 'load-failed';
+                saveExtensionSources(loadExtensionSources().map((x) => x.url === it.url ? Object.assign(x, { lastStatus: 'load-failed' }) : x));
+                showToast('扩展脚本加载失败：' + (it.name || it.url), 'error');
+                renderExtensionsTab();
+                next();
+            };
+            (document.head || document.documentElement).appendChild(el);
+        };
+        next();
+    }
+
+    /** kit 挂载后双 dispatch 握手事件（契约 §3 形态 A） */
+    function dispatchKitReady() {
+        const fire = (w) => { try { w.dispatchEvent(new CustomEvent('jcs:kit-ready')); } catch (e) {} };
+        fire(window);
+        if (_pageWin && _pageWin !== window) fire(_pageWin);
     }
 
     function providerHostname(providerOrUrl) {
@@ -990,6 +1253,17 @@
                 mainHtml += btn;
             }
         });
+        // 扩展按钮（契约 v1 actions 插槽；受扩展自身 enabled 控制，沿用内置按钮外观）
+        if (typeof _extReg !== 'undefined') {
+            Array.from(_extReg.values()).forEach((rec) => {
+                if (!rec.enabled) return;
+                rec.actions.forEach((a) => {
+                    const btn = '<button type="button" class="jcs-act-btn" data-act="ext:' + escapeHtml(rec.id) + ':' + escapeHtml(a.act) +
+                        '" title="' + escapeHtml(rec.name + ' · ' + a.title) + '">' + (a.icon || EXT_DEFAULT_ICON) + '</button>';
+                    mainHtml += btn;
+                });
+            });
+        }
         let html = mainHtml;
         if (hasFold) {
             html += '<button type="button" class="jcs-act-btn is-more" data-act="more" title="更多操作" aria-haspopup="true">⋯</button>' +
@@ -1083,8 +1357,48 @@
                 } catch (err) {
                     showToast('截图预览失败');
                 }
+                return;
+            }
+            // 扩展按钮路由（data-act="ext:{extId}:{act}"，契约 §5 onClick 返回值约定）
+            if (act.indexOf('ext:') === 0) {
+                const parts = act.split(':');
+                const rec = _extReg.get(parts[1]);
+                const a = rec ? rec.actions.find((x) => x.act === parts.slice(2).join(':')) : null;
+                if (!rec || !rec.enabled || !a) return;
+                const run = () => {
+                    let ret;
+                    try { ret = a.onClick(code, extCtx(code)); } catch (err) {
+                        console.error('[JCS ext] onClick 失败：' + rec.id, err);
+                        showToast('扩展 ' + rec.name + ' 执行失败', 'error');
+                        return;
+                    }
+                    if (ret && typeof ret.then === 'function') {
+                        b.style.opacity = '0.5';
+                        ret.then((rv) => {
+                            b.style.opacity = '';
+                            if (rv === 'done' || (rv && rv.ok)) flashActDone(b, a.icon || EXT_DEFAULT_ICON);
+                        }).catch((err) => {
+                            console.error('[JCS ext] onClick 异步失败：' + rec.id, err);
+                            b.style.opacity = '';
+                            showToast('扩展 ' + rec.name + ' 执行失败', 'error');
+                        });
+                        return;
+                    }
+                    if (ret === 'done' || (ret && ret.ok)) flashActDone(b, a.icon || EXT_DEFAULT_ICON);
+                };
+                run();
             }
         });
+        // 成功反馈：闪 ✓ 900ms 后还原图标（内置 copy 同款）
+        function flashActDone(btn, restoreIcon) {
+            btn.classList.add('is-done');
+            btn.innerHTML = PICK_ICON.check;
+            clearTimeout(btn._jcsT);
+            btn._jcsT = setTimeout(() => {
+                btn.classList.remove('is-done');
+                btn.innerHTML = restoreIcon || PICK_ICON.copy;
+            }, 900);
+        }
         // 点击操作条外部关闭 ⋯ 菜单（document 级只绑一次）
         if (!buildCodeActions._docBound) {
             buildCodeActions._docBound = true;
@@ -4683,14 +4997,35 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
 }
 #${NS}-cfg .jcs-blacklist-form input:focus{border-color:var(--jcs-accent-line);box-shadow:var(--jcs-focus)}
 #${NS}-cfg .jcs-blacklist-list{display:flex;flex-direction:column;gap:7px}
+/* 行结构：[开关] [主列:名称/状态 双行] [按钮组右置] */
 #${NS}-cfg .jcs-blacklist-row{
-  display:flex;align-items:center;gap:8px;min-height:36px;padding:0 10px;border:1px solid var(--jcs-line);
-  border-radius:var(--jcs-radius-sm);background:var(--jcs-surface);font:12px var(--jcs-mono);color:var(--jcs-soft)
+  display:flex;align-items:center;gap:10px;
+  min-height:46px;padding:8px 12px;border:1px solid var(--jcs-line);
+  border-radius:var(--jcs-radius-sm);background:var(--jcs-surface);font:12px var(--jcs-mono);color:var(--jcs-soft);
+  transition:border-color var(--jcs-fast) ease,background var(--jcs-fast) ease
 }
-#${NS}-cfg .jcs-blacklist-row code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#${NS}-cfg .jcs-blacklist-row small{color:var(--jcs-muted);font-size:11px}
-#${NS}-cfg .jcs-blacklist-row button{height:28px;padding:0 8px;border:1px solid var(--jcs-line);border-radius:var(--jcs-radius-xs);background:var(--jcs-fill);color:var(--jcs-muted);cursor:pointer;font:inherit;font-size:11px}
+#${NS}-cfg .jcs-blacklist-row:hover{border-color:var(--jcs-chip-line)}
+#${NS}-cfg .jcs-blacklist-row .jcs-switch{flex-shrink:0}
+#${NS}-cfg .jcs-blacklist-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+#${NS}-cfg .jcs-blacklist-main code{
+  display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-weight:700;color:var(--jcs-text)
+}
+#${NS}-cfg .jcs-blacklist-main small{
+  color:var(--jcs-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap
+}
+#${NS}-cfg .jcs-blacklist-main small.is-ok{color:var(--jcs-ok)}
+#${NS}-cfg .jcs-blacklist-main small.is-bad{color:var(--jcs-danger)}
+#${NS}-cfg .jcs-blacklist-row button{
+  flex-shrink:0;height:26px;padding:0 10px;border:1px solid var(--jcs-line);
+  border-radius:var(--jcs-radius-xs);background:var(--jcs-fill);color:var(--jcs-muted);
+  cursor:pointer;font:inherit;font-size:11px;font-weight:600;
+  transition:color var(--jcs-fast) ease,background var(--jcs-fast) ease,border-color var(--jcs-fast) ease
+}
 #${NS}-cfg .jcs-blacklist-row button:hover{color:var(--jcs-text);background:var(--jcs-fill-hover)}
+#${NS}-cfg .jcs-blacklist-row button.is-danger:hover{color:var(--jcs-danger);background:rgba(244,63,94,.12);border-color:rgba(244,63,94,.35)}
+/* 行内操作按钮组：固定右侧（扩展 tab 复制/删除/卸载） */
+#${NS}-cfg .jcs-row-ops{display:flex;gap:6px;flex-shrink:0;align-items:center}
 /* 站点常把 div{overflow:visible!important}，必须 !important 才能出滚动条 */
 #${NS}-cfg .jcs-cfg-body{
   flex:1 1 auto!important;min-height:0!important;max-height:none!important;height:auto!important;
@@ -6344,6 +6679,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
           <button type="button" class="jcs-cfg-tab" data-tab="highlight" role="tab" aria-selected="false">高亮</button>
           <button type="button" class="jcs-cfg-tab" data-tab="actions" role="tab" aria-selected="false">操作</button>
           <button type="button" class="jcs-cfg-tab" data-tab="sources" role="tab" aria-selected="false">搜索源</button>
+          <button type="button" class="jcs-cfg-tab" data-tab="extensions" role="tab" aria-selected="false">扩展</button>
           <button type="button" class="jcs-cfg-tab" data-tab="backup" role="tab" aria-selected="false">备份</button>
         </div>
         <div class="jcs-cfg-body">
@@ -6403,6 +6739,31 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 <button type="button" data-theme="dark" id="${NS}-cfg-theme-dark">深色</button>
                 <button type="button" data-theme="light" id="${NS}-cfg-theme-light">浅色</button>
               </div>
+            </div>
+          </div>
+          <div class="jcs-cfg-pane" data-pane="extensions" role="tabpanel">
+            <div class="jcs-card">
+              <div class="jcs-card-hd">
+                <div>
+                  <strong>扩展库脚本</strong>
+                  <p class="jcs-card-desc">添加库脚本 URL（http/https），本站加载时自动注入并按契约注册能力。规范见 docs/jav-code-scanner/jcs-extension-contract.md。</p>
+                </div>
+              </div>
+              <p class="jcs-callout is-warn">扩展等同任意代码：仅添加可信来源；运行在页面环境，无法使用 GM 存储与跨域 API。</p>
+              <div class="jcs-blacklist-form">
+                <input id="${NS}-ext-url-input" type="url" inputmode="url" placeholder="https://example.com/my-extension.user.js" autocomplete="off" spellcheck="false" />
+                <button type="button" class="jcs-btn solid" id="${NS}-ext-url-add">添加</button>
+              </div>
+              <div class="jcs-blacklist-list" id="${NS}-ext-source-list" role="list"></div>
+            </div>
+            <div class="jcs-card">
+              <div class="jcs-card-hd">
+                <div>
+                  <strong>已注册扩展</strong>
+                  <p class="jcs-card-desc">由扩展库或独立油猴脚本经 JavCodeKit.extensions.register 注册。开关为会话级：关闭后本次页面生效，刷新恢复。</p>
+                </div>
+              </div>
+              <div id="${NS}-ext-reg-list" role="list"></div>
             </div>
           </div>
           <div class="jcs-cfg-pane" data-pane="backup" role="tabpanel">
@@ -7998,7 +8359,9 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             codeActions: storeGetJson(CODE_ACT_KEY, null),
             sub: { useOriginalName: !!state.subUseOriginalName },
             panelLayout: storeGetJson(PANEL_KEY, null),
-            fabPos: storeGetJson(FAB_POS_KEY, null)
+            fabPos: storeGetJson(FAB_POS_KEY, null),
+            // 扩展宿主：URL 源列表（含启用开关与注册回填的状态）随备份走
+            extensions: loadExtensionSources()
         };
         return {
             app: 'jav-code-scanner',
@@ -8089,7 +8452,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             })
             : (bundle.data && typeof bundle.data === 'object')
                 ? bundle.data
-                : (bundle.providers || bundle.providerBlacklist || bundle.hl || bundle.theme != null || bundle.sites ? bundle : null);
+                : (bundle.providers || bundle.providerBlacklist || bundle.hl || bundle.theme != null || bundle.sites || bundle.extensions ? bundle : null);
         if (!data || typeof data !== 'object') throw new Error('缺少配置数据');
 
         // 搜索源
@@ -8154,6 +8517,34 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             if (pb.length) saveProviderBlacklist(pb);
             else if (!mergeProviders) storeRemove(PROVIDER_BLACKLIST_KEY);
         } catch (e) { /* ignore */ }
+
+        // 扩展源（合并=按 URL 去重并入，现有条目保留开关状态；替换=整体覆盖）
+        if (Array.isArray(data.extensions)) {
+            try {
+                const incoming = data.extensions
+                    .filter((it) => it && typeof it.url === 'string' && /^https?:\/\//i.test(it.url))
+                    .map((it) => ({
+                        url: String(it.url).trim(),
+                        enabled: it.enabled !== false,
+                        name: typeof it.name === 'string' ? it.name : '',
+                        id: typeof it.id === 'string' ? it.id : '',
+                        lastStatus: typeof it.lastStatus === 'string' ? it.lastStatus : '',
+                        lastLoadAt: typeof it.lastLoadAt === 'string' ? it.lastLoadAt : ''
+                    }));
+                const dedup = (arr) => {
+                    const seen = new Set();
+                    return arr.filter((it) => {
+                        if (!it.url || seen.has(it.url)) return false;
+                        seen.add(it.url);
+                        return true;
+                    });
+                };
+                saveExtensionSources(mergeProviders
+                    ? dedup(loadExtensionSources().concat(incoming))
+                    : dedup(incoming));
+                try { renderExtensionsTab(); } catch (e2) { /* ignore */ }
+            } catch (e) { /* ignore */ }
+        }
 
         // 站点总表（含各站 hlSelectors）须先于高亮合成
         const sitesIn = data.sites || bundle.sites || null;
@@ -8857,7 +9248,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
     }
 
     function setConfigTab(tab) {
-        const id = ['general', 'highlight', 'actions', 'sources', 'backup'].indexOf(tab) >= 0 ? tab : 'general';
+        const id = ['general', 'highlight', 'actions', 'sources', 'extensions', 'backup'].indexOf(tab) >= 0 ? tab : 'general';
         state.cfgTab = id;
         const cfg = document.getElementById(NS + '-cfg');
         if (!cfg) return;
@@ -8876,6 +9267,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         if (id === 'sources') setSourceConfigTab(state.cfgSourceTab || 'providers');
         if (id === 'highlight') syncHlOptsUi();
         if (id === 'actions') { syncCodeActionsUi(); bindCodeActionsUi(); }
+        if (id === 'extensions') { renderExtensionsTab(); bindExtensionsTab(); }
         if (id === 'general' || id === 'backup') syncConfigGeneralUi();
         if (id === 'backup') syncWebdavUi();
         // 切换到搜索源/备份时滚回顶部
@@ -9113,11 +9505,13 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         const box = document.getElementById(NS + '-provider-blacklist-list');
         if (!box) return;
         const builtins = DEFAULT_PROVIDER_BLACKLIST_HOSTS.map((host) =>
-            '<div class="jcs-blacklist-row" role="listitem"><code>' + escapeHtml(host) + '</code><small>内置</small></div>'
+            '<div class="jcs-blacklist-row" role="listitem">' +
+            '<div class="jcs-blacklist-main"><code>' + escapeHtml(host) + '</code><small>内置 · 不可移除</small></div></div>'
         ).join('');
         const user = loadProviderBlacklist().map((host) =>
-            '<div class="jcs-blacklist-row" role="listitem"><code>' + escapeHtml(host) + '</code>' +
-            '<button type="button" data-host="' + escapeHtml(host) + '" title="删除用户黑名单">删除</button></div>'
+            '<div class="jcs-blacklist-row" role="listitem">' +
+            '<div class="jcs-blacklist-main"><code>' + escapeHtml(host) + '</code><small>用户黑名单 · 失败自动加入</small></div>' +
+            '<span class="jcs-row-ops"><button type="button" data-host="' + escapeHtml(host) + '" title="删除用户黑名单" class="is-danger">删除</button></span></div>'
         ).join('');
         box.innerHTML = (builtins + user) || '<div class="jcs-empty-src">暂无黑名单</div>';
         box.querySelectorAll('button[data-host]').forEach((btn) => {
@@ -9129,6 +9523,124 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 if (state.active && isSearchPopupOpen()) loadFrame(state.active);
             };
         });
+    }
+
+    /** 「扩展」tab：URL 源列表 + 已注册扩展卡（契约 v1 形态 B 管理） */
+    function renderExtensionsTab() {
+        const srcBox = document.getElementById(NS + '-ext-source-list');
+        if (srcBox) {
+            const list = loadExtensionSources();
+            srcBox.innerHTML = list.map((it, i) => {
+                const host = providerHostname(it.url) || it.url;
+                const label = it.name || host;
+                const status = it.lastStatus === 'load-failed'
+                    ? '<small class="is-bad">加载失败 · 检查 URL 或本地服务</small>'
+                    : (it.id
+                        ? '<small class="is-ok">已注册 · ' + escapeHtml(String(it.name || it.id)) + '</small>'
+                        : '<small>' + escapeHtml(host) + '</small>');
+                return '<div class="jcs-blacklist-row" role="listitem" data-url="' + escapeHtml(it.url) + '">' +
+                    '<label class="jcs-switch" title="启用/停用该扩展源"><input type="checkbox" data-ext-src-toggle="' + i + '"' + (it.enabled !== false ? ' checked' : '') + ' /><i></i></label>' +
+                    '<div class="jcs-blacklist-main"><code title="' + escapeHtml(it.url) + '">' + escapeHtml(label) + '</code>' + status + '</div>' +
+                    '<span class="jcs-row-ops">' +
+                    '<button type="button" data-ext-src-copy="' + i + '" title="复制链接">复制</button>' +
+                    '<button type="button" data-ext-src-del="' + i + '" title="移除该扩展源" class="is-danger">删除</button></span></div>';
+            }).join('') || '<div class="jcs-empty-src">暂无扩展源（添加库脚本 URL 或安装独立扩展油猴脚本）</div>';
+        }
+        const regBox = document.getElementById(NS + '-ext-reg-list');
+        if (regBox) {
+            const recs = Array.from((typeof _extReg !== 'undefined' ? _extReg : new Map()).values());
+            regBox.innerHTML = recs.map((rec) => {
+                const kinds = [rec.actions.length ? rec.actions.length + ' 按钮' : '', rec.styles.length ? rec.styles.length + ' 样式' : '', rec.mounts.length ? rec.mounts.length + ' 挂载' : ''].filter(Boolean).join(' · ');
+                return '<div class="jcs-blacklist-row" role="listitem" data-ext-id="' + escapeHtml(rec.id) + '">' +
+                    '<label class="jcs-switch" title="启用/停用（会话级）"><input type="checkbox" data-ext-toggle="' + escapeHtml(rec.id) + '"' + (rec.enabled ? ' checked' : '') + ' /><i></i></label>' +
+                    '<div class="jcs-blacklist-main"><code>' + escapeHtml(rec.name) + ' v' + escapeHtml(rec.version) + '</code>' +
+                    '<small>' + escapeHtml(kinds || '无能力') + ' · 来源：' + escapeHtml(rec.source === 'script' ? '独立脚本' : (providerHostname(rec.source) || 'URL')) + '</small></div>' +
+                    '<span class="jcs-row-ops">' +
+                    '<button type="button" data-ext-unreg="' + escapeHtml(rec.id) + '" title="卸载该扩展（本次会话）" class="is-danger">卸载</button></span></div>';
+            }).join('') || '<div class="jcs-empty-src">暂无已注册扩展</div>';
+        }
+        bindExtensionsTab();
+    }
+
+    function bindExtensionsTab() {
+        const srcBox = document.getElementById(NS + '-ext-source-list');
+        if (srcBox) {
+            srcBox.querySelectorAll('input[data-ext-src-toggle]').forEach((el) => {
+                el.onchange = () => {
+                    const i = Number(el.getAttribute('data-ext-src-toggle'));
+                    const list = loadExtensionSources();
+                    if (!(i >= 0 && i < list.length)) return;
+                    list[i].enabled = el.checked;
+                    saveExtensionSources(list);
+                    showToast(el.checked ? '已启用扩展源（刷新页面生效）' : '已停用扩展源（刷新页面生效）');
+                };
+            });
+            srcBox.querySelectorAll('button[data-ext-src-copy]').forEach((btn) => {
+                btn.onclick = () => {
+                    const i = Number(btn.getAttribute('data-ext-src-copy'));
+                    const list = loadExtensionSources();
+                    if (!(i >= 0 && i < list.length)) return;
+                    copyText(list[i].url).then((ok) => showToast(ok ? '链接已复制' : '复制失败', ok ? 'success' : 'error'));
+                };
+            });
+            srcBox.querySelectorAll('button[data-ext-src-del]').forEach((btn) => {
+                btn.onclick = () => {
+                    const i = Number(btn.getAttribute('data-ext-src-del'));
+                    const list = loadExtensionSources();
+                    if (!(i >= 0 && i < list.length)) return;
+                    const removed = list.splice(i, 1)[0];
+                    saveExtensionSources(list);
+                    renderExtensionsTab();
+                    showToast('已移除扩展源：' + (removed.name || providerHostname(removed.url) || removed.url));
+                };
+            });
+        }
+        const regBox = document.getElementById(NS + '-ext-reg-list');
+        if (regBox) {
+            regBox.querySelectorAll('input[data-ext-toggle]').forEach((el) => {
+                el.onchange = () => { setExtensionEnabled(el.getAttribute('data-ext-toggle'), el.checked); };
+            });
+            regBox.querySelectorAll('button[data-ext-unreg]').forEach((btn) => {
+                btn.onclick = () => {
+                    const id = btn.getAttribute('data-ext-unreg') || '';
+                    if (unregisterExtension(id)) showToast('已卸载扩展（本次会话）：' + id);
+                };
+            });
+        }
+        const input = document.getElementById(NS + '-ext-url-input');
+        const addBtn = document.getElementById(NS + '-ext-url-add');
+        if (input && addBtn && input.dataset.jcsExtBound !== '1') {
+            input.dataset.jcsExtBound = '1';
+            const submit = () => {
+                const url = String(input.value || '').trim();
+                if (!/^https?:\/\//i.test(url)) { showToast('请输入 http/https 链接', 'error'); return; }
+                const list = loadExtensionSources();
+                if (list.some((it) => it.url === url)) { showToast('该扩展源已存在'); return; }
+                if (list.length >= 20) { showToast('扩展源已达 20 条上限，请先移除后再添加', 'error'); return; }
+                showToast('正在获取扩展信息…');
+                // 先拉一次脚本头取 @name，失败仍允许添加（显示主机名）
+                fetchExtensionMeta(url).catch(() => null).then((meta) => {
+                    const list2 = loadExtensionSources();
+                    if (list2.some((it) => it.url === url)) { showToast('该扩展源已存在'); return; }
+                    if (list2.length >= 20) { showToast('扩展源已达 20 条上限，请先移除后再添加', 'error'); return; }
+                    const entry = { url: url, enabled: true };
+                    if (meta && meta.name) {
+                        entry.name = meta.name;
+                        if (meta.version) entry.version = meta.version;
+                    }
+                    list2.push(entry);
+                    const saved = saveExtensionSources(list2);
+                    input.value = '';
+                    renderExtensionsTab();
+                    const label = (meta && meta.name) || providerHostname(url) || url;
+                    showToast(saved.some((it) => it.url === url)
+                        ? ('已添加扩展源：' + label + (meta ? '' : '（未取到名称，显示主机名）'))
+                        : '扩展源保存失败', 'success');
+                });
+            };
+            addBtn.onclick = submit;
+            input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+        }
     }
 
     function setSourceConfigTab(tab) {
@@ -9972,6 +10484,10 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 characterData: true
             });
         } catch (e) { /* ignore */ }
+
+        // 扩展宿主：SPA 挂载点重放 + 形态 B 扩展源注入（契约 v1）
+        bindExtSpaHook();
+        injectExtensionScripts();
     }
 
     // ─── 公共 API（其他油猴脚本可复用） ─────────────────────
@@ -10049,12 +10565,24 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             if (el) el.checked = !!state.subUseOriginalName;
             refreshSubtitleListView();
         },
-        DEFAULT_PROVIDERS: DEFAULT_PROVIDERS.map((p) => Object.assign({}, p))
+        DEFAULT_PROVIDERS: DEFAULT_PROVIDERS.map((p) => Object.assign({}, p)),
+        // 扩展宿主 API（契约 v1：docs/jav-code-scanner/jcs-extension-contract.md）
+        extensions: {
+            register: (manifest, source) => registerExtension(manifest, source),
+            unregister: (id) => unregisterExtension(id),
+            list: () => Array.from(_extReg.values()).map((rec) => ({
+                id: rec.id, name: rec.name, version: rec.version, enabled: rec.enabled, source: rec.source,
+                actions: rec.actions.length, styles: rec.styles.length, mounts: rec.mounts.length
+            })),
+            isEnabled: (id) => isExtensionEnabled(id),
+            setEnabled: (id, on) => setExtensionEnabled(id, on)
+        }
     };
     // CBox 轻量路径自管 API；主站再挂完整 kit
     if (!IS_CBOX) {
         try { window.JavCodeKit = kit; } catch (e) { /* ignore */ }
         try { _pageWin.JavCodeKit = kit; } catch (e) { /* ignore */ }
+        dispatchKitReady();
     }
 
     if (document.readyState === 'loading') {
