@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>JCS · 更新日志</title>
+<title>Jav Code Scanner · 功能更新日志</title>
 <style>
   :root {
     --bg: #0d1117;
@@ -25,86 +25,67 @@
   body {
     background: var(--bg); color: var(--text);
     font-family: -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
-    line-height: 1.65; padding: 40px 20px 90px;
+    line-height: 1.7; padding: 40px 20px 90px;
   }
   .wrap { max-width: 860px; margin: 0 auto; }
 
-  header.hero { margin-bottom: 36px; }
-  h1 { font-size: 30px; letter-spacing: .01em; }
+  header.hero { margin-bottom: 38px; }
+  h1 { font-size: 30px; }
   h1 .brand {
     background: linear-gradient(145deg, var(--accent2), var(--accent));
     -webkit-background-clip: text; background-clip: text; color: transparent;
   }
   .hero-sub { color: var(--muted); font-size: 14px; margin-top: 8px; }
-  .hero-sub code { font-family: var(--mono); color: var(--blue); font-size: 13px; }
 
-  /* 时间轴 */
   .timeline { position: relative; padding-left: 26px; }
   .timeline::before {
-    content: ''; position: absolute; left: 7px; top: 6px; bottom: 6px;
-    width: 2px; background: linear-gradient(180deg, var(--accent), rgba(212,83,74,.15));
+    content: ''; position: absolute; left: 7px; top: 8px; bottom: 8px;
+    width: 2px; background: linear-gradient(180deg, var(--accent), rgba(212, 83, 74, .12));
     border-radius: 2px;
   }
-  .release { position: relative; margin-bottom: 30px; }
+  .release { position: relative; margin-bottom: 34px; }
   .release::before {
     content: ''; position: absolute; left: -26px; top: 10px;
     width: 12px; height: 12px; border-radius: 50%;
     background: var(--bg); border: 3px solid var(--accent);
-    box-shadow: 0 0 0 3px rgba(212, 83, 74, .15);
+    box-shadow: 0 0 0 3px rgba(212, 83, 74, .14);
   }
-  .release-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
-  .ver {
-    font-family: var(--mono); font-size: 19px; font-weight: 800; color: var(--accent2);
-  }
-  .date {
-    font-family: var(--mono); font-size: 12px; color: var(--muted);
-    padding: 1px 9px; border: 1px solid var(--border); border-radius: 999px;
-    background: var(--surface);
-  }
-  .commit {
-    font-family: var(--mono); font-size: 11px; color: var(--muted);
-  }
-  .commit a { color: var(--blue); text-decoration: none; }
-  .release-title { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 12px; }
+  .release-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  .ver { font-family: var(--mono); font-size: 20px; font-weight: 800; color: var(--accent2); }
+  .date { font-family: var(--mono); font-size: 12px; color: var(--muted); padding: 1px 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); }
+  .release-title { font-size: 16px; font-weight: 800; color: var(--text); margin-bottom: 12px; }
 
-  .items { display: flex; flex-direction: column; gap: 8px; }
+  .items { display: flex; flex-direction: column; gap: 9px; }
   .item {
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; padding: 11px 14px; font-size: 13.5px;
+    border-radius: 10px; padding: 12px 15px; font-size: 14px;
   }
-  .item b { color: var(--text); }
-  .item .desc { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
-  .tag {
-    display: inline-block; font-size: 10.5px; font-weight: 800; letter-spacing: .04em;
-    padding: 1px 8px; border-radius: 999px; margin-right: 8px; vertical-align: 1px;
-    font-family: var(--mono);
+  .item .feat { font-weight: 700; }
+  .item .feat .how { display: block; font-weight: 500; color: var(--blue); font-size: 12.5px; margin-top: 3px; font-family: var(--mono); }
+  .item .desc { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .new {
+    display: inline-block; font-size: 10.5px; font-weight: 900; letter-spacing: .05em;
+    padding: 1px 8px; border-radius: 999px; margin-right: 8px; vertical-align: 2px;
+    background: rgba(212, 83, 74, .18); color: var(--accent2); font-family: var(--mono);
   }
-  .t-feat  { background: rgba(88,166,255,.15);  color: var(--blue); }
-  .t-fix   { background: rgba(63,185,80,.15);   color: var(--green); }
-  .t-break { background: rgba(248,81,73,.15);   color: var(--red); }
-  .t-docs  { background: rgba(188,140,255,.15); color: var(--purple); }
-  .t-tool  { background: rgba(240,136,62,.15);  color: var(--orange); }
+  .imp {
+    display: inline-block; font-size: 10.5px; font-weight: 900; letter-spacing: .05em;
+    padding: 1px 8px; border-radius: 999px; margin-right: 8px; vertical-align: 2px;
+    background: rgba(63, 185, 80, .15); color: var(--green); font-family: var(--mono);
+  }
+  .cond {
+    display: inline-block; font-size: 10.5px; color: var(--orange);
+    border: 1px solid rgba(240, 136, 62, .4); border-radius: 999px;
+    padding: 0 7px; margin-left: 8px; vertical-align: 1px; font-family: var(--mono);
+  }
 
-  .files { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
-  .file {
-    font-family: var(--mono); font-size: 10.5px; color: var(--muted);
-    background: var(--surface2); border: 1px solid var(--border);
-    padding: 1px 7px; border-radius: 5px;
-  }
-  .file.hl { color: var(--accent2); border-color: rgba(212,83,74,.4); }
+  .step { color: var(--muted); font-size: 12.5px; margin-top: 6px; padding-left: 2px; }
+  .step b { color: var(--text); font-weight: 600; }
 
-  .wip {
-    border: 1px dashed rgba(240, 136, 62, .45);
-    background: rgba(240, 136, 62, .06);
-    border-radius: 10px; padding: 11px 14px; font-size: 13.5px;
-  }
-  .wip .tag { background: rgba(240,136,62,.15); color: var(--orange); }
-
-  footer { margin-top: 44px; color: var(--muted); font-size: 12px; text-align: center; }
-  footer code { font-family: var(--mono); color: var(--blue); }
+  footer { margin-top: 46px; color: var(--muted); font-size: 12px; text-align: center; }
 
   @media (max-width: 640px) {
-    body { padding: 28px 14px 70px; }
+    body { padding: 26px 14px 70px; }
     .timeline { padding-left: 22px; }
     .release::before { left: -22px; }
   }
@@ -114,190 +95,129 @@
 <div class="wrap">
 
   <header class="hero">
-    <h1><span class="brand">Jav Code Scanner</span> 更新日志</h1>
-    <div class="hero-sub">通用番号扫描 &amp; 多源搜索 · 当前 <code>v1.5.76</code>（工作区）· 分支 <code>main</code> · <code>window.JavCodeKit</code></div>
+    <h1><span class="brand">Jav Code Scanner</span> 功能更新日志</h1>
+    <div class="hero-sub">只记「你又能做什么了」——版本号对应脚本设置里的版本</div>
   </header>
 
   <div class="timeline">
 
-    <!-- v1.5.76 -->
+    <!-- 扩展宿主 -->
     <div class="release">
-      <div class="release-head">
-        <span class="ver">v1.5.76</span>
-        <span class="date">2026-09-07</span>
-        <span class="commit">working tree（未提交）</span>
-      </div>
-      <div class="release-title">文档完善：源码指南 + 使用者描述</div>
+      <div class="release-head"><span class="ver">v1.5.76</span><span class="date">2026-09-07</span></div>
+      <div class="release-title">🧩 扩展系统来了：别人的油猴库，装进 JCS 用</div>
       <div class="items">
-        <div class="item"><span class="tag t-docs">DOCS</span><b>新增源码使用指南 README</b>
-          <div class="desc">docs/jav-code-scanner/README.md：使用者操作说明（安装/搜索/操作条/六 tab/扩展宿主/备份/快捷键/故障排查）+ 开发者操作说明（改码流程/扩展开发 30 分钟上手/Console 调试命令/备份 bundle 结构）</div></div>
-        <div class="item"><span class="tag t-docs">DOCS</span><b>@description 重写</b>
-          <div class="desc">脚本头描述改为功能卖点枚举（含扩展宿主），Greasy Fork 列表页可见</div></div>
+        <div class="item">
+          <span class="new">新功能</span><span class="feat">第三方油猴脚本一键接入</span>
+          <span class="how">设置 → 扩展 → 粘贴脚本链接 → 添加</span>
+          <div class="desc">支持的库会出现在番号操作条上，变成一个专属按钮。添加时自动识别脚本名字，不用看天书链接。</div>
+        </div>
+        <div class="item">
+          <span class="new">新功能</span><span class="feat">扩展管理台</span>
+          <span class="how">设置 → 扩展</span>
+          <div class="desc">每个扩展一个开关（关掉立即生效，刷新后恢复）；不想要的点卸载；链接可一键复制；状态一眼看清（已注册 / 加载失败 / 仅注入）。</div>
+        </div>
+        <div class="item">
+          <span class="imp">改进</span><span class="feat">备份带上扩展配置</span>
+          <span class="how">设置 → 备份 → 导出 / WebDAV 上传</span>
+          <div class="desc">换电脑或重装后，导入备份即可恢复全部扩展清单和开关状态，不用重新一个个加。</div>
+        </div>
+        <div class="item">
+          <span class="imp">改进</span><span class="feat">状态不再「误报失败」</span>
+          <div class="desc">以前某次网络抖动失败过，列表会一直显示「加载失败」；现在加载成功自动恢复「已注册」。</div>
+        </div>
+        <div class="item">
+          <span class="new">新功能</span><span class="feat">官方扩展范例</span>
+          <div class="desc">Jable 老视频进度条实时预览已改造成 JCS 扩展——装上即用，这就是扩展能做到什么的示范。</div>
+        </div>
       </div>
-      <div class="files"><span class="file hl">jav-code-scanner.user.js</span><span class="file">docs/jav-code-scanner/README.md</span><span class="file">docs/jav-code-scanner/MODIFICATIONS.md</span></div>
     </div>
 
-    <!-- v1.5.75 -->
+    <!-- 番号库与剧照 -->
     <div class="release">
-      <div class="release-head">
-        <span class="ver">v1.5.75</span>
-        <span class="date">2026-09-07</span>
-        <span class="commit">working tree（未提交）</span>
-      </div>
-      <div class="release-title">扩展体验补全</div>
+      <div class="release-head"><span class="ver">v1.5.71</span><span class="date">2026-08</span></div>
+      <div class="release-title">📚 番号库 + 剧照预览<span class="cond">需安装 Enhanced_Media_Helper</span></div>
       <div class="items">
-        <div class="item"><span class="tag t-feat">FEAT</span><b>备份包含扩展源</b>
-          <div class="desc">导出/导入/WebDAV 全链路：URL+开关+名称+注册状态随备份走；合并模式按 URL 去重（现有开关保留）、替换模式整体覆盖</div></div>
-        <div class="item"><span class="tag t-feat">FEAT</span><b>添加扩展时预取名称</b>
-          <div class="desc">请求一次脚本头解析 @name/@version 作为列表显示名，不再显示裸链接；失败回退主机名不阻塞</div></div>
-        <div class="item"><span class="tag t-feat">FEAT</span><b>源列表行复制链接 + 布局重排</b>
-          <div class="desc">复制/删除/卸载按钮右置；四类行统一「开关 + 双行主列 + 右置按钮组」结构，状态副行语义色（已注册绿/失败红）</div></div>
+        <div class="item">
+          <span class="new">新功能</span><span class="feat">一键收藏进番号库</span>
+          <span class="how">番号旁 ⓘ 角标 / 操作条 ➕ 按钮</span>
+          <div class="desc">看到想留的番号点一下就进库；已入库的会亮角标，再点一下二次确认移除，防误触。</div>
+        </div>
+        <div class="item">
+          <span class="new">新功能</span><span class="feat">AVWikiDB 剧照预览</span>
+          <span class="how">操作条 📷 按钮（Shift + 点击 = 强制刷新）</span>
+          <div class="desc">直接调出该番号在 AVWikiDB 的整组剧照，灯箱翻页浏览。</div>
+        </div>
+        <div class="item">
+          <span class="new">新功能</span><span class="feat">操作条自定义</span>
+          <span class="how">设置 → 操作</span>
+          <div class="desc">字幕 / 复制 / 番号库 / 剧照四个按钮，每个都能单独「显示 / 隐藏 / 收进 ⋯ 菜单」。</div>
+        </div>
       </div>
-      <div class="files"><span class="file hl">jav-code-scanner.user.js</span><span class="file">docs/jav-code-scanner/*</span></div>
     </div>
 
-    <!-- v1.5.74 -->
+    <!-- 智能预览 -->
     <div class="release">
-      <div class="release-head">
-        <span class="ver">v1.5.74</span>
-        <span class="date">2026-09-07</span>
-        <span class="commit">working tree（未提交）</span>
-      </div>
-      <div class="release-title">扩展状态修复</div>
+      <div class="release-head"><span class="ver">v1.5.72</span><span class="date">2026-08-30</span></div>
+      <div class="release-title">🔓 打不开的站，现在也能搜了</div>
       <div class="items">
-        <div class="item"><span class="tag t-fix">FIX</span><b>「加载失败」永不消失</b>
-          <div class="desc">onerror 持久化失败标记但 onload 不清除——历史失败一次即永远显示失败；现 onload 成功统一覆盖为 ok</div></div>
-        <div class="item"><span class="tag t-fix">FIX</span><b>URL 注入扩展无法归属「已注册」状态</b>
-          <div class="desc">库脚本注册时不传 source；宿主现按串行注入中的 URL 自动归属并回填列表</div></div>
+        <div class="item">
+          <span class="imp">改进</span><span class="feat">403 / Cloudflare 拦截自动绕行</span>
+          <div class="desc">部分搜索源拒绝直接访问时，自动换三条路重试（直连补 cookie → 页面代取 → 代理），通常你完全无感；实在不行才提示用新标签打开。</div>
+        </div>
+        <div class="item">
+          <span class="imp">改进</span><span class="feat">剧照抓取同样自动绕行</span>
+          <div class="desc">AVWikiDB 剧照不再要求「先去网站转一圈种 cookie」，直接点就能出图。</div>
+        </div>
       </div>
-      <div class="files"><span class="file hl">jav-code-scanner.user.js</span></div>
     </div>
 
-    <!-- v1.5.73 -->
+    <!-- 预览健壮性 -->
     <div class="release">
-      <div class="release-head">
-        <span class="ver">v1.5.73</span>
-        <span class="date">2026-09-07</span>
-        <span class="commit">working tree（未提交）</span>
-      </div>
-      <div class="release-title">★ 扩展宿主落地（契约 v1 实现）</div>
+      <div class="release-head"><span class="ver">v1.5.48–49</span><span class="date">2026-08</span></div>
+      <div class="release-title">👀 预览不再动不动弹新窗口</div>
       <div class="items">
-        <div class="item"><span class="tag t-feat">FEAT</span><b>JavCodeKit.extensions 注册 API</b>
-          <div class="desc">register / unregister / list / isEnabled / setEnabled；manifest 全字段校验；jcs:kit-ready 双 dispatch 握手（三保险接入）</div></div>
-        <div class="item"><span class="tag t-feat">FEAT</span><b>三类扩展点</b>
-          <div class="desc">actions（番号操作按钮，同步/Promise 返回值 + 闪 ✓ 反馈）/ styles（全站样式注入）/ mounts（DOM 挂载，SPA 导航 600ms 防抖重放）；生命周期全量 cleanup</div></div>
-        <div class="item"><span class="tag t-feat">FEAT</span><b>配置面板新增「扩展」tab</b>
-          <div class="desc">形态 B：URL 列表注入（串行 async=false、失败不阻塞）；已注册扩展卡：会话级开关 / 卸载 / 能力统计</div></div>
-        <div class="item"><span class="tag t-tool">TOOL</span><b>测试样例 + 真实改造参考</b>
-          <div class="desc">tools/test-extension.js（全类型脚手架）；tools/jable-live-preview.extension.js（greasyfork 581315 改造为 mounts 型，含 HLS 实例与定时器全量 cleanup）</div></div>
+        <div class="item">
+          <span class="imp">改进</span><span class="feat">拒绝嵌入的源自动改用「直接渲染」</span>
+          <div class="desc">有的网站禁止被嵌进别人的页面。以前只能看提示；现在自动改用脚本直接渲染搜索结果，页内照样预览。</div>
+        </div>
+        <div class="item">
+          <span class="imp">改进</span><span class="feat">记忆你的选择</span>
+          <div class="desc">某个源确定打不开？记住它，下次直接新窗口不浪费时间；误判的可以在「设置 → 搜索源 → 黑名单」里移除恢复。</div>
+        </div>
       </div>
-      <div class="files"><span class="file hl">jav-code-scanner.user.js</span><span class="file">tools/test-extension.js</span><span class="file">tools/jable-live-preview.extension.js</span><span class="file">docs/jav-code-scanner/jcs-extension-contract.md</span></div>
     </div>
 
-    <!-- 77c88eb -->
+    <!-- 基础 -->
     <div class="release">
-      <div class="release-head">
-        <span class="ver">契约 v1 发布</span>
-        <span class="date">2026-09-07</span>
-        <span class="commit"><a href="#" onclick="return false">77c88eb</a></span>
-      </div>
-      <div class="release-title">文档分域重组 + 扩展宿主契约</div>
+      <div class="release-head"><span class="ver">更早</span><span class="date">基础功能</span></div>
+      <div class="release-title">每天都在用的那些</div>
       <div class="items">
-        <div class="item"><span class="tag t-docs">DOCS</span><b>docs/ 按项目分域</b>
-          <div class="desc">jav-code-scanner / enhanced-media-helper / integration 三目录，各配 MODIFICATIONS.md 项目约束；10 处交叉引用改相对路径</div></div>
-        <div class="item"><span class="tag t-docs">DOCS</span><b>JCS 扩展宿主契约 v1</b>
-          <div class="desc">docs/jav-code-scanner/jcs-extension-contract.md：manifest 规范 / ctx 对象 / match 语法 / 生命周期 / 安全须知 / M3U8 完整示例 / v1 边界</div></div>
-        <div class="item"><span class="tag t-tool">TOOL</span><b>jcs-build skill</b>
-          <div class="desc">.opencode/skills/jcs-build：写扩展的方法论（manifest 模板 / 握手三保险 / 5 条常见坑 / 验收清单）</div></div>
+        <div class="item">
+          <span class="feat">番号扫描高亮</span>
+          <div class="desc">打开页面自动识别番号并高亮成可点链接；支持自定义选择器（设置 → 高亮 → 框选，点一下页面元素就生成规则）。</div>
+        </div>
+        <div class="item">
+          <span class="feat">多源搜索 + 页内预览</span>
+          <div class="desc">每个番号在 3+ 个搜索源间一键切换，预览窗口里直接看结果；每个源可选「自动 / 强制 iframe / 强制直接渲染」。</div>
+        </div>
+        <div class="item">
+          <span class="feat">字幕搜索</span>
+          <div class="desc">操作条字幕按钮聚合多个字幕站，按番号直接搜。</div>
+        </div>
+        <div class="item">
+          <span class="feat">WebDAV 全站备份<span class="cond">可选加密</span></span>
+          <div class="desc">所有设置 + 各站点个性化配置上云，手机电脑同步一套配置。</div>
+        </div>
+        <div class="item">
+          <span class="feat">深色 / 浅色主题 · 快捷键</span>
+          <div class="desc">Esc 逐层关闭 / 「/」快速搜索番号。</div>
+        </div>
       </div>
-      <div class="files"><span class="file">docs/</span><span class="file hl">jcs-extension-contract.md</span><span class="file">.opencode/skills/jcs-build/</span></div>
-    </div>
-
-    <!-- 41981bd -->
-    <div class="release">
-      <div class="release-head">
-        <span class="ver">v1.5.72</span>
-        <span class="date">2026-08-30</span>
-        <span class="commit"><a href="#" onclick="return false">41981bd</a></span>
-      </div>
-      <div class="release-title">403 多级自动重试</div>
-      <div class="items">
-        <div class="item"><span class="tag t-fix">FIX</span><b>fetch 型搜索源 403 逐级降级</b>
-          <div class="desc">javdb 等 403/Cloudflare challenge：GM 直连 → 页面 fetch → CORS 代理 → 外链兜底，全部失败才放弃</div></div>
-        <div class="item"><span class="tag t-fix">FIX</span><b>EMH 3.7.3：AVWikiDB 截图三级降级</b>
-          <div class="desc">GM 直连补浏览器 cookie → 页面 fetch → CORS 代理；不再要求用户先访问站点种 cookie</div></div>
-      </div>
-      <div class="files"><span class="file hl">jav-code-scanner.user.js</span><span class="file hl">Enhanced_Media_Helper.js</span></div>
-    </div>
-
-    <!-- 2a8f0ae -->
-    <div class="release">
-      <div class="release-head">
-        <span class="ver">EMH v3.7.2</span>
-        <span class="date">2026-08</span>
-        <span class="commit"><a href="#" onclick="return false">2a8f0ae</a></span>
-      </div>
-      <div class="release-title">WebDAV 备份组件化</div>
-      <div class="items">
-        <div class="item"><span class="tag t-feat">FEAT</span><b>WebDAV 移动端备份（EMH 侧）</b>
-          <div class="desc">Greasy Fork 库 593538 组件化；jav 凭据导入/设置卡 UX；跨脚本 WebDAV 凭据互认（JavCodeKit 桥）</div></div>
-      </div>
-      <div class="files"><span class="file hl">Enhanced_Media_Helper.js</span><span class="file">jav-code-scanner.user.js</span></div>
-    </div>
-
-    <!-- 831777c -->
-    <div class="release">
-      <div class="release-head">
-        <span class="ver">v1.5.71</span>
-        <span class="date">2026-08</span>
-        <span class="commit"><a href="#" onclick="return false">831777c · eea8e74</a></span>
-      </div>
-      <div class="release-title">v1.0.1 发布：跨脚本集成 + 操作条</div>
-      <div class="items">
-        <div class="item"><span class="tag t-feat">FEAT</span><b>番号库桥 + 操作条抽象</b>
-          <div class="desc">EMH_API 桥（加入/移除番号库、chip 在库角标）；当前番号操作条（字幕/复制/番号库/剧照）+ ⋯ 折叠菜单 + 逐键开关</div></div>
-      </div>
-      <div class="files"><span class="file hl">jav-code-scanner.user.js</span><span class="file hl">Enhanced_Media_Helper.js</span><span class="file">docs/</span></div>
-    </div>
-
-    <!-- 预览链 -->
-    <div class="release">
-      <div class="release-head">
-        <span class="ver">v1.5.48–49</span>
-        <span class="date">2026-08</span>
-        <span class="commit"><a href="#" onclick="return false">ca6ec76 · a9bed20 · abaf653</a></span>
-      </div>
-      <div class="release-title">预览健壮性专项</div>
-      <div class="items">
-        <div class="item"><span class="tag t-feat">FEAT</span><b>iframe 拒绝自动降级 GM 自渲染</b>
-          <div class="desc">HEAD 探测 XFO/CSP 头 + 会话记忆 + 通用提取兜底；同源页面 SAMEORIGIN 放行走 iframe，不再误判</div></div>
-        <div class="item"><span class="tag t-fix">FIX</span><b>javdb 源改 GM 请求自渲染</b>
-          <div class="desc">被 X-Frame-Options 拒绝的站点直接自渲染，替代必败的 iframe 预览</div></div>
-      </div>
-      <div class="files"><span class="file hl">jav-code-scanner.user.js</span></div>
-    </div>
-
-    <!-- 进行中 -->
-    <div class="release">
-      <div class="release-head">
-        <span class="ver">Next</span>
-        <span class="date">规划中</span>
-      </div>
-      <div class="release-title">进行中 / 待定</div>
-      <div class="items">
-        <div class="wip"><span class="tag t-tool">WIP</span><b>扩展转换器网页</b>
-          <div class="desc">html/jcs-extension-converter.html：粘贴脚本链接或代码，自动改写为契约扩展（T 包装器方案已确认粒度，待实施）</div></div>
-        <div class="wip"><span class="tag t-docs">TODO</span><b>架构文档锚点更新</b>
-          <div class="desc">architecture-jav-code-scanner.md 仍锚定 v1.5.71/9983 行，模块地图待收录扩展宿主</div></div>
-        <div class="wip"><span class="tag t-tool">TODO</span><b>工作区分批提交</b>
-          <div class="desc">宿主实现 v1.5.73→76 / docs 修订 / tools+skills 三笔待提交</div></div>
-      </div>
-      <div class="files"><span class="file">html/</span><span class="file">docs/jav-code-scanner/architecture-*.md</span></div>
     </div>
 
   </div>
 
-  <footer>jav-code-scanner.user.js · <code>window.JavCodeKit</code> · 扩展契约 v1 · 生成于 2026-09-07</footer>
+  <footer>Jav Code Scanner · 功能更新日志 · 2026-09-07 · 详细技术说明见 docs/jav-code-scanner/README.md</footer>
 </div>
 </body>
 </html>
