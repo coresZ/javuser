@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jav Code Scanner · 使用手册</title>
+<style>
+  :root {
+    --bg: #0b0c0f;
+    --surface: #16171c;
+    --surface2: #1f2027;
+    --border: rgba(255, 255, 255, 0.08);
+    --border-strong: rgba(255, 255, 255, 0.16);
+    --text: #f0f1f4;
+    --muted: #9aa0aa;
+    --accent: #d4534a;
+    --accent2: #ff8a7a;
+    --accent-dim: rgba(212, 83, 74, 0.16);
+    --accent-line: rgba(212, 83, 74, 0.42);
+    --blue: #58a6ff;
+    --green: #3fb950;
+    --orange: #f0883e;
+    --red: #f85149;
+    --mono: 'JetBrains Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    line-height: 1.75; padding: 0 20px 90px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+
+  /* hero */
+  .hero { padding: 64px 0 30px; text-align: center; }
+  .hero h1 { font-size: 34px; }
+  .hero h1 .g {
+    background: linear-gradient(145deg, var(--accent2), var(--accent));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .hero p { color: var(--muted); margin-top: 10px; font-size: 15px; }
+  .hero .fab-demo { margin: 26px auto 0; }
+
+  /* nav */
+  nav.toc {
+    position: sticky; top: 0; z-index: 50; margin: 0 -20px; padding: 10px 20px;
+    background: rgba(11,12,15,.88); backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    display: flex; gap: 6px; overflow-x: auto; justify-content: center;
+  }
+  nav.toc a {
+    color: var(--muted); text-decoration: none; font-size: 12.5px; font-weight: 600;
+    padding: 5px 12px; border-radius: 999px; white-space: nowrap;
+    transition: all .15s ease;
+  }
+  nav.toc a:hover { color: var(--text); background: var(--surface2); }
+
+  section { padding: 46px 0 8px; }
+  h2 {
+    font-size: 22px; margin-bottom: 6px;
+  }
+  h2 .no {
+    font-family: var(--mono); font-size: 14px; color: var(--accent2);
+    border: 1px solid var(--accent-line); border-radius: 8px; padding: 1px 9px;
+    margin-right: 10px; vertical-align: 3px;
+  }
+  .sec-sub { color: var(--muted); font-size: 13.5px; margin-bottom: 20px; }
+
+  /* 步骤卡 */
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .step-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 18px;
+  }
+  .step-card .n {
+    font-family: var(--mono); font-weight: 800; font-size: 13px;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--accent-dim); color: var(--accent2); margin-bottom: 10px;
+  }
+  .step-card h3 { font-size: 15px; margin-bottom: 6px; }
+  .step-card p { color: var(--muted); font-size: 13px; }
+  .step-card .kbd-hint { font-family: var(--mono); font-size: 11.5px; color: var(--accent2); margin-top: 8px; }
+
+  /* ===== JCS UI mockup 组件 ===== */
+  .stage {
+    background: #101116; border: 1px solid var(--border); border-radius: 16px;
+    padding: 26px 20px; position: relative; overflow: hidden; margin: 18px 0;
+  }
+  .stage::before {
+    content: '界面示意'; position: absolute; top: 10px; right: 14px;
+    font-size: 10px; color: var(--muted); font-family: var(--mono);
+    border: 1px solid var(--border); padding: 1px 8px; border-radius: 999px;
+  }
+  .mock-label {
+    font-size: 11px; color: var(--muted); font-family: var(--mono);
+    margin: 0 0 8px 2px;
+  }
+
+  /* 浮钮 */
+  .jcs-fab {
+    width: 132px; height: 52px; margin: 0 auto;
+    border-radius: 26px; cursor: default;
+    background: linear-gradient(145deg, #ff7a6c 0%, #d4534a 55%, #a8322b 100%);
+    border: 1.5px solid rgba(255,255,255,.22);
+    box-shadow: 0 8px 22px rgba(212,83,74,.42), 0 0 0 1px rgba(0,0,0,.12);
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    color: #fff; font-weight: 900; font-size: 15px;
+  }
+  .jcs-fab .badge {
+    background: rgba(255,255,255,.2); border-radius: 999px; padding: 0 10px;
+    font-family: var(--mono); font-size: 13px;
+  }
+
+  /* 番号高亮 mockup */
+  .page-mock {
+    background: #14151a; border-radius: 10px; padding: 16px 18px;
+    font-size: 13px; color: #c9cdd4; line-height: 2.1;
+  }
+  .page-mock .fake-title { color: #e8eaee; font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+  .code-link {
+    background: var(--accent-dim); color: var(--accent2);
+    border: 1px solid var(--accent-line); border-radius: 6px;
+    padding: 1px 7px; font-family: var(--mono); font-weight: 700; font-size: 12px;
+    cursor: pointer; text-decoration: none; white-space: nowrap;
+  }
+  .code-link:hover { background: rgba(212,83,74,.3); }
+
+  /* 选源面板 */
+  .picker-mock {
+    display: inline-block; background: var(--surface);
+    border: 1px solid var(--border-strong); border-radius: 14px;
+    box-shadow: 0 12px 32px rgba(0,0,0,.5); padding: 10px;
+  }
+  .picker-code {
+    font-family: var(--mono); font-weight: 800; font-size: 15px; color: var(--accent2);
+    margin: 0 4px 8px;
+  }
+  .picker-row { display: flex; gap: 6px; }
+  .src-btn {
+    font-size: 12px; font-weight: 700; color: var(--muted);
+    border: 1px solid var(--border); background: var(--surface2);
+    border-radius: 999px; padding: 5px 13px; cursor: pointer;
+  }
+  .src-btn:hover, .src-btn.on { color: var(--accent2); border-color: var(--accent-line); background: var(--accent-dim); }
+
+  /* 搜索大窗 */
+  .win-mock {
+    background: #121318; border: 1px solid var(--border-strong); border-radius: 14px;
+    overflow: hidden; box-shadow: 0 18px 44px rgba(0,0,0,.55);
+    max-width: 640px; margin: 0 auto;
+  }
+  .win-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; border-bottom: 1px solid var(--border); background: #17181e;
+  }
+  .win-bar .code-label { font-size: 12px; font-weight: 800; color: var(--accent2); font-family: var(--mono); }
+  .win-actions { margin-left: auto; display: flex; gap: 5px; }
+  .act-btn {
+    height: 26px; min-width: 34px; padding: 0 10px; border-radius: 10px;
+    border: 1px solid var(--border); background: #1b1c23; color: #b9bec7;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; gap: 4px; cursor: pointer;
+  }
+  .act-btn:hover { color: var(--accent2); border-color: var(--accent-line); }
+  .act-btn.done { background: var(--accent-dim); color: var(--accent2); border-color: var(--accent-line); }
+  .win-frame {
+    height: 150px; background:
+      linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
+    background-size: 26px 26px;
+    display: flex; align-items: center; justify-content: center;
+    color: #555b66; font-size: 12px; font-family: var(--mono);
+    border-bottom: 1px solid var(--border);
+  }
+  .win-tip {
+    padding: 6px 12px; font-size: 10.5px; color: var(--muted); font-family: var(--mono);
+    border-top: 1px solid var(--border);
+  }
+
+  /* 配置面板 mockup */
+  .cfg-mock {
+    background: #121318; border: 1px solid var(--border-strong); border-radius: 14px;
+    overflow: hidden; box-shadow: 0 18px 44px rgba(0,0,0,.55); max-width: 640px; margin: 0 auto;
+  }
+  .cfg-tabs { display: flex; gap: 4px; padding: 10px 12px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .cfg-tab {
+    font-size: 12px; font-weight: 700; color: var(--muted);
+    border: 0; background: transparent; border-radius: 9px 9px 0 0;
+    padding: 7px 13px; cursor: pointer;
+  }
+  .cfg-tab.on { color: var(--accent2); background: var(--accent-dim); }
+  .cfg-body { padding: 14px; min-height: 132px; }
+  .cfg-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+  .cfg-card b { font-size: 13px; }
+  .cfg-card p { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .cfg-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+  .cfg-row .nm { font-size: 12.5px; font-weight: 700; flex: 1; }
+  .cfg-row .nm em { display: block; font-style: normal; color: var(--muted); font-size: 11px; font-weight: 400; }
+  .sw { width: 34px; height: 19px; border-radius: 999px; background: #34363f; position: relative; flex-shrink: 0; }
+  .sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #cfd3da; }
+  .sw.on { background: var(--accent); }
+  .sw.on::after { left: 17px; background: #fff; }
+  .cfg-card .fld { display: flex; gap: 8px; margin-top: 8px; }
+  .cfg-card .fld input {
+    flex: 1; background: #17181e; border: 1px solid var(--border); border-radius: 8px;
+    color: var(--text); font-size: 12px; padding: 6px 10px; font-family: var(--mono);
+  }
+  .cfg-card .fld button {
+    border: 0; border-radius: 8px; background: var(--accent); color: #fff;
+    font-size: 12px; font-weight: 700; padding: 6px 14px; cursor: pointer;
+  }
+  .st { font-size: 11px; font-family: var(--mono); }
+  .st.ok { color: var(--green); }
+  .st.bad { color: var(--red); }
+
+  .pane { display: none; }
+  .pane.on { display: block; }
+
+  /* 操作条按钮大卡 */
+  .act-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+  .act-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 16px; text-align: center;
+  }
+  .act-card .ic {
+    width: 44px; height: 44px; margin: 0 auto 10px; border-radius: 12px;
+    background: var(--accent-dim); border: 1px solid var(--accent-line); color: var(--accent2);
+    display: flex; align-items: center; justify-content: center; font-size: 19px;
+  }
+  .act-card h3 { font-size: 14.5px; }
+  .act-card p { color: var(--muted); font-size: 12.5px; margin-top: 5px; }
+  .act-card .dep { font-size: 10.5px; color: var(--orange); font-family: var(--mono); margin-top: 7px; display: inline-block; border: 1px solid rgba(240,136,62,.35); border-radius: 999px; padding: 0 8px; }
+  .act-card .dep.ok { color: var(--muted); border-color: var(--border); }
+
+  /* 快捷键 */
+  .keys { display: flex; flex-wrap: wrap; gap: 12px; }
+  .key-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 18px; display: flex; align-items: center; gap: 12px; flex: 1; min-width: 240px;
+  }
+  kbd {
+    font-family: var(--mono); font-size: 13px; font-weight: 800; color: var(--text);
+    background: var(--surface2); border: 1px solid var(--border-strong);
+    border-bottom-width: 2.5px; border-radius: 8px; padding: 3px 11px;
+  }
+  .key-card span { color: var(--muted); font-size: 13px; }
+
+  /* 排查表 */
+  table.trouble { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.trouble th { text-align: left; color: var(--muted); font-size: 11.5px; font-weight: 600; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  table.trouble td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  table.trouble td:first-child { color: var(--text); font-weight: 600; white-space: nowrap; }
+  table.trouble td:last-child { color: var(--muted); }
+  table.trouble tr:last-child td { border-bottom: none; }
+  .trouble-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+
+  footer { margin-top: 60px; text-align: center; color: var(--muted); font-size: 12px; }
+  footer code { font-family: var(--mono); color: var(--blue); }
+
+  @media (max-width: 640px) {
+    .hero { padding: 40px 0 20px; }
+    .hero h1 { font-size: 26px; }
+    section { padding: 34px 0 4px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero wrap">
+  <h1><span class="g">Jav Code Scanner</span> 使用手册</h1>
+  <p>扫描番号 · 多源搜索 · 页内预览 · 扩展系统 —— 5 分钟上手</p>
+  <div class="fab-demo">
+    <div class="jcs-fab">JCS <span class="badge">12</span></div>
+    <div class="mock-label" style="text-align:center;margin-top:8px">安装后页面右下角出现此浮钮（数字 = 本页扫描到的番号数）</div>
+  </div>
+</header>
+
+<nav class="toc">
+  <a href="#quick">快速开始</a>
+  <a href="#search">搜索与预览</a>
+  <a href="#actions">操作条</a>
+  <a href="#config">设置面板</a>
+  <a href="#ext">扩展系统</a>
+  <a href="#keys">快捷键</a>
+  <a href="#faq">疑难解答</a>
+</nav>
+
+<div class="wrap">
+
+  <!-- 1 快速开始 -->
+  <section id="quick">
+    <h2><span class="no">01</span>快速开始</h2>
+    <div class="sec-sub">装好脚本，剩下的一切自动发生。</div>
+    <div class="steps">
+      <div class="step-card"><span class="n">1</span>
+        <h3>安装</h3>
+        <p>Tampermonkey → 新建脚本 → 粘贴 <b>jav-code-scanner.user.js</b> 全文保存。</p>
+        <div class="kbd-hint">支持 Chrome / Edge / Firefox + 油猴管理器</div>
+      </div>
+      <div class="step-card"><span class="n">2</span>
+        <h3>打开支持的网站</h3>
+        <p>域名含 <b>jav / av / fc2</b> 的站点、missav、jable、dmm 等 30+ 站自动生效。</p>
+        <div class="kbd-hint">右下角浮钮亮起 = 开始工作</div>
+      </div>
+      <div class="step-card"><span class="n">3</span>
+        <h3>点番号</h3>
+        <p>页面里的番号自动高亮成按钮，点它就开始搜索。</p>
+        <div class="kbd-hint">浮钮数字 = 本页扫到的番号数</div>
+      </div>
+    </div>
+    <div class="stage">
+      <div class="mock-label">▍页内效果：番号自动高亮</div>
+      <div class="page-mock">
+        <div class="fake-title">【高清中字】某作品合集 2026</div>
+        今天给大家带来 <a class="code-link">MIDV-890</a> 和 <a class="code-link">SSIS-456</a> 的对比测评，
+        上一期 <a class="code-link">MIDV-830</a> 的反响不错，这期继续。FC2 部分 <a class="code-link">FC2-PPV-3921888</a> 稍后单独发。
+      </div>
+    </div>
+  </section>
+
+  <!-- 2 搜索与预览 -->
+  <section id="search">
+    <h2><span class="no">02</span>搜索与预览</h2>
+    <div class="sec-sub">点番号 → 选源 → 页内直接看结果，全程不离开当前页面。</div>
+    <div class="stage">
+      <div class="mock-label">▍第 1 步：点击番号，弹出选源小面板</div>
+      <div class="picker-mock">
+        <div class="picker-code">MIDV-890</div>
+        <div class="picker-row">
+          <button class="src-btn on">磁力猫</button>
+          <button class="src-btn">123AV</button>
+          <button class="src-btn">Jable</button>
+          <button class="src-btn">＋ 自定义源</button>
+        </div>
+      </div>
+    </div>
+    <div class="stage">
+      <div class="mock-label">▍第 2 步：搜索大窗内换源 / 看预览（Esc 关闭）</div>
+      <div class="win-mock">
+        <div class="win-bar">
+          <span class="code-label">MIDV-890 → 磁力猫</span>
+          <span class="win-actions">
+            <button class="act-btn">▦ 字幕</button>
+            <button class="act-btn done">✓ 已复制</button>
+            <button class="act-btn">➕ 番号库</button>
+            <button class="act-btn">📷 剧照</button>
+          </span>
+        </div>
+        <div class="win-frame">搜索结果页（页内预览）</div>
+        <div class="win-tip">MIDV-890 → 磁力猫 · 打不开可点「浏览器打开」</div>
+      </div>
+    </div>
+    <div class="steps">
+      <div class="step-card"><span class="n">A</span>
+        <h3>源打不开怎么办？</h3>
+        <p>自动降级：iframe 被拒 → 改用脚本直接渲染 → 再不行才提示新标签打开，并把该源记住。</p>
+        <div class="kbd-hint">记忆可在 设置→搜索源→黑名单 里撤销</div>
+      </div>
+      <div class="step-card"><span class="n">B</span>
+        <h3>每个源都能定制</h3>
+        <p>设置 → 搜索源：加自己的源（支持 <b>{code}</b> 模板），并给每个源指定预览方式（自动 / 强制 iframe / 强制直接渲染）。</p>
+        <div class="kbd-hint">URL 模板示例：https://example.com/search?q={code}</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 操作条 -->
+  <section id="actions">
+    <h2><span class="no">03</span>操作条：番号上的四个快捷动作</h2>
+    <div class="sec-sub">选源面板和搜索大窗里都有这排按钮；设置 → 操作 可逐个显示 / 隐藏 / 收进 ⋯ 菜单。</div>
+    <div class="act-grid">
+      <div class="act-card">
+        <div class="ic">▦</div>
+        <h3>搜字幕</h3>
+        <p>按番号聚合搜索多字幕站，弹窗直选。</p>
+        <span class="dep ok">无需依赖</span>
+      </div>
+      <div class="act-card">
+        <div class="ic">⧉</div>
+        <h3>复制番号</h3>
+        <p>点击即复制，按钮闪 ✓ 确认。</p>
+        <span class="dep ok">无需依赖</span>
+      </div>
+      <div class="act-card">
+        <div class="ic">＋</div>
+        <h3>番号库</h3>
+        <p>加入 / 移除收藏库；番号旁的角标显示在库状态，防重复收藏。</p>
+        <span class="dep">需 Enhanced_Media_Helper</span>
+      </div>
+      <div class="act-card">
+        <div class="ic">📷</div>
+        <h3>剧照预览</h3>
+        <p>调出 AVWikiDB 该番号整组剧照，灯箱翻页。</p>
+        <span class="dep">需 EMH · Shift 点击强刷</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 设置面板 -->
+  <section id="config">
+    <h2><span class="no">04</span>设置面板</h2>
+    <div class="sec-sub">点浮钮 → 设置。六个标签页，点下面的 tab 看每一页长什么样。</div>
+    <div class="cfg-mock">
+      <div class="cfg-tabs">
+        <button class="cfg-tab on" data-p="p1">常规</button>
+        <button class="cfg-tab" data-p="p2">高亮</button>
+        <button class="cfg-tab" data-p="p3">操作</button>
+        <button class="cfg-tab" data-p="p4">搜索源</button>
+        <button class="cfg-tab" data-p="p5">扩展</button>
+        <button class="cfg-tab" data-p="p6">备份</button>
+      </div>
+      <div class="cfg-body">
+        <div class="pane on" id="p1">
+          <div class="cfg-card">
+            <b>外观与行为</b>
+            <div class="cfg-row"><span class="nm">主题<em>深色 / 浅色跟随设置</em></span><span class="sw on"></span></div>
+            <div class="cfg-row"><span class="nm">点番号时<em>页内预览（默认）或新标签打开</em></span><span class="sw"></span></div>
+          </div>
+        </div>
+        <div class="pane" id="p2">
+          <div class="cfg-card">
+            <b>高亮样式</b>
+            <p>全局样式 / 番号正则范围 / 各站点自定义选择器。</p>
+            <div class="cfg-row"><span class="nm">框选生成规则<em>点页面上任意元素，自动生成高亮选择器</em></span><button class="src-btn on">去框选</button></div>
+          </div>
+        </div>
+        <div class="pane" id="p3">
+          <div class="cfg-card">
+            <b>当前番号操作</b>
+            <div class="cfg-row"><span class="nm">字幕搜索<em>显示按钮 / 收进 ⋯ 菜单</em></span><span class="sw on"></span></div>
+            <div class="cfg-row"><span class="nm">复制番号</span><span class="sw on"></span></div>
+            <div class="cfg-row"><span class="nm">加入番号库</span><span class="sw on"></span></div>
+            <div class="cfg-row"><span class="nm">剧照预览</span><span class="sw on"></span></div>
+          </div>
+        </div>
+        <div class="pane" id="p4">
+          <div class="cfg-card">
+            <b>搜索源管理</b>
+            <p>增删改源，URL 模板支持 {code} / {CODE} / {code_lower}；每个源可选预览方式。</p>
+            <div class="fld"><input readonly value="https://example.com/search?q={code}"><button>测试</button></div>
+          </div>
+          <div class="cfg-card">
+            <b>搜索源黑名单</b>
+            <p>预览反复失败的源会被自动记住（只走新窗口）；在这里删除可恢复页内预览。</p>
+          </div>
+        </div>
+        <div class="pane" id="p5">
+          <div class="cfg-card">
+            <b>扩展库脚本</b>
+            <p>粘贴第三方油猴库链接，自动识别脚本名并加载。</p>
+            <div class="fld"><input readonly value="https://example.com/my-extension.user.js"><button>添加</button></div>
+          </div>
+          <div class="cfg-card">
+            <b>已注册扩展</b>
+            <div class="cfg-row"><span class="nm">Jable 实时预览 v0.3.0<em>1 挂载 · 来源：jable.tv</em></span><span class="st ok">已注册</span><span class="sw on"></span></div>
+            <div class="cfg-row"><span class="nm">我的扩展 v1.0.0<em>2 按钮 · 来源：独立脚本</em></span><span class="sw on"></span></div>
+          </div>
+        </div>
+        <div class="pane" id="p6">
+          <div class="cfg-card">
+            <b>本地文件备份</b>
+            <p>导出 / 导入全部站点配置（搜索源、高亮、操作开关、扩展清单…）。历史记录不备份。</p>
+          </div>
+          <div class="cfg-card">
+            <b>WebDAV 移动端备份</b>
+            <p>填地址与账号即可上云，支持端到端加密，多设备同步。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 扩展系统 -->
+  <section id="ext">
+    <h2><span class="no">05</span>扩展系统：把别人的油猴库装进来</h2>
+    <div class="sec-sub">v1.5.73 起的新能力——任何按 JCS 扩展契约编写的脚本，都能变成番号操作条上的一个按钮。</div>
+    <div class="steps">
+      <div class="step-card"><span class="n">1</span>
+        <h3>添加</h3>
+        <p>设置 → 扩展 → 粘贴脚本链接 → 添加。自动识别脚本名，不用记天书链接。</p>
+        <div class="kbd-hint">支持 http/https；本地服务也可以</div>
+      </div>
+      <div class="step-card"><span class="n">2</span>
+        <h3>使用</h3>
+        <p>注册成功的扩展会出现在番号操作条上，和内置按钮一样点击使用。</p>
+        <div class="kbd-hint">状态看副行：已注册（绿）· 加载失败（红）</div>
+      </div>
+      <div class="step-card"><span class="n">3</span>
+        <h3>管理</h3>
+        <p>每行开关立即生效（刷新恢复默认）；不用了点卸载；链接可一键复制分享。</p>
+        <div class="kbd-hint">备份会带上全部扩展清单</div>
+      </div>
+    </div>
+    <div class="stage">
+      <div class="mock-label">▍示例：装了「Jable 实时预览」扩展后，老视频进度条悬浮出画面</div>
+      <div class="win-mock" style="max-width:520px">
+        <div style="position:relative;height:130px;background:linear-gradient(145deg,#050507,#18181b);display:flex;align-items:center;justify-content:center">
+          <span style="color:#555b66;font-family:var(--mono);font-size:12px">视频播放器</span>
+          <div style="position:absolute;right:14px;top:12px;width:150px;height:86px;border-radius:12px;background:#050507;border:1px dashed #555;display:flex;align-items:center;justify-content:center;color:#8a8f99;font-size:11px;font-family:var(--mono)">实时帧 232×131</div>
+        </div>
+        <div style="padding:8px 12px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);font-family:var(--mono)">悬浮进度条 → 扩展提供的实时帧预览</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 快捷键 -->
+  <section id="keys">
+    <h2><span class="no">06</span>快捷键</h2>
+    <div class="keys">
+      <div class="key-card"><kbd>Esc</kbd><span>逐层关闭：点选 → 字幕窗 → 选源 → 设置 → 搜索窗 → 侧栏</span></div>
+      <div class="key-card"><kbd>/</kbd><span>聚焦番号输入框（大窗开着时聚焦窗内）</span></div>
+      <div class="key-card"><kbd>J</kbd><span>同上，左手友好的等价键</span></div>
+      <div class="key-card"><kbd>Shift</kbd><span>+ 剧照按钮 = 强制刷新截图缓存</span></div>
+    </div>
+  </section>
+
+  <!-- 7 疑难 -->
+  <section id="faq">
+    <h2><span class="no">07</span>疑难解答</h2>
+    <div class="trouble-wrap">
+      <table class="trouble">
+        <tr><th>现象</th><th>原因与处理</th></tr>
+        <tr><td>扩展显示「加载失败」</td><td>链接不可达（本地服务没开 / 404）。修复后<b>刷新页面</b>即自动清除失败标记</td></tr>
+        <tr><td>扩展能用但显示主机名而非名字</td><td>该脚本未按扩展契约注册（自执行库），仍可运行但不受开关管控</td></tr>
+        <tr><td>番号库 / 剧照按钮不出现</td><td>未安装 Enhanced_Media_Helper；剧照还需 EMH ≥ 3.6.4</td></tr>
+        <tr><td>某源总是弹新窗口</td><td>该源已进黑名单（自动记忆）→ 设置 → 搜索源 → 黑名单 → 删除该域名</td></tr>
+        <tr><td>整站预览都弹新窗口</td><td>本站被记为「禁止嵌入」→ 常规 tab 或 iframe 白名单里放行</td></tr>
+        <tr><td>换了电脑配置全没了</td><td>备份 → WebDAV 上传过就登录拉取；否则导出 JSON 手动迁移（扩展清单也包含在内）</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <footer>Jav Code Scanner v1.5.76 · 完整功能更新记录见 <code>html/changelog.html</code> · 扩展开发见 <code>docs/jav-code-scanner/jcs-extension-contract.md</code></footer>
+</div>
+
+<script>
+  document.querySelectorAll('.cfg-tab').forEach(function (t) {
+    t.addEventListener('click', function () {
+      document.querySelectorAll('.cfg-tab').forEach(function (x) { x.classList.remove('on'); });
+      document.querySelectorAll('.pane').forEach(function (x) { x.classList.remove('on'); });
+      t.classList.add('on');
+      document.getElementById(t.getAttribute('data-p')).classList.add('on');
+    });
+  });
+  document.querySelectorAll('.src-btn').forEach(function (b) {
+    b.addEventListener('click', function () {
+      this.closest('.picker-row').querySelectorAll('.src-btn').forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+    });
+  });
+</script>
+</body>
+</html>
