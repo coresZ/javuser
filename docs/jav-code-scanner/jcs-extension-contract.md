@@ -98,7 +98,7 @@ const MANIFEST = {
 ```js
 ctx = {
     code: 'ABC-123',          // 当前番号（actions 场景必有；styles/mounts 场景可能为 ''）
-    showToast(msg, type),     // 轻提示。type: 'info' | 'success' | 'warning' | 'error'，缺省 'info'
+    showToast(msg, type),     // 轻提示。type 保留参数（'info' 等），当前宿主视觉统一不区分
     getCode(),                // 实时读取当前番号（可在 onClick 任意时机调用）
     onCleanup(fn),            // 注册清理回调：扩展被禁用/删除、或挂载点站点离开时由宿主触发
 }                             // onCleanup 可多次调用，按注册逆序执行
@@ -124,13 +124,14 @@ ctx = {
 ```text
 register(manifest)
   ├─ 校验 → 入注册表（同 id 覆盖旧版，先对旧实例跑 cleanup）
-  ├─ actions →【操作】按钮插槽渲染（受【操作】tab 内每键开关控制，缺省开启）
+  ├─ actions →【操作】按钮插槽渲染（受【扩展】tab 扩展开关整体控制，缺省开启；
+  │            会话级：关闭后本次页面生效，刷新恢复；内置 4 键的逐键开关仍在【操作】tab）
   ├─ styles  → match 命中当前站 → <style id="jcs-ext-style-{id}-{i}"> 注入
   └─ mounts  → match 命中当前站 → mount(ctx)（ctx.onCleanup 已登记）
 SPA 导航（pushState/replaceState/popstate）
   ├─ 站点未变：宿主对 mounts 重放 unmount→mount（防 DOM 被路由冲掉）
   └─ 站点变更：旧站 mounts 全部 cleanup，新命中站 mount
-扩展开关关闭（【扩展】tab 单项开关）
+扩展开关关闭（【扩展】tab 单项开关，会话级）
   └─ actions 按钮隐藏、styles 标签移除、mounts cleanup；再开启则重放
 扩展删除 / 同 id 重注册覆盖
   └─ 全量 cleanup → 移出注册表
@@ -269,5 +270,6 @@ SPA 导航（pushState/replaceState/popstate）
 - 注册 API：`JavCodeKit.extensions = { register, unregister, list, isEnabled, setEnabled }`
 - 存储：GM key `jcs_extensions_v1` = `[{url, enabled, name, id, lastStatus, lastLoadAt}]`
 - 配置 UI：配置弹窗新增「扩展」tab（与常规/高亮/操作/搜索源/备份并列）
+- 添加 URL 时宿主预取一次脚本头解析 `@name`/`@version` 作为列表显示名；无油猴头或拉取失败回退显示主机名，不阻塞添加；扩展注册成功后以 manifest 的 name/version 为准回填
 - 注入时机：boot 尾部按列表顺序串行 `<script src>` 注入，单条失败记 `lastStatus` 不阻塞后续
 - 内置 lib/shot 按钮维持 `EMH_API` 直连，不走扩展注册表

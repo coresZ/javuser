@@ -129,6 +129,6 @@ scanner 点击 → 收起 picker（防遮挡）→ toast「正在获取…」
 
 ## 相关文件
 
-- scanner 架构：`docs/architecture-jav-code-scanner.md`
-- EMH 架构：`docs/architecture-enhanced-media-helper.md`
-- EMH standalone：`docs/standalone-mode.md`
+- scanner 架构：`../jav-code-scanner/architecture-jav-code-scanner.md`
+- EMH 架构：`../enhanced-media-helper/architecture-enhanced-media-helper.md`
+- EMH standalone：`../enhanced-media-helper/standalone-mode.md`

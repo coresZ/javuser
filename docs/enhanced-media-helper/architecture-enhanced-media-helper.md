@@ -135,7 +135,7 @@ AVWikiDB 同模式（`fetchAndShow`），失败/成功都按 `isLatest()` 门控
 ### 跨脚本桥（mountPublicApi 3805）
 
 - 挂载：`unsafeWindow.EMH_API`（主 world，防覆盖）+ `window.EMH_API`（沙箱）+ `window.__EMH_API__`
-- 方法：`addCode / removeCode / markItem / getItem / getStatus / getAll / openPanel / refresh / previewAvwiki`（详见 `docs/integration-emh-scanner.md`）；v3.7.0+ 另加 `exportData / importData`（外部 WebDAV 备份配套）与 `getWebdavOpts / saveWebdavOpts / webdavTest / webdavUpload / webdavDownload`（`webdav*` 均返回 Promise；`getWebdavOpts` 只回传密码存在位，明文不出脚本存储）
+- 方法：`addCode / removeCode / markItem / getItem / getStatus / getAll / openPanel / refresh / previewAvwiki`（详见 `../integration/integration-emh-scanner.md`）；v3.7.0+ 另加 `exportData / importData`（外部 WebDAV 备份配套）与 `getWebdavOpts / saveWebdavOpts / webdavTest / webdavUpload / webdavDownload`（`webdav*` 均返回 Promise；`getWebdavOpts` 只回传密码存在位，明文不出脚本存储）
 - **反向读取（v3.7.1+）**：EMH WebDAV 卡经 `unsafeWindow.JavCodeKit.getWebdavOpts()` 一键导入 jav 已保存的服务器/账号/加密开关（`javWebdavOpts` 1562）；jav 的桥同样不回传密码，`hasPass` 仅提示「需手动输入一次」
 - 注意：GM 存储按脚本隔离，外部脚本**必须**经此 API 才能操作库
 
@@ -184,6 +184,6 @@ AVWikiDB 同模式（`fetchAndShow`），失败/成功都按 `isLatest()` 门控
 
 ## 参考
 
-- standalone 模式详解见 `docs/standalone-mode.md`
-- 与 jav-code-scanner 的桥协议见 `docs/integration-emh-scanner.md`
-- scanner 架构见 `docs/architecture-jav-code-scanner.md`
+- standalone 模式详解见 `standalone-mode.md`
+- 与 jav-code-scanner 的桥协议见 `../integration/integration-emh-scanner.md`
+- scanner 架构见 `../jav-code-scanner/architecture-jav-code-scanner.md`

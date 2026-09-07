@@ -103,7 +103,7 @@ IIFE 53 → 常量（CODE_ACT_KEY 72 / STORE_KEYS 86）→ 存储层 → 站点�
 - **检测**：`isEmhInstalled()`（2148）直接查 `EMH_API.addCode` 是否为函数；`libStateOf`（879）走 30s 缓存（`loadLibCache` 862 一次性 `getAll` 建 map），EMH 未装时返回 null；
 - **消费点**：选源面板操作条、预览弹窗操作栏（`buildCodeActions` 971）、面板/弹窗 chip 徽标（`bindChipLibBadge` 917）、页面高亮 ✓ 徽标、Alt+Shift 点击；
 - **状态同步**：添加/移除成功后 `invalidateLibCache() + refreshLibBadges()`（889，遍历页面 mark + 面板/弹窗 chip 更新 data-jcs-lib 与 badge）；
-- 详见 `docs/integration-emh-scanner.md`。
+- 详见 `../integration/integration-emh-scanner.md`。
 
 ### 搜索 / 动作流
 
@@ -230,7 +230,7 @@ CBox 精简 API：`{__ready, __cboxLite, extract, extractAll, linkify}`。
 - **桥协议**：`unsafeWindow.EMH_API`（EMH 3.6.1+ 挂载，3.6.4 起含 `previewAvwiki`，3.6.5 灯箱 z-index 2147483647）
 - **z-index 约定**：scanner 宿主 `2147483000` < EMH 灯箱 `2147483647`——预览灯箱永远置顶；scanner 侧截图操作先收起 picker
 - **iframe 注意**：EMH `@noframes` 不进 iframe；iframe 内 scanner 为精简模式（无操作条），桥只在顶层可用
-- 完整协议说明见 `docs/integration-emh-scanner.md`
+- 完整协议说明见 `../integration/integration-emh-scanner.md`
 
 ## 技术债务与耦合点
 
@@ -267,6 +267,6 @@ CBox 精简 API：`{__ready, __cboxLite, extract, extractAll, linkify}`。
 ## 参考
 
 - 视觉/交互约束的通用化约定见 `.trellis/spec/frontend/design-system.md`
-- Enhanced_Media_Helper 架构见 `docs/architecture-enhanced-media-helper.md`
-- 两脚本桥协议见 `docs/integration-emh-scanner.md`
-- standalone 模式见 `docs/standalone-mode.md`
+- Enhanced_Media_Helper 架构见 `../enhanced-media-helper/architecture-enhanced-media-helper.md`
+- 两脚本桥协议见 `../integration/integration-emh-scanner.md`
+- standalone 模式见 `../enhanced-media-helper/standalone-mode.md`
