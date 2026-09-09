@@ -1,11 +1,11 @@
-# JCS 扩展宿主契约（Extension Contract v1）
+# JCS 扩展宿主契约（Extension Contract v1.1）
 
-> 宿主：jav-code-scanner（JCS）v1.5.73+ · 契约版本：v1（2026-09 制定）
-> 本文档是**对外发布的标准约定**：任何油猴脚本/JS 库按本文规则注册，即可接入 JCS 的
-> 【操作】按钮插槽、全站样式注入、页面 DOM 挂载三类扩展点，并受 JCS 配置面板统一管控。
+> 宿主：jav-code-scanner（JCS）**v1.5.81+** · 契约版本：**v1.1**（2026-09）
+> 本文档是**对外发布的标准约定**：任何油猴脚本/JS 库按本文规则注册，即可接入 JCS 的扩展点，并受 JCS 配置面板统一管控。
 >
-> 设计原则：JCS 既有调用入口 `JavCodeKit`（openSearch/copyCode/…约 40 方法）**全部保留不动**；
-> 扩展机制是纯增量，第三方库出问题只影响自身，不波及宿主核心功能。
+> **相对 v1 的增量**：新增 `pickButtons`（选源文字按钮 / **二级按钮组**）；`actions` 与 `pickButtons` 均进入【操作】tab 管控；返回值可请求关闭选源菜单。
+>
+> 设计原则：JCS 既有调用入口 `JavCodeKit`（openSearch / copyCode / …）**全部保留不动**；扩展机制纯增量，第三方出问题只影响自身。
 
 ---
 
@@ -13,25 +13,24 @@
 
 | 现状 | 问题 |
 |---|---|
-| JCS【操作】tab 的「加入番号库」「剧照预览」按钮硬编码探测 `EMH_API` | 换名/其它库脚本无法接入；探测逻辑散落 6 处 |
-| 想接入的库形态多样（独立油猴脚本 / 纯 JS 库 URL） | 没有统一的注册协议、生命周期、管控开关 |
-| 自执行库（如 l.userjs.min.js）直接注入能跑 | 不受开关管控、无冲突隔离、无统一 UI 展示 |
-
-结论：把【操作】背后的能力抽象为**标准契约**——JCS 作为宿主提供注册与管控，
-第三方脚本作为扩展（extension）声明能力（capability），双方只依赖本文档，不互相感知内部实现。
+| 【操作】tab 部分按钮硬编码探测 `EMH_API` | 其它库无法接入 |
+| 接入形态多样（独立油猴 / 纯 JS URL） | 需要统一注册与生命周期 |
+| 选源菜单 / 预览操作栏仅内置键 | 第三方需可挂图标操作与文字入口 |
+| 多个相关动作占满选源行 | 需要**按钮组 → 二级菜单**折叠展示 |
 
 ## 2. 术语
 
-- **宿主（Host）**：jav-code-scanner.user.js。挂载 `window.JavCodeKit`，管理扩展生命周期。
-- **扩展（Extension）**：按契约注册的第三方脚本/库。
-- **扩展点（Extension Point）**：宿主开放的能力插槽，v1 共三类：`actions` / `styles` / `mounts`。
+- **宿主**：jav-code-scanner.user.js，挂载 `window.JavCodeKit`。
+- **扩展**：按契约 `register` 的第三方脚本。
+- **扩展点（v1.1 四类）**：
+  - `actions` — 操作栏**图标**按钮（选源面板 + 预览弹窗）
+  - `pickButtons` — 选源**文字**叶子按钮，或 **二级按钮组**（`items`）
+  - `styles` — 全站样式
+  - `mounts` — 页面 DOM 挂载
 
 ## 3. 两种接入形态
 
 ### 形态 A：独立油猴脚本（推荐）
-
-保留 `// ==UserScript==` 元数据头，正常装进 Tampermonkey。脚本在**沙箱 world** 运行，
-通过握手拿到宿主 API 后注册（宿主可能先于或晚于扩展加载）。
 
 ```js
 function tryRegister() {
@@ -42,207 +41,222 @@ function tryRegister() {
     }
     return false;
 }
-if (tryRegister()) return;
-window.addEventListener('jcs:kit-ready', tryRegister, { once: true });  // 宿主后到
-let n = 0;
-const t = setInterval(() => { if (tryRegister() || ++n > 120) clearInterval(t); }, 500); // 兜底 60s
+if (tryRegister()) { /* done */ }
+else {
+    window.addEventListener('jcs:kit-ready', tryRegister, { once: true });
+    let n = 0;
+    const t = setInterval(() => { if (tryRegister() || ++n > 120) clearInterval(t); }, 500);
+}
 ```
 
-> 时序三保险：`__ready` 直注册 → 监听 `jcs:kit-ready` → 兜底轮询。
-> 宿主在挂载 `JavCodeKit` 后于 `window` 与页面 world（unsafeWindow）双 dispatch `jcs:kit-ready`。
+宿主在 `window` 与页面 world 双 dispatch `jcs:kit-ready`。
 
-### 形态 B：纯库 URL（无油猴头）
+### 形态 B：纯库 URL
 
-同一份代码去掉元数据头。在 JCS 配置弹窗的**「扩展」tab** 添加脚本 URL（http/https），
-宿主在 boot 末尾按列表顺序创建 `<script src>` 注入**页面 world**——注入时机保证
-`window.JavCodeKit` 已就绪，扩展直接注册即可（握手代码保留亦无害）。
-
-- 任意站点生效（不受 `@connect` 白名单限制）；扩展运行在页面 world，**拿不到 GM_* API**。
-- 每次页面加载都会重新注入（遵循列表中的启用开关）。
-- `l.userjs.min.js` 类**自执行库**：可注入运行，但只要不调用 `register` 就不出现在
-  扩展列表、不受开关管控——建议改造为契约注册以获得管理能力。
+在【扩展】tab 添加 http(s) URL；boot 末尾注入页面 world，此时可直接 `register`。无 `GM_*`。
 
 ## 4. Manifest 规范
 
 ```js
 const MANIFEST = {
-    id: 'm3u8-direct-link',      // 必填。全局唯一，建议 kebab-case；同 id 重复注册 = 覆盖旧版
-    name: 'M3U8 直链提取',        // 必填。展示名（扩展 tab、按钮 tooltip）
-    version: '2.1',              // 必填。字符串，仅展示
-    actions: [ /* 扩展点 1：番号操作按钮（数组，可空） */ ],
-    styles:  [ /* 扩展点 2：全站样式注入（数组，可空） */ ],
-    mounts:  [ /* 扩展点 3：页面 DOM 挂载（数组，可空） */ ]
+    id: 'demo-kit',
+    name: '示例工具包',
+    version: '1.0.0',
+    actions:     [ /* 操作栏图标 */ ],
+    pickButtons: [ /* 叶子按钮 或 二级按钮组 */ ],
+    styles:      [ /* 可选 */ ],
+    mounts:      [ /* 可选 */ ]
 };
 ```
 
-校验规则（宿主 `register` 时执行，不合格抛 `Error`）：
+### 4.1 校验规则
 
 | 字段 | 规则 |
 |---|---|
-| `id` | 非空、≤64 字符、`/^[a-z0-9][a-z0-9-]*$/i`；与已注册 id 重复时覆盖并 toast 提示 |
-| `name` | 非空、≤40 字符 |
-| `version` | 非空、≤20 字符 |
-| `actions[].act` | 非空、≤32 字符、同扩展内唯一（运行时 key 为 `ext:{id}:{act}`） |
-| `actions[].icon` | 可选。SVG 字符串 ≤2KB（`<svg viewBox=… stroke="currentColor">` 风格，继承按钮配色）；缺省用「拼图」通用图标 |
-| `actions[].title` | 非空、≤20 字符 |
-| `actions[].onClick` | 必须为 function |
-| `styles[].css` | 非空字符串 |
-| `styles[].match` / `mounts[].match` | 可选。缺省 = 所有站点；见 §6 match 语法 |
-| `mounts[].mount` | 必须为 function |
-| `mounts[].unmount` | 可选 function（推荐改用 `ctx.onCleanup`，见 §5） |
+| `id` | ≤64，`/^[a-z0-9][a-z0-9-]*$/i`；同 id 覆盖 |
+| `name` | ≤40 |
+| `version` | ≤20 |
+| `actions[].act` | ≤32，同扩展唯一；配置 key = `ext:{id}:{act}` |
+| `actions[].title` | ≤20 |
+| `actions[].onClick` | function |
+| `actions[].icon` | 可选，含 `<svg`，≤2048 |
+| `pickButtons` | 每扩展顶层最多 **4** 条（叶子或组） |
+| `pickButtons[].id` | kebab-case ≤32；配置 key = `extpick:{id}:{btnId}` |
+| `pickButtons[].label` | ≤16 |
+| `pickButtons[].title` | 可选 ≤20 |
+| `pickButtons[].order` | 可选 number，默认 0 |
+| `pickButtons[].match` | 可选，见 §6 |
+| **叶子** | 无 `items` 时必须有 `onClick` |
+| **按钮组** | `items` 非空数组；组级无需 `onClick` |
+| `pickButtons[].items` | 每组最多 **8** 项 |
+| `items[].id` / `label` / `onClick` | 同叶子规则；`id` 组内唯一 |
+| `styles[].css` | 非空 |
+| `mounts[].match` | **必填** |
+| `mounts[].mount` | function |
 
-注册成功：toast「已接入扩展：{name}」，【扩展】tab 出现能力卡，按钮插槽即时刷新。
+全局：选源 UI 同时展示的顶层扩展入口最多 **8** 个（按 `order` 截断）。
 
-## 5. ctx 对象（宿主传给扩展的运行时上下文）
+### 4.2 叶子 vs 按钮组
+
+```js
+// 叶子：直接执行
+{ id: 'copy-dash', label: '复制-', onClick(code, ctx) { /* ... */ return 'done'; } }
+
+// 按钮组：点击组名展开二级菜单
+{
+  id: 'multi-open',
+  label: '多源',
+  title: '批量打开搜索源',
+  order: 10,
+  items: [
+    { id: 'all', label: '全部打开', onClick(code, ctx) { /* ... */ return { ok: true, close: true }; } },
+    { id: 'first3', label: '前三个', onClick(code, ctx) { /* ... */ return 'done'; } }
+  ]
+}
+```
+
+| | 叶子 | 按钮组（`items`） |
+|---|---|---|
+| UI | 一个虚线胶囊按钮 | 组名 + ▾；点击展开浮动二级菜单 |
+| 出现位置 | 旁出选源菜单；大窗「扩展」行 | 同左 |
+| 【操作】tab | 显示开关 | 显示开关（整组）；标注「按钮组 · N 项」 |
+
+### 4.3 `actions` vs `pickButtons`
+
+| | `actions` | `pickButtons` |
+|---|---|---|
+| UI | 操作栏图标 | 文字胶囊 / 二级组 |
+| 位置 | 选源面板操作条 + 预览弹窗顶栏 | 选源列表区 + 大窗扩展行 |
+| 设置 | 显示 + 收进「⋯」 | 仅显示（整组或叶子） |
+
+## 5. ctx 与返回值
 
 ```js
 ctx = {
-    code: 'ABC-123',          // 当前番号（actions 场景必有；styles/mounts 场景可能为 ''）
-    showToast(msg, type),     // 轻提示。type 保留参数（'info' 等），当前宿主视觉统一不区分
-    getCode(),                // 实时读取当前番号（可在 onClick 任意时机调用）
-    onCleanup(fn),            // 注册清理回调：扩展被禁用/删除、或挂载点站点离开时由宿主触发
-}                             // onCleanup 可多次调用，按注册逆序执行
+    code: 'ABC-123',
+    showToast(msg, type),
+    getCode(),
+    onCleanup(fn)
+}
 ```
 
-- **actions.onClick(code, ctx) 返回值约定**：
-  - `'done'` 或 `{ ok: true }` → 按钮闪「✓」反馈（同内置复制按钮）
-  - `'fail'`、`{ ok: false }`、不返回 → 无成功动画
-  - 宿主**不吞异常**：onClick 抛错时 console.error 并 toast「扩展 {name} 执行失败」，按钮不崩
-- **异步操作**：onClick 可返回 Promise，宿主等待期间按钮半透明防重复点击，按 resolve 值走上述约定
+| 返回值 | `actions` | `pickButtons` / `items` |
+|---|---|---|
+| `'done'` / `{ ok: true }` | 闪 ✓ | 按钮 `is-done` |
+| `{ ok: true, close: true }` | — | 关闭旁出选源菜单 |
+| Promise | 等待期半透明 | 同左 |
+| 抛错 | toast 失败，宿主不崩 | 同左 |
 
-## 6. match 语法（站点命中）
+组内项执行后默认关闭二级菜单。
 
-数组元素为 host glob 字符串，如 `*.jable.tv`、`fs1.app`：
+## 6. match 语法
 
-- `fs1.app` → 精确匹配 host `fs1.app`
-- `*.jable.tv` → 匹配 `jable.tv` 及任意层级子域（`www.jable.tv`、`a.b.jable.tv`）
-- 端口/协议不参与匹配；大小写不敏感
-- `match` 缺省 = 全站生效（仅建议 styles 使用；mounts 必须写 match 防止全站扫描）
+- `fs1.app` 精确；`*.jable.tv` 含子域
+- 缺省 = 全站；**mounts 必须写 match**
 
 ## 7. 生命周期
 
 ```text
-register(manifest)
-  ├─ 校验 → 入注册表（同 id 覆盖旧版，先对旧实例跑 cleanup）
-  ├─ actions →【操作】按钮插槽渲染（受【扩展】tab 扩展开关整体控制，缺省开启；
-  │            会话级：关闭后本次页面生效，刷新恢复；内置 4 键的逐键开关仍在【操作】tab）
-  ├─ styles  → match 命中当前站 → <style id="jcs-ext-style-{id}-{i}"> 注入
-  └─ mounts  → match 命中当前站 → mount(ctx)（ctx.onCleanup 已登记）
-SPA 导航（pushState/replaceState/popstate）
-  ├─ 站点未变：宿主对 mounts 重放 unmount→mount（防 DOM 被路由冲掉）
-  └─ 站点变更：旧站 mounts 全部 cleanup，新命中站 mount
-扩展开关关闭（【扩展】tab 单项开关，会话级）
-  └─ actions 按钮隐藏、styles 标签移除、mounts cleanup；再开启则重放
-扩展删除 / 同 id 重注册覆盖
-  └─ 全量 cleanup → 移出注册表
+register
+  ├─ actions → 操作栏 +【操作】tab（on/fold）
+  ├─ pickButtons → 选源/大窗 +【操作】tab（on）
+  │                 组：二级菜单渲染
+  ├─ styles / mounts → match 过滤注入
+【操作】改开关 → 立即 rebuild 操作栏 / 选源扩展入口
+【扩展】会话开关 → 隐藏全部能力；刷新后恢复启用
+SPA → mounts 防抖重挂
 ```
 
-## 8. 安全须知（对外规则的一部分）
+## 8. 配置面板
 
-- 扩展 = **任意代码**。形态 B 的 URL 仅接受 `http(s)`；添加时 toast 显示来源域名，
-  由使用者自行担保可信。
-- 扩展拿不到 `GM_*`（页面 world 无沙箱 API）；如需持久化，v1 暂不提供宿主代理（见 §10）。
-- UI 元素 id / class 必须带 `jcs-ext-{manifestId}` 前缀，避免与宿主或其它扩展冲突。
-- 宿主对 manifest 做深度只读快照？——不做。契约要求扩展**注册后不得改写 manifest 对象**；
-  宿主注册时对 manifest 做 `JSON.parse(JSON.stringify())` 之外的函数保留拷贝
-  （结构化浅拷贝顶层 + 数组元素引用原函数），改写原对象不影响已注册实例。
+| 位置 | 内容 |
+|---|---|
+| **设置 → 操作** | 内置 4 键；扩展 `actions`（显示/折叠）；扩展 `pickButtons`（整组 + **组内项** 分别显示开关） |
+| **设置 → 扩展** | URL 列表；已注册卡（操作 N / 选源 N / 样式 N / 挂载 N） |
 
-## 9. 完整示例：Jable & FS1 M3U8 直链提取器（形态 A）
+存储：`jcs_extensions_v1`；`jcs_code_actions_v1`（含 `ext:*`、`extpick:*`）。
+
+## 9. 安全
+
+扩展 = 任意代码；形态 B 仅 http(s)；无 GM 代理；DOM 前缀 `jcs-ext-{id}`。
+
+## 10. 完整示例（按钮组）
 
 ```js
 // ==UserScript==
-// @name         Jable & FS1 M3U8 直链提取器 · JCS 扩展
-// @version      2.1
-// @match        *://*.jable.tv/*
-// @match        *://*.fs1.app/*
+// @name         JCS 示例 · 二级按钮组
+// @version      1.0.0
+// @match        *://*/*
 // @run-at       document-idle
 // @grant        none
-// @license      MIT
 // ==/UserScript==
 
 (function () {
     'use strict';
 
     const MANIFEST = {
-        id: 'm3u8-direct-link',
-        name: 'M3U8 直链提取',
-        version: '2.1',
-        mounts: [{
-            match: ['*.jable.tv', '*.fs1.app'],
-            mount(ctx) {
-                const ui = document.createElement('div');
-                ui.id = 'jcs-ext-m3u8-direct-link-ui';
-                let timer = null;
-
-                function findVideoUrl() {
-                    for (const s of document.querySelectorAll('script')) {
-                        const m = s.innerHTML.match(/hlsUrl\s*=\s*['"](https?[^'"]+\.m3u8[^'"]*)['"]/);
-                        if (m) return m[1];
-                    }
-                    const v = document.querySelector('video');
-                    if (v) {
-                        if (v.src && v.src.includes('.m3u8')) return v.src;
-                        const src = v.querySelector('source[src*=".m3u8"]');
-                        if (src) return src.src;
-                    }
-                    return null;
-                }
-
-                function getCleanTitle() {
-                    const og = document.querySelector('meta[property="og:title"]');
-                    const hd = document.querySelector('.header-left h4') || document.querySelector('.header-left h6');
-                    const raw = (og && og.content) || (hd && hd.innerText) || document.title;
-                    return raw.replace(/\s*-\s*Jable\.tv.*$/i, '')
-                              .replace(/\s*-\s*fs1\.app.*$/i, '')
-                              .replace(/\s*-\s*免費高清成人.*$/i, '')
-                              .trim() || '未命名视频';
-                }
-
-                function build(url, title) {
-                    ui.style.cssText = 'margin:15px 0;padding:12px;background:#1a1a1a;border-radius:8px;' +
-                        'border:1px dashed #555;display:flex;flex-direction:column;gap:10px;width:100%;box-sizing:border-box;clear:both';
-                    ui.innerHTML =
-                        '<div style="display:flex;justify-content:space-between;align-items:center;">' +
-                        '<span style="font-size:14px;font-weight:bold;color:#00ff00;">✅ M3U8 直链提取成功</span></div>' +
-                        '<div style="font-size:12px;color:#aaa;background:#000;padding:8px;border-radius:4px;word-break:break-all;">' + url + '</div>' +
-                        '<button id="jcs-ext-m3u8-copy" style="background:#ff8c00;color:#fff;padding:8px 20px;border-radius:6px;' +
-                        'font-size:13px;cursor:pointer;font-weight:bold;border:none;align-self:flex-start;">🔗 一键复制</button>';
-                    ui.querySelector('#jcs-ext-m3u8-copy').onclick = function () {
-                        navigator.clipboard.writeText(title + ' ' + url).then(() => {
-                            this.innerText = '✅ 已复制';
-                            this.style.background = '#ffcc88';
-                            setTimeout(() => { this.innerText = '🔗 一键复制'; this.style.background = '#ff8c00'; }, 2000);
-                        });
-                    };
-                    const target = document.querySelector('.info-header')
-                        || document.querySelector('.header-left')
-                        || document.querySelector('h4')
-                        || document.querySelector('.player');
-                    if (target && !ui.isConnected) {
-                        target.nextSibling ? target.parentNode.insertBefore(ui, target.nextSibling)
-                                           : target.parentNode.appendChild(ui);
-                    }
-                }
-
-                timer = setInterval(() => {
-                    if (ui.isConnected) return;
-                    const url = findVideoUrl();
-                    if (url) { clearInterval(timer); timer = null; build(url, getCleanTitle()); }
-                }, 1000);
-
-                ctx.onCleanup(() => {           // 宿主禁用扩展 / 站点离开时触发
-                    if (timer) clearInterval(timer);
-                    ui.remove();
-                });
+        id: 'demo-kit',
+        name: '示例工具包',
+        version: '1.0.0',
+        actions: [{
+            act: 'toast-code',
+            title: '提示番号',
+            onClick(code, ctx) {
+                ctx.showToast('当前：' + code);
+                return 'done';
             }
-        }]
+        }],
+        pickButtons: [
+            {
+                id: 'quick',
+                label: '快开',
+                onClick(code, ctx) {
+                    const kit = window.JavCodeKit;
+                    if (kit && kit.getProviders) {
+                        const p = (kit.getProviders() || [])[0];
+                        if (p) window.open(kit.buildUrl(code, p.id), '_blank', 'noopener');
+                    }
+                    return { ok: true, close: true };
+                }
+            },
+            {
+                id: 'batch',
+                label: '批量',
+                title: '批量打开搜索源',
+                order: 20,
+                items: [
+                    {
+                        id: 'all',
+                        label: '全部打开',
+                        onClick(code, ctx) {
+                            const kit = window.JavCodeKit;
+                            (kit.getProviders() || []).forEach((p) => {
+                                window.open(kit.buildUrl(code, p.id), '_blank', 'noopener');
+                            });
+                            ctx.showToast('已打开全部源');
+                            return { ok: true, close: true };
+                        }
+                    },
+                    {
+                        id: 'top3',
+                        label: '前三个',
+                        onClick(code, ctx) {
+                            const kit = window.JavCodeKit;
+                            (kit.getProviders() || []).slice(0, 3).forEach((p) => {
+                                window.open(kit.buildUrl(code, p.id), '_blank', 'noopener');
+                            });
+                            return { ok: true, close: true };
+                        }
+                    }
+                ]
+            }
+        ]
     };
 
-    // 注册握手（§3 形态 A 三保险）
     function tryRegister() {
         const kit = window.JavCodeKit;
         if (kit && kit.__ready && kit.extensions) {
-            try { kit.extensions.register(MANIFEST); } catch (e) { console.warn('[m3u8-ext]', e); }
+            try { kit.extensions.register(MANIFEST); } catch (e) { console.warn('[demo-kit]', e); }
             return true;
         }
         return false;
@@ -254,22 +268,26 @@ SPA 导航（pushState/replaceState/popstate）
 })();
 ```
 
-## 10. 契约边界（v1 明确不做）
+## 11. 契约边界
 
-| 不做 | 理由 / 去向 |
+| 不做 | 说明 |
 |---|---|
-| 扩展专用存储代理（GM get/set 按扩展 id 隔离） | v2 再评估；v1 扩展自管持久化 |
-| 扩展 URL 自动更新检查 / 版本对比 | 管理负担重，v1 手动改 URL 即刷新 |
-| 外部注册**搜索源**（复用现有搜索源配置体系） | 与「搜索源」tab 语义重叠，另行设计 |
-| EMH 迁移为契约 provider | `EMH_API` 桥保持现状（见 ../integration/integration-emh-scanner.md）；迁移属 EMH 侧改动 |
-| 扩展间通信 / 依赖声明 | 单扩展自治，无编排 |
-| actions 按钮开放自定义颜色/角标 | 与内置 4 按钮同款外观，视觉统一 |
+| 扩展 GM 存储代理 | v2 |
+| 注册搜索源进 providers 列表 | 用 pickButtons |
+| pickButtons 收进操作栏「⋯」 | 仅 on；折叠语义留给 actions |
+| 组内项独立配置 key | `extpick:{extId}:{groupId}:{itemId}`；组关闭时子项 UI 禁用 |
 
-## 11. 宿主实现对照（供 JCS 侧开发，扩展作者无需阅读）
+## 12. 宿主实现对照
 
-- 注册 API：`JavCodeKit.extensions = { register, unregister, list, isEnabled, setEnabled }`
-- 存储：GM key `jcs_extensions_v1` = `[{url, enabled, name, id, lastStatus, lastLoadAt}]`
-- 配置 UI：配置弹窗新增「扩展」tab（与常规/高亮/操作/搜索源/备份并列）
-- 添加 URL 时宿主预取一次脚本头解析 `@name`/`@version` 作为列表显示名；无油猴头或拉取失败回退显示主机名，不阻塞添加；扩展注册成功后以 manifest 的 name/version 为准回填
-- 注入时机：boot 尾部按列表顺序串行 `<script src>` 注入，单条失败记 `lastStatus` 不阻塞后续
-- 内置 lib/shot 按钮维持 `EMH_API` 直连，不走扩展注册表
+- `JavCodeKit.extensions = { register, unregister, list, isEnabled, setEnabled }`
+- `collectPickButtons` / `renderPickEntryHtml` / `bindPickSubMenus` / `listExtPickSlots`
+- 配置 key：`ext:{id}:{act}`、`extpick:{id}:{btnId}`
+- 宿主版本 **≥ 1.5.80**
+
+## 13. 版本记录
+
+| 契约 | 宿主 | 变更 |
+|---|---|---|
+| v1 | ≥1.5.73 | actions / styles / mounts |
+| v1.1 | ≥1.5.79 | +pickButtons 叶子；actions 操作 tab |
+| **v1.1（修订）** | **≥1.5.81** | pickButtons **二级按钮组**（`items`）；组/叶子进【操作】tab |

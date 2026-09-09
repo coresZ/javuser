@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         通用番号扫描 & 多源搜索
 // @namespace    http://tampermonkey.net/
-// @version      1.5.76
-// @description  扫描页面番号，多源搜索与页内预览（iframe/GM 自渲染、拒绝自动降级）、字幕/原名下载、页面高亮自定义、番号库协作（Enhanced_Media_Helper）、扩展宿主（第三方油猴库接入）、全站配置备份（WebDAV 可加密）、window.JavCodeKit 开放 API
+// @version      1.5.86
+// @description  扫描页面番号，多源搜索与页内预览（iframe/GM 自渲染、拒绝自动降级）、字幕/原名下载、页面高亮自定义、番号库协作（Enhanced_Media_Helper）、扩展宿主（第三方油猴库接入，含选源 picker 按钮组 pickButtons）、全站配置备份（WebDAV 可加密）、window.JavCodeKit 开放 API
 // @author       You
 // @include      *://*jav*/*
+// @include      *://whos.tv/*
 // @include      https://btnets.net/*
 // @include      *://*av*/*
 // @include      *://*fc2*/*
@@ -57,8 +58,8 @@
     if (_pageWin.JavCodeKit && _pageWin.JavCodeKit.__ready) return;
 
     const NS = 'jcs';
-    const STYLE_VER = '1.5.76';
-    const SCRIPT_VER = '1.5.76';
+    const STYLE_VER = '1.5.86';
+    const SCRIPT_VER = '1.5.86';
     const IS_CBOX = /(^|\.)cbox\.ws$/i.test(location.hostname || '');
     const CBOX_MSG_SOURCE = 'jcs-cbox';
     const ENC_MARK = 'jcs-aes-gcm-v1';
@@ -76,6 +77,7 @@
     const PROVIDER_BLACKLIST_KEY = 'jcs_provider_blacklist_v1';
     /** 扩展宿主：外部库 URL 列表（形态 B 注入源；扩展能力经 JavCodeKit.extensions 注册） */
     const JCS_EXT_KEY = 'jcs_extensions_v1';
+    const PICK_UI_KEY = 'jcs_pick_ui_v1'; // { layout: 'sections'|'flat', extStyle: 'classic'|'compact' }
     const HL_OPT_KEY = 'jcs_hl_opts_v1';
     const SUB_OPT_KEY = 'jcs_sub_filename_v1';
     const SUB_HIST_KEY = 'jcs_sub_hist_v1';
@@ -87,7 +89,7 @@
     /** 脚本级配置键（跨站点共享；优先 GM 存储） */
     const STORE_KEYS = [
         PROVIDERS_KEY, PROVIDER_KEY, HIST_KEY, PANEL_KEY, FAB_POS_KEY, THEME_KEY,
-        FRAME_BLOCK_KEY, FRAME_ALLOW_KEY, EXT_MODE_KEY, PROVIDER_BLACKLIST_KEY, JCS_EXT_KEY, HL_OPT_KEY, SUB_OPT_KEY, SUB_HIST_KEY,
+        FRAME_BLOCK_KEY, FRAME_ALLOW_KEY, EXT_MODE_KEY, PROVIDER_BLACKLIST_KEY, JCS_EXT_KEY, PICK_UI_KEY, HL_OPT_KEY, SUB_OPT_KEY, SUB_HIST_KEY,
         SITES_KEY, WEBDAV_KEY
     ];
 
@@ -434,6 +436,41 @@
         lib: { on: true, fold: false },
         shot: { on: true, fold: false }
     };
+    function parseCodeActionEntry(v, fallbackOn) {
+        const out = { on: fallbackOn !== false, fold: false };
+        if (v == null) return out;
+        if (typeof v === 'boolean') {
+            out.on = v;
+            return out;
+        }
+        if (typeof v === 'object') {
+            if (typeof v.on === 'boolean') out.on = v.on;
+            if (typeof v.fold === 'boolean') out.fold = v.fold;
+        }
+        return out;
+    }
+
+    /** 已注册扩展的操作条插槽（设置页 / 折叠配置用）key = ext:{id}:{act} */
+    function listExtActionSlots() {
+        const out = [];
+        if (typeof _extReg === 'undefined') return out;
+        Array.from(_extReg.values()).forEach((rec) => {
+            if (!rec || !Array.isArray(rec.actions)) return;
+            rec.actions.forEach((a) => {
+                if (!a || !a.act) return;
+                out.push({
+                    key: 'ext:' + rec.id + ':' + a.act,
+                    extId: rec.id,
+                    act: a.act,
+                    title: a.title || a.act,
+                    extName: rec.name || rec.id,
+                    extEnabled: !!rec.enabled
+                });
+            });
+        });
+        return out;
+    }
+
     function normalizeCodeActions(ca) {
         const base = {};
         Object.keys(DEFAULT_CODE_ACTIONS).forEach((k) => {
@@ -441,16 +478,29 @@
         });
         if (ca && typeof ca === 'object') {
             Object.keys(DEFAULT_CODE_ACTIONS).forEach((k) => {
-                const v = ca[k];
-                if (v == null) return;
-                if (typeof v === 'boolean') {
-                    base[k].on = v; // 旧布尔格式兼容
-                } else if (typeof v === 'object') {
-                    if (typeof v.on === 'boolean') base[k].on = v.on;
-                    if (typeof v.fold === 'boolean') base[k].fold = v.fold;
-                }
+                if (ca[k] == null) return;
+                base[k] = parseCodeActionEntry(ca[k], true);
+            });
+            // 保留扩展操作按钮 ext:{id}:{act} 与选源按钮/组 extpick:{id}:{btn}
+            Object.keys(ca).forEach((k) => {
+                if (k.indexOf('ext:') !== 0 && k.indexOf('extpick:') !== 0) return;
+                base[k] = parseCodeActionEntry(ca[k], true);
             });
         }
+        // 已注册但尚未写入存储的扩展按钮 / 选源按钮组：默认显示、不折叠
+        listExtActionSlots().forEach((slot) => {
+            if (!base[slot.key]) base[slot.key] = { on: true, fold: false };
+        });
+        try {
+            listExtPickSlots().forEach((slot) => {
+                if (!base[slot.key]) base[slot.key] = { on: true, fold: false };
+                if (slot.items && slot.items.length) {
+                    slot.items.forEach((it) => {
+                        if (!base[it.key]) base[it.key] = { on: true, fold: false };
+                    });
+                }
+            });
+        } catch (e) { /* listExtPickSlots 可能尚未定义于早期调用 */ }
         return base;
     }
 
@@ -484,12 +534,47 @@
         return h === p || h.endsWith('.' + p);
     }
 
-    // ─── 扩展宿主（Extension Contract v1，规范见 docs/jav-code-scanner/jcs-extension-contract.md）───
-    // 三类扩展点：actions（番号操作按钮）/ styles（全站样式）/ mounts（页面 DOM 挂载）
+    // ─── 扩展宿主（Extension Contract v1.1，规范见 docs/jav-code-scanner/jcs-extension-contract.md）───
+    // 四类扩展点：actions（番号操作条图标）/ pickButtons（选源文字按钮或二级按钮组）/ styles / mounts
     // 注册入口：JavCodeKit.extensions.register(manifest)；形态 B 的 URL 列表存 JCS_EXT_KEY
-    const EXT_LIMITS = { id: 64, name: 40, version: 20, act: 32, title: 20, icon: 2048 };
+    const EXT_LIMITS = {
+        id: 64, name: 40, version: 20, act: 32, title: 20, icon: 2048,
+        pickBtn: 4,       // 每扩展顶层 pick 条目上限（叶子或组）
+        pickLabel: 16,    // label 最大长度（紧凑样式展示截断，完整含义靠 title tip）
+        pickItem: 8       // 每组 items 上限
+    };
+    // 选源面板 UI：layout=sections 方案 A 分区；flat=旧单行；extStyle=classic 文字 / compact 标准宽+图标优先
+    // layout 固定经典单行；extStyle：classic 文字 / compact 图标优先
+    const DEFAULT_PICK_UI = { layout: 'flat', extStyle: 'classic' };
+    function normalizePickUi(raw) {
+        const o = raw && typeof raw === 'object' ? raw : {};
+        return {
+            layout: 'flat',
+            extStyle: o.extStyle === 'compact' ? 'compact' : 'classic'
+        };
+    }
+    function loadPickUi() {
+        try {
+            const ui = normalizePickUi(storeGetJson(PICK_UI_KEY, null));
+            state.pickUi = ui;
+            return ui;
+        } catch (e) {
+            state.pickUi = Object.assign({}, DEFAULT_PICK_UI);
+            return state.pickUi;
+        }
+    }
+    function savePickUi(partial) {
+        const next = normalizePickUi(Object.assign({}, state.pickUi || DEFAULT_PICK_UI, partial || {}));
+        state.pickUi = next;
+        storeSetJson(PICK_UI_KEY, next);
+        return next;
+    }
+    function getPickUi() {
+        return state.pickUi || loadPickUi();
+    }
+    const EXT_PICK_GLOBAL_MAX = 8; // 选源菜单内扩展顶层按钮/组全局上限，超出按 order 截断
     const EXT_DEFAULT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3.2"/></svg>';
-    const _extReg = new Map();      // id → { id, name, version, enabled, source, actions:[], styles:[], mounts:[] }（validateExtensionManifest 返回形状）
+    const _extReg = new Map();      // id → { id, name, version, enabled, source, actions:[], pickButtons:[], styles:[], mounts:[] }
     const _extCleanups = new Map(); // id → [fn]（逆序执行的卸载回调）
     const _extSpaBound = { on: false, t: null };
 
@@ -559,6 +644,61 @@
             if (typeof a.onClick !== 'function') throw new Error('actions[].onClick 必须为函数');
             if (a.icon != null && (typeof a.icon !== 'string' || !a.icon.includes('<svg') || a.icon.length > EXT_LIMITS.icon)) throw new Error('actions[].icon 非法（需含 <svg，≤' + EXT_LIMITS.icon + ' 字符）');
         });
+        const picks = Array.isArray(m.pickButtons) ? m.pickButtons : [];
+        if (picks.length > EXT_LIMITS.pickBtn) throw new Error('pickButtons 每扩展最多 ' + EXT_LIMITS.pickBtn + ' 个（叶子或按钮组）');
+        const pickSeen = new Set();
+        picks.forEach((b, bi) => {
+            const bid = String(b && b.id || '').trim();
+            if (!bid || bid.length > EXT_LIMITS.act || !/^[a-z0-9][a-z0-9-]*$/i.test(bid)) {
+                throw new Error('pickButtons[].id 非法（kebab-case，≤' + EXT_LIMITS.act + ' 字符）');
+            }
+            if (pickSeen.has(bid)) throw new Error('pickButtons[].id 重复：' + bid);
+            pickSeen.add(bid);
+            const label = String(b && b.label || '').trim();
+            if (!label || label.length > EXT_LIMITS.pickLabel) {
+                throw new Error('pickButtons[].label 非法（≤' + EXT_LIMITS.pickLabel + ' 字符）');
+            }
+            if (b.title != null && String(b.title).length > EXT_LIMITS.title) {
+                throw new Error('pickButtons[].title 非法（≤' + EXT_LIMITS.title + ' 字符）');
+            }
+            if (b.icon != null && (typeof b.icon !== 'string' || !b.icon.includes('<svg') || b.icon.length > EXT_LIMITS.icon)) {
+                throw new Error('pickButtons[].icon 非法（需含 <svg，≤' + EXT_LIMITS.icon + ' 字符）');
+            }
+            const items = Array.isArray(b.items) ? b.items : null;
+            if (items && items.length) {
+                // 二级按钮组：必须有 items，组级无需 onClick
+                if (items.length > EXT_LIMITS.pickItem) {
+                    throw new Error('pickButtons[].items 每组最多 ' + EXT_LIMITS.pickItem + ' 个');
+                }
+                const itemSeen = new Set();
+                items.forEach((it, ii) => {
+                    const iid = String(it && it.id || '').trim();
+                    if (!iid || iid.length > EXT_LIMITS.act || !/^[a-z0-9][a-z0-9-]*$/i.test(iid)) {
+                        throw new Error('pickButtons[' + bi + '].items[' + ii + '].id 非法');
+                    }
+                    if (itemSeen.has(iid)) throw new Error('pickButtons[].items[].id 重复：' + iid);
+                    itemSeen.add(iid);
+                    const ilabel = String(it && it.label || '').trim();
+                    if (!ilabel || ilabel.length > EXT_LIMITS.pickLabel) {
+                        throw new Error('pickButtons[].items[].label 非法（≤' + EXT_LIMITS.pickLabel + ' 字符）');
+                    }
+                    if (typeof it.onClick !== 'function') {
+                        throw new Error('pickButtons[].items[].onClick 必须为函数');
+                    }
+                    if (it.title != null && String(it.title).length > EXT_LIMITS.title) {
+                        throw new Error('pickButtons[].items[].title 非法（≤' + EXT_LIMITS.title + ' 字符）');
+                    }
+                    if (it.icon != null && (typeof it.icon !== 'string' || !it.icon.includes('<svg') || it.icon.length > EXT_LIMITS.icon)) {
+                        throw new Error('pickButtons[].items[].icon 非法（需含 <svg，≤' + EXT_LIMITS.icon + ' 字符）');
+                    }
+                });
+            } else {
+                // 叶子按钮：必须有 onClick
+                if (typeof b.onClick !== 'function') {
+                    throw new Error('pickButtons[].onClick 必须为函数（或提供 items 作为按钮组）');
+                }
+            }
+        });
         (Array.isArray(m.styles) ? m.styles : []).forEach((s) => {
             if (!s || typeof s.css !== 'string' || !s.css.trim()) throw new Error('styles[].css 非法');
         });
@@ -571,6 +711,35 @@
             name: name,
             version: ver,
             actions: acts.map((a) => ({ act: String(a.act).trim(), title: String(a.title).trim(), icon: typeof a.icon === 'string' ? a.icon : '', onClick: a.onClick })),
+            pickButtons: picks.map((b) => {
+                const base = {
+                    id: String(b.id).trim(),
+                    label: String(b.label).trim(),
+                    title: b.title != null ? String(b.title).trim() : '',
+                    icon: typeof b.icon === 'string' && b.icon.includes('<svg') ? b.icon : '',
+                    order: typeof b.order === 'number' && isFinite(b.order) ? b.order : 0,
+                    match: b.match == null ? null : b.match
+                };
+                const items = Array.isArray(b.items) && b.items.length
+                    ? b.items.map((it) => ({
+                        id: String(it.id).trim(),
+                        label: String(it.label).trim(),
+                        title: it.title != null ? String(it.title).trim() : '',
+                        icon: typeof it.icon === 'string' && it.icon.includes('<svg') ? it.icon : '',
+                        onClick: it.onClick
+                    }))
+                    : null;
+                if (items) {
+                    base.kind = 'group';
+                    base.items = items;
+                    base.onClick = null;
+                } else {
+                    base.kind = 'leaf';
+                    base.items = null;
+                    base.onClick = b.onClick;
+                }
+                return base;
+            }),
             styles: (Array.isArray(m.styles) ? m.styles : []).map((s) => ({ css: String(s.css), match: s.match == null ? null : s.match })),
             mounts: (Array.isArray(m.mounts) ? m.mounts : []).map((mn) => ({ match: mn.match, mount: mn.mount, unmount: typeof mn.unmount === 'function' ? mn.unmount : null }))
         };
@@ -618,6 +787,471 @@
         _extCleanups.delete(id);
     }
 
+    /**
+     * 收集启用扩展的选源按钮/按钮组（契约 v1.1+ pickButtons）
+     * 叶子 = kind:'leaf'；组 = kind:'group' + items[]
+     * 受【操作】tab 配置 on 控制；按 order 升序；全局最多 EXT_PICK_GLOBAL_MAX
+     */
+    function collectPickButtons() {
+        const ca = normalizeCodeActions(state && state.codeActions);
+        const out = [];
+        Array.from(_extReg.values()).forEach((rec) => {
+            if (!rec.enabled || !Array.isArray(rec.pickButtons) || !rec.pickButtons.length) return;
+            rec.pickButtons.forEach((b) => {
+                if (!extMatchHit(b.match)) return;
+                const cfgKey = 'extpick:' + rec.id + ':' + b.id;
+                const cfg = ca[cfgKey] || { on: true, fold: false };
+                if (!cfg.on) return;
+                if (b.kind === 'group' && Array.isArray(b.items) && b.items.length) {
+                    const items = b.items.map((it) => {
+                        const itemCfgKey = 'extpick:' + rec.id + ':' + b.id + ':' + it.id;
+                        const itemCfg = ca[itemCfgKey] || { on: true, fold: false };
+                        return {
+                            key: 'ext:' + rec.id + ':' + b.id + ':' + it.id,
+                            cfgKey: itemCfgKey,
+                            id: it.id,
+                            label: it.label,
+                            title: it.title || (b.label + ' · ' + it.label),
+                            icon: it.icon || '',
+                            onClick: it.onClick,
+                            on: itemCfg.on !== false
+                        };
+                    }).filter((it) => it.on);
+                    if (!items.length) return; // 组开着但组内全关 → 不展示入口
+                    out.push({
+                        kind: 'group',
+                        key: cfgKey,
+                        groupKey: 'ext:' + rec.id + ':' + b.id,
+                        extId: rec.id,
+                        btnId: b.id,
+                        label: b.label,
+                        title: b.title || (rec.name + ' · ' + b.label),
+                        icon: b.icon || '',
+                        order: typeof b.order === 'number' ? b.order : 0,
+                        fold: !!cfg.fold,
+                        extName: rec.name,
+                        items: items
+                    });
+                } else if (typeof b.onClick === 'function') {
+                    out.push({
+                        kind: 'leaf',
+                        key: cfgKey,
+                        pickKey: 'ext:' + rec.id + ':' + b.id,
+                        extId: rec.id,
+                        btnId: b.id,
+                        label: b.label,
+                        title: b.title || (rec.name + ' · ' + b.label),
+                        icon: b.icon || '',
+                        order: typeof b.order === 'number' ? b.order : 0,
+                        fold: !!cfg.fold,
+                        onClick: b.onClick,
+                        extName: rec.name
+                    });
+                }
+            });
+        });
+        out.sort((a, b) => (a.order - b.order) || String(a.key).localeCompare(String(b.key)));
+        return out.slice(0, EXT_PICK_GLOBAL_MAX);
+    }
+
+    /**
+     * 设置页列出扩展选源叶子/按钮组（组内含 items 供逐项开关）
+     * key: extpick:{extId}:{btnId} 或 extpick:{extId}:{groupId}:{itemId}
+     */
+    function listExtPickSlots() {
+        const out = [];
+        if (typeof _extReg === 'undefined') return out;
+        Array.from(_extReg.values()).forEach((rec) => {
+            if (!rec || !Array.isArray(rec.pickButtons)) return;
+            rec.pickButtons.forEach((b) => {
+                const isGroup = b.kind === 'group' && Array.isArray(b.items) && b.items.length;
+                const primary = (b.title && String(b.title).trim()) || b.label;
+                const slot = {
+                    key: 'extpick:' + rec.id + ':' + b.id,
+                    extId: rec.id,
+                    btnId: b.id,
+                    label: b.label,
+                    title: primary,
+                    extName: rec.name || rec.id,
+                    extEnabled: !!rec.enabled,
+                    kind: isGroup ? 'group' : 'leaf',
+                    itemCount: isGroup ? b.items.length : 0,
+                    items: null
+                };
+                if (isGroup) {
+                    slot.items = b.items.map((it) => ({
+                        key: 'extpick:' + rec.id + ':' + b.id + ':' + it.id,
+                        id: it.id,
+                        label: it.label,
+                        title: (it.title && String(it.title).trim()) || it.label,
+                        parentKey: slot.key
+                    }));
+                }
+                out.push(slot);
+            });
+        });
+        return out;
+    }
+
+    /** 选源菜单已打开时静默重建列表（扩展注册/开关后刷新 pickButtons） */
+    function refreshPickerIfOpen() {
+        try {
+            if (typeof isPickerOpen !== 'function' || !isPickerOpen()) return;
+            const code = state.active;
+            if (!code) return;
+            const anchor = state.pickAnchor;
+            // 强制重开（跳过 toggle 关闭分支）：清空锚点再 open
+            state.pickAnchor = null;
+            openProviderPicker(code, anchor);
+        } catch (e) { /* ignore */ }
+    }
+
+    /** 解析 data-pick：ext:{extId}:{btnId} 或 ext:{extId}:{groupId}:{itemId} */
+    function resolveExtPickDef(key) {
+        const parts = String(key || '').split(':');
+        if (parts[0] !== 'ext' || parts.length < 3) return null;
+        const rec = _extReg.get(parts[1]);
+        if (!rec || !rec.enabled) return null;
+        if (parts.length === 3) {
+            const def = (rec.pickButtons || []).find((x) => x.id === parts[2]);
+            if (!def || typeof def.onClick !== 'function') return null;
+            return { rec: rec, onClick: def.onClick, label: def.label };
+        }
+        // group item
+        const group = (rec.pickButtons || []).find((x) => x.id === parts[2] && x.kind === 'group');
+        if (!group || !Array.isArray(group.items)) return null;
+        const item = group.items.find((x) => x.id === parts.slice(3).join(':'));
+        if (!item || typeof item.onClick !== 'function') return null;
+        return { rec: rec, onClick: item.onClick, label: item.label };
+    }
+
+    /**
+     * 执行扩展 pickButton / 组内项点击
+     * @returns {boolean} 是否命中并开始执行
+     */
+    function runExtPickButtonClick(btn, code) {
+        const key = (btn && btn.getAttribute('data-pick')) || '';
+        const resolved = resolveExtPickDef(key);
+        if (!resolved) return false;
+        const c = String(code || '').trim().toUpperCase();
+        if (!c) {
+            showToast('请先选择番号');
+            return true;
+        }
+        if (btn) btn.style.transform = 'scale(.94)';
+        const flash = () => {
+            if (!btn) return;
+            btn.classList.add('is-done');
+            clearTimeout(btn._jcsT);
+            btn._jcsT = setTimeout(() => btn.classList.remove('is-done'), 900);
+        };
+        let ret;
+        try {
+            ret = resolved.onClick(c, extCtx(c));
+        } catch (err) {
+            console.error('[JCS ext] pickButton onClick 失败：' + (resolved.rec && resolved.rec.id), err);
+            showToast('扩展 ' + ((resolved.rec && resolved.rec.name) || '') + ' 执行失败', 'error');
+            return true;
+        }
+        if (ret && typeof ret.then === 'function') {
+            if (btn) btn.style.opacity = '0.5';
+            ret.then((rv) => {
+                if (btn) btn.style.opacity = '';
+                if (rv === 'done' || (rv && rv.ok)) flash();
+                if (rv && rv.close && typeof closeProviderPicker === 'function') closeProviderPicker();
+                closeAllPickSubs();
+            }).catch((err) => {
+                console.error('[JCS ext] pickButton 异步失败：' + (resolved.rec && resolved.rec.id), err);
+                if (btn) btn.style.opacity = '';
+                showToast('扩展 ' + ((resolved.rec && resolved.rec.name) || '') + ' 执行失败', 'error');
+            });
+            return true;
+        }
+        if (ret === 'done' || (ret && ret.ok)) flash();
+        if (ret && ret.close && typeof closeProviderPicker === 'function') closeProviderPicker();
+        closeAllPickSubs();
+        return true;
+    }
+
+    function closeAllPickSubs() {
+        /* 二级菜单已改为独立弹窗，保留空实现以免旧调用报错 */
+        closePickGroupPop();
+    }
+
+    /** 文案视觉宽度：CJK≈2 单位、Latin≈1；目标约 4 单位（≈2 中文 / 4 英文） */
+    function pickLabelShort(label, maxUnits) {
+        const s = String(label || '').trim();
+        if (!s) return '';
+        const limit = typeof maxUnits === 'number' && maxUnits > 0 ? maxUnits : 4;
+        let units = 0;
+        let out = '';
+        for (const ch of s) {
+            const u = /[\u2E80-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/.test(ch) ? 2 : 1;
+            if (units + u > limit) {
+                out += '…';
+                break;
+            }
+            out += ch;
+            units += u;
+        }
+        return out;
+    }
+
+    /** 扩展按钮内容：优先 icon；无 icon 时文案固定约 2 中文/4 英文宽度；title 作 tip */
+    function renderPickBtnContent(label, title, icon, isGroup) {
+        const ui = getPickUi();
+        const caret = isGroup ? '<span class="jcs-pick-caret" aria-hidden="true">▸</span>' : '';
+        const hasIcon = !!(icon && String(icon).indexOf('<svg') >= 0);
+        // compact：有图标只显示图标；无图标用短文案
+        if (ui.extStyle === 'compact') {
+            if (hasIcon) return icon + caret;
+            const short = pickLabelShort(label, 4);
+            return '<span class="jcs-pick-txt">' + escapeHtml(short) + '</span>' + caret;
+        }
+        // classic：有图标可 icon+短文案；无图标固定短文案（长度不随全称拉长）
+        if (hasIcon) {
+            const short = pickLabelShort(label, 4);
+            return icon + '<span class="jcs-pick-txt">' + escapeHtml(short) + '</span>' + caret;
+        }
+        return '<span class="jcs-pick-txt">' + escapeHtml(pickLabelShort(label, 4)) + '</span>' + caret;
+    }
+
+    function renderPickEntryHtml(b) {
+        const tip = escapeHtml(b.title || b.label || '');
+        const hasIcon = !!(b.icon && String(b.icon).indexOf('<svg') >= 0);
+        const iconCls = hasIcon ? ' has-icon' : '';
+        if (b.kind === 'group') {
+            // 组：入口按钮；点击下拉（竖排图标子项）
+            return '<button type="button" class="jcs-pick-btn jcs-pick-btn-ext jcs-pick-btn-group' + iconCls +
+                '" data-pick-group="' + escapeHtml(b.groupKey) + '" title="' + tip +
+                '" aria-haspopup="menu">' +
+                renderPickBtnContent(b.label, b.title || b.label, b.icon || '', true) +
+                '</button>';
+        }
+        return '<button type="button" class="jcs-pick-btn jcs-pick-btn-ext' + iconCls + '" data-pick="' +
+            escapeHtml(b.pickKey) + '" title="' + tip + '">' +
+            renderPickBtnContent(b.label, b.title || b.label, b.icon || '', false) +
+            '</button>';
+    }
+
+    /** 一行最多 5 槽：超出时前 4 个 +「⋯」收起其余 */
+    const PICK_ROW_MAX = 5;
+    function buildPickOverflowRow(rowClass, btnHtmls) {
+        const list = Array.isArray(btnHtmls) ? btnHtmls.filter(Boolean) : [];
+        if (!list.length) return '';
+        if (list.length <= PICK_ROW_MAX) {
+            return '<div class="jcs-pick-row ' + rowClass + '">' + list.join('') + '</div>';
+        }
+        const shown = list.slice(0, PICK_ROW_MAX - 1);
+        const hidden = list.slice(PICK_ROW_MAX - 1);
+        return '<div class="jcs-pick-row ' + rowClass + '">' + shown.join('') +
+            '<span class="jcs-pick-more-wrap">' +
+            '<button type="button" class="jcs-pick-btn jcs-pick-more" title="更多" aria-haspopup="true">⋯</button>' +
+            '<div class="jcs-pick-more-pop" hidden role="menu">' + hidden.join('') + '</div>' +
+            '</span></div>';
+    }
+
+    function bindPickRowOverflow(root) {
+        if (!root) return;
+        root.querySelectorAll('.jcs-pick-more-wrap').forEach((wrap) => {
+            const more = wrap.querySelector('.jcs-pick-more');
+            const pop = wrap.querySelector('.jcs-pick-more-pop');
+            if (!more || !pop) return;
+            more.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const willOpen = pop.hidden;
+                // 关闭其它 more
+                root.querySelectorAll('.jcs-pick-more-pop:not([hidden])').forEach((p) => {
+                    if (p !== pop) {
+                        p.hidden = true;
+                        const m = p.parentElement && p.parentElement.querySelector('.jcs-pick-more');
+                        if (m) m.classList.remove('is-open');
+                    }
+                });
+                closePickGroupPop();
+                pop.hidden = !willOpen;
+                more.classList.toggle('is-open', willOpen);
+            };
+        });
+    }
+
+    function closePickMorePops() {
+        document.querySelectorAll('.jcs-pick-more-pop:not([hidden])').forEach((p) => {
+            p.hidden = true;
+            const m = p.parentElement && p.parentElement.querySelector('.jcs-pick-more');
+            if (m) m.classList.remove('is-open');
+        });
+    }
+
+    function closePickGroupPop() {
+        const el = document.getElementById(NS + '-pick-gpop');
+        if (el) {
+            el.classList.remove('show');
+            el.setAttribute('aria-hidden', 'true');
+        }
+        document.querySelectorAll('.jcs-pick-btn-group.is-open').forEach((b) => {
+            b.classList.remove('is-open');
+            b.setAttribute('aria-expanded', 'false');
+        });
+        closePickMorePops();
+    }
+
+    function ensurePickGroupPop() {
+        injectStyles();
+        let el = document.getElementById(NS + '-pick-gpop');
+        if (el && el.getAttribute('data-ver') === SCRIPT_VER) return el;
+        if (el) try { el.remove(); } catch (e) { /* ignore */ }
+        el = document.createElement('div');
+        el.id = NS + '-pick-gpop';
+        el.setAttribute('data-ver', SCRIPT_VER);
+        el.setAttribute('aria-hidden', 'true');
+        // 下拉弹层：透明遮罩点空白关闭 + 锚定卡片
+        el.innerHTML =
+            '<div class="jcs-gpop-mask" data-gpop-close="1"></div>' +
+            '<div class="jcs-gpop-card" role="menu" aria-label="扩展按钮组">' +
+            '<div class="jcs-gpop-grid" id="' + NS + '-gpop-grid"></div>' +
+            '</div>';
+        mountUI(el);
+        el.addEventListener('click', (e) => {
+            const t = e.target;
+            if (t && t.getAttribute && t.getAttribute('data-gpop-close') === '1') {
+                closePickGroupPop();
+            }
+        });
+        if (!ensurePickGroupPop._esc) {
+            ensurePickGroupPop._esc = true;
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') closePickGroupPop();
+            }, true);
+        }
+        return el;
+    }
+
+    /** 按钮组下拉弹窗：锚定在组按钮下方，不撑开 pick */
+    function openPickGroupPop(group, code, anchorBtn) {
+        if (!group || !group.items || !group.items.length) return;
+        const el = ensurePickGroupPop();
+        const card = el.querySelector('.jcs-gpop-card');
+        const grid = el.querySelector('#' + NS + '-gpop-grid');
+        document.querySelectorAll('.jcs-pick-btn-group.is-open').forEach((b) => {
+            if (b !== anchorBtn) {
+                b.classList.remove('is-open');
+                b.setAttribute('aria-expanded', 'false');
+            }
+        });
+        if (grid) {
+            // 子项：与内置操作条一致，仅图标 + title tip，竖排
+            grid.innerHTML = group.items.map((it) => {
+                const tip = escapeHtml(it.title || it.label || '');
+                const icon = (it.icon && String(it.icon).indexOf('<svg') >= 0)
+                    ? it.icon
+                    : EXT_DEFAULT_ICON;
+                return '<button type="button" class="jcs-gpop-btn has-icon" data-pick="' +
+                    escapeHtml(it.key) + '" title="' + tip + '" role="menuitem">' +
+                    icon + '</button>';
+            }).join('');
+            grid.querySelectorAll('[data-pick]').forEach((btn) => {
+                btn.onclick = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    runExtPickButtonClick(btn, code);
+                    closePickGroupPop();
+                };
+            });
+        }
+        el.classList.add('show');
+        el.setAttribute('aria-hidden', 'false');
+        if (anchorBtn) {
+            anchorBtn.classList.add('is-open');
+            anchorBtn.setAttribute('aria-expanded', 'true');
+        }
+        // 锚定到按钮下方（视口内夹紧）
+        if (card && anchorBtn && anchorBtn.getBoundingClientRect) {
+            const r = anchorBtn.getBoundingClientRect();
+            const gap = 6;
+            card.style.position = 'fixed';
+            card.style.visibility = 'hidden';
+            card.style.left = '0';
+            card.style.top = '0';
+            const cw = card.offsetWidth || 160;
+            const ch = card.offsetHeight || 80;
+            let left = r.left;
+            let top = r.bottom + gap;
+            const vw = window.innerWidth || 360;
+            const vh = window.innerHeight || 640;
+            if (left + cw > vw - 8) left = Math.max(8, vw - cw - 8);
+            if (left < 8) left = 8;
+            if (top + ch > vh - 8) top = Math.max(8, r.top - ch - gap);
+            card.style.left = Math.round(left) + 'px';
+            card.style.top = Math.round(top) + 'px';
+            card.style.visibility = '';
+        }
+    }
+
+    function bindPickExtButtons(root, code) {
+        if (!root) return;
+        const groups = collectPickButtons().filter((x) => x.kind === 'group');
+        root.querySelectorAll('.jcs-pick-btn-group[data-pick-group]').forEach((btn) => {
+            btn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const key = btn.getAttribute('data-pick-group') || '';
+                const g = groups.find((x) => x.groupKey === key);
+                if (!g) return;
+                // 再点同一组 → 收起
+                if (btn.classList.contains('is-open')) {
+                    closePickGroupPop();
+                    return;
+                }
+                openPickGroupPop(g, code, btn);
+            };
+        });
+        root.querySelectorAll('.jcs-pick-btn-ext[data-pick]').forEach((btn) => {
+            btn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                closePickGroupPop();
+                runExtPickButtonClick(btn, code);
+            };
+        });
+    }
+
+    /**
+     * 大窗操作区渲染扩展 pickButtons / 按钮组（有当前番号时显示）
+     * 挂载点：#jcs-pick-ext-btns（番号操作条下方）
+     */
+    function renderPanelPickButtons() {
+        const box = document.getElementById(NS + '-pick-ext-btns');
+        if (!box) return;
+        const code = String((state && state.active) || '').trim().toUpperCase();
+        const list = collectPickButtons();
+        if (!code || !list.length) {
+            box.innerHTML = '';
+            box.hidden = true;
+            box.setAttribute('aria-hidden', 'true');
+            return;
+        }
+        box.hidden = false;
+        box.setAttribute('aria-hidden', 'false');
+        const ui = getPickUi();
+        box.setAttribute('data-ext-style', ui.extStyle);
+        box.innerHTML =
+            '<span class="jcs-pick-ext-label" title="扩展选源按钮 / 按钮组">扩展</span>' +
+            list.map(renderPickEntryHtml).join('');
+        bindPickExtButtons(box, code);
+    }
+
+    /** 扩展变更后统一刷新操作条 + 选源菜单 + 设置「操作」页 + 大窗扩展按钮 */
+    function refreshExtUi() {
+        try { ensureCodeActions(true); } catch (e) { /* ignore */ }
+        try { updateCodeBar(true); } catch (e) { /* ignore */ }
+        try { refreshPickerIfOpen(); } catch (e) { /* ignore */ }
+        try { renderPanelPickButtons(); } catch (e) { /* ignore */ }
+        try { syncCodeActionsUi(); } catch (e) { /* ignore */ }
+        try { renderExtensionsTab(); } catch (e) { /* ignore */ }
+    }
+
     /** 注册（同 id 覆盖旧版：先 cleanup 旧实例再激活新实例；契约 §4/§7） */
     function registerExtension(manifest, source) {
         const rec = validateExtensionManifest(manifest);
@@ -635,12 +1269,10 @@
             if (it && (it.id !== rec.id || it.name !== rec.name || it.lastStatus !== 'ok')) {
                 it.id = rec.id; it.name = rec.name; it.lastStatus = 'ok'; it.lastLoadAt = new Date().toISOString();
                 saveExtensionSources(list);
-                renderExtensionsTab();
             }
         }
         showToast('已接入扩展：' + rec.name, 'success');
-        ensureCodeActions(true);
-        renderExtensionsTab();
+        refreshExtUi();
         return rec;
     }
 
@@ -649,8 +1281,7 @@
         if (!rec) return false;
         deactivateExtensionInstance(id);
         _extReg.delete(id);
-        ensureCodeActions(true);
-        renderExtensionsTab();
+        refreshExtUi();
         return true;
     }
 
@@ -668,8 +1299,7 @@
         rec.enabled = next;
         if (next) activateExtensionInstance(rec);
         else deactivateExtensionInstance(id);
-        ensureCodeActions(true);
-        renderExtensionsTab();
+        refreshExtUi();
         return true;
     }
 
@@ -949,6 +1579,7 @@
         embedLite: false,
         hl: Object.assign({}, DEFAULT_HL_OPTS),
         codeActions: Object.assign({}, DEFAULT_CODE_ACTIONS),
+        pickUi: Object.assign({}, DEFAULT_PICK_UI),
         cfgTab: 'general',
         cfgSourceTab: 'providers',
         cfgEditId: '',
@@ -1240,7 +1871,9 @@
         let mainHtml = '';
         let foldHtml = '';
         let hasFold = false;
+        const skipActs = Array.isArray(o.skipActs) ? o.skipActs : [];
         Object.keys(CODE_ACT_DEF).forEach((k) => {
+            if (skipActs.indexOf(k) >= 0) return;
             const c = ca[k];
             if (!c || !c.on) return;
             const d = CODE_ACT_DEF[k];
@@ -1253,14 +1886,22 @@
                 mainHtml += btn;
             }
         });
-        // 扩展按钮（契约 v1 actions 插槽；受扩展自身 enabled 控制，沿用内置按钮外观）
+        // 扩展按钮（契约 actions 插槽；受扩展 enabled + 设置页 on/fold 控制）
         if (typeof _extReg !== 'undefined') {
             Array.from(_extReg.values()).forEach((rec) => {
                 if (!rec.enabled) return;
-                rec.actions.forEach((a) => {
-                    const btn = '<button type="button" class="jcs-act-btn" data-act="ext:' + escapeHtml(rec.id) + ':' + escapeHtml(a.act) +
+                (rec.actions || []).forEach((a) => {
+                    const key = 'ext:' + rec.id + ':' + a.act;
+                    const c = ca[key] || { on: true, fold: false };
+                    if (!c.on) return;
+                    const btn = '<button type="button" class="jcs-act-btn" data-act="' + escapeHtml(key) +
                         '" title="' + escapeHtml(rec.name + ' · ' + a.title) + '">' + (a.icon || EXT_DEFAULT_ICON) + '</button>';
-                    mainHtml += btn;
+                    if (c.fold) {
+                        hasFold = true;
+                        foldHtml += btn;
+                    } else {
+                        mainHtml += btn;
+                    }
                 });
             });
         }
@@ -1464,6 +2105,8 @@
         if (_codeActions) {
             try { _codeActions.setCode(state.active || ''); } catch (e) { /* ignore */ }
         }
+        // 扩展 pickButtons 同步到大窗操作区
+        try { renderPanelPickButtons(); } catch (e) { /* ignore */ }
     }
 
     function chipTitleText(opts) {
@@ -2468,6 +3111,7 @@
 
     function syncCodeActionsUi() {
         const ca = normalizeCodeActions(state.codeActions);
+        state.codeActions = ca;
         const emhOk = isEmhInstalled();
         // EMH 未装：顶部提示 + 依赖 EMH 的按钮行置灰
         const hint = document.getElementById(NS + '-ca-emh-hint');
@@ -2489,34 +3133,125 @@
                 fold.disabled = !(ca[k] && ca[k].on) || (needEmh && !emhOk);
             }
         });
+        // 扩展 actions：动态写入「扩展操作按钮」列表
+        const extBox = document.getElementById(NS + '-ca-ext-list');
+        if (extBox) {
+            const slots = listExtActionSlots();
+            if (!slots.length) {
+                extBox.innerHTML = '<div class="jcs-ca-ext-empty">暂无扩展操作按钮<br><span>在「扩展」页注册带 <code>actions</code> 的扩展后，会出现在这里，可与内置按钮一样显示/折叠。</span></div>';
+            } else {
+                extBox.innerHTML = slots.map((slot) => {
+                    const cfg = ca[slot.key] || { on: true, fold: false };
+                    const offCls = slot.extEnabled ? '' : ' is-ext-off';
+                    return '<div class="jcs-switch-row jcs-ca-row' + offCls + '" data-ca-ext-key="' + escapeHtml(slot.key) + '">' +
+                        '<div class="jcs-ca-name"><b>' + escapeHtml(slot.title) + '</b>' +
+                        '<em>' + escapeHtml(slot.extName) + (slot.extEnabled ? '' : ' · 已停用') +
+                        ' · <code>' + escapeHtml(slot.key) + '</code></em></div>' +
+                        '<span class="jcs-ca-opts">' +
+                        '<label class="jcs-switch" title="显示按钮"><input type="checkbox" data-ca-key="' + escapeHtml(slot.key) + '" data-ca-kind="on"' +
+                        (cfg.on ? ' checked' : '') + (slot.extEnabled ? '' : ' disabled') + ' /><i></i></label>' +
+                        '<label class="jcs-switch" title="收进「⋯」更多菜单"><input type="checkbox" data-ca-key="' + escapeHtml(slot.key) + '" data-ca-kind="fold"' +
+                        (cfg.fold ? ' checked' : '') + (cfg.on && slot.extEnabled ? '' : ' disabled') + ' /><i></i></label>' +
+                        '</span></div>';
+                }).join('');
+            }
+        }
+        // 扩展 pickButtons / 按钮组（组可展开到组内单项开关）
+        const pickBox = document.getElementById(NS + '-ca-pick-list');
+        if (pickBox) {
+            const slots = listExtPickSlots();
+            if (!slots.length) {
+                pickBox.innerHTML = '<div class="jcs-ca-ext-empty">暂无扩展选源按钮<br><span>注册带 <code>pickButtons</code> 的扩展后出现。带 <code>items</code> 的为二级按钮组，可分别开关组与组内项。</span></div>';
+            } else {
+                pickBox.innerHTML = slots.map((slot) => {
+                    const cfg = ca[slot.key] || { on: true, fold: false };
+                    const offCls = slot.extEnabled ? '' : ' is-ext-off';
+                    const groupOff = !cfg.on;
+                    // 主标题：title（更完整）优先，否则 label；副标题只放扩展名 + 类型
+                    const head = escapeHtml(slot.title || slot.label);
+                    const subLabel = slot.label && slot.title && slot.label !== slot.title
+                        ? '<span class="jcs-ca-alias">' + escapeHtml(slot.label) + '</span>'
+                        : '';
+                    const kindTag = slot.kind === 'group'
+                        ? '<span class="jcs-ext-chip is-pick">按钮组 · ' + slot.itemCount + ' 项</span>'
+                        : '<span class="jcs-ext-chip is-pick">单按钮</span>';
+                    let html = '<div class="jcs-ca-pick-block' + offCls + (groupOff ? ' is-group-off' : '') + '">' +
+                        '<div class="jcs-switch-row jcs-ca-row is-parent">' +
+                        '<div class="jcs-ca-name"><b>' + head + '</b>' + subLabel +
+                        '<em>来自 ' + escapeHtml(slot.extName) + (slot.extEnabled ? '' : ' · 已停用') +
+                        ' · ' + kindTag + '</em></div>' +
+                        '<span class="jcs-ca-opts">' +
+                        '<label class="jcs-switch" title="显示整组/按钮"><input type="checkbox" data-ca-key="' +
+                        escapeHtml(slot.key) + '" data-ca-kind="on"' +
+                        (cfg.on ? ' checked' : '') + (slot.extEnabled ? '' : ' disabled') + ' /><i></i></label>' +
+                        '</span></div>';
+                    if (slot.kind === 'group' && slot.items && slot.items.length) {
+                        html += '<div class="jcs-ca-pick-children" role="group" aria-label="' + head + ' 组内按钮">';
+                        slot.items.forEach((it) => {
+                            const icfg = ca[it.key] || { on: true, fold: false };
+                            const childDisabled = !slot.extEnabled || groupOff;
+                            html += '<div class="jcs-switch-row jcs-ca-row is-child' + (childDisabled ? ' is-dim' : '') + '">' +
+                                '<div class="jcs-ca-name"><b>' + escapeHtml(it.title || it.label) + '</b>' +
+                                (it.label && it.title && it.label !== it.title
+                                    ? '<em class="jcs-ca-alias">' + escapeHtml(it.label) + '</em>'
+                                    : '<em>组内项</em>') +
+                                '</div>' +
+                                '<span class="jcs-ca-opts">' +
+                                '<label class="jcs-switch" title="显示该组内按钮"><input type="checkbox" data-ca-key="' +
+                                escapeHtml(it.key) + '" data-ca-kind="on"' +
+                                (icfg.on !== false ? ' checked' : '') +
+                                (childDisabled ? ' disabled' : '') + ' /><i></i></label>' +
+                                '</span></div>';
+                        });
+                        html += '</div>';
+                    }
+                    html += '</div>';
+                    return html;
+                }).join('');
+            }
+        }
+    }
+
+    function applyCodeActionToggle(key, kind, checked) {
+        if (!key) return;
+        const ca = normalizeCodeActions(state.codeActions);
+        const cur = ca[key] || { on: true, fold: false };
+        if (kind === 'fold') {
+            ca[key] = { on: !!cur.on, fold: !!checked };
+        } else {
+            ca[key] = { on: !!checked, fold: !!cur.fold };
+        }
+        saveCodeActions(ca);
+        // 同步折叠开关可用性
+        const foldEl = document.querySelector('#' + NS + '-cfg input[data-ca-key="' + key.replace(/"/g, '') + '"][data-ca-kind="fold"]');
+        if (foldEl) {
+            const onEl = document.querySelector('#' + NS + '-cfg input[data-ca-key="' + key.replace(/"/g, '') + '"][data-ca-kind="on"]');
+            foldEl.disabled = !(onEl && onEl.checked) || !!onEl.disabled;
+        }
+        // 立即重建选源面板 / 预览弹窗操作栏 / 扩展选源行；组开关后刷新子项禁用态
+        try { updateCodeBar(true); } catch (e) { /* ignore */ }
+        try { refreshPickerIfOpen(); } catch (e) { /* ignore */ }
+        try { renderPanelPickButtons(); } catch (e) { /* ignore */ }
+        try { syncCodeActionsUi(); } catch (e) { /* ignore */ }
     }
 
     function bindCodeActionsUi() {
-        Object.keys(DEFAULT_CODE_ACTIONS).forEach((k) => {
-            const on = document.getElementById(NS + '-ca-' + k);
-            if (on && on.dataset.jcsBound !== '1') {
-                on.dataset.jcsBound = '1';
-                on.addEventListener('change', () => {
-                    const ca = normalizeCodeActions(state.codeActions);
-                    ca[k] = { on: !!on.checked, fold: !!(ca[k] && ca[k].fold) };
-                    saveCodeActions(ca);
-                    const fold = document.getElementById(NS + '-ca-' + k + '-fold');
-                    if (fold) fold.disabled = !on.checked;
-                    // 立即生效：强制重建已挂载的操作条（预览弹窗内）；选源面板下次打开自动生效
-                    try { updateCodeBar(true); } catch (e) { /* ignore */ }
-                });
-            }
-            const fold = document.getElementById(NS + '-ca-' + k + '-fold');
-            if (fold && fold.dataset.jcsBound !== '1') {
-                fold.dataset.jcsBound = '1';
-                fold.addEventListener('change', () => {
-                    const ca = normalizeCodeActions(state.codeActions);
-                    ca[k] = { on: !!(ca[k] && ca[k].on), fold: !!fold.checked };
-                    saveCodeActions(ca);
-                    try { updateCodeBar(true); } catch (e) { /* ignore */ }
-                });
-            }
+        const root = document.getElementById(NS + '-cfg');
+        if (!root || root.dataset.jcsCaBound === '1') {
+            // 仍刷新一次扩展列表状态
+            try { syncCodeActionsUi(); } catch (e) { /* ignore */ }
+            return;
+        }
+        root.dataset.jcsCaBound = '1';
+        root.addEventListener('change', (e) => {
+            const t = e.target;
+            if (!t || !t.getAttribute) return;
+            const key = t.getAttribute('data-ca-key');
+            const kind = t.getAttribute('data-ca-kind');
+            if (!key || (kind !== 'on' && kind !== 'fold')) return;
+            applyCodeActionToggle(key, kind, t.checked);
         });
+        try { syncCodeActionsUi(); } catch (e) { /* ignore */ }
     }
 
     function syncHlOptsUi() {
@@ -5026,6 +5761,64 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
 #${NS}-cfg .jcs-blacklist-row button.is-danger:hover{color:var(--jcs-danger);background:rgba(244,63,94,.12);border-color:rgba(244,63,94,.35)}
 /* 行内操作按钮组：固定右侧（扩展 tab 复制/删除/卸载） */
 #${NS}-cfg .jcs-row-ops{display:flex;gap:6px;flex-shrink:0;align-items:center}
+/* 扩展卡片（库脚本列表 / 已注册列表） */
+#${NS}-cfg .jcs-ext-card{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
+  padding:10px 12px;border:1px solid var(--jcs-line);border-radius:12px;
+  background:linear-gradient(180deg,var(--jcs-panel2) 0%,var(--jcs-surface) 100%);
+  transition:border-color .14s ease,opacity .14s ease,box-shadow .14s ease
+}
+#${NS}-cfg .jcs-ext-card:hover{
+  border-color:var(--jcs-chip-line);box-shadow:0 4px 14px rgba(0,0,0,.12)
+}
+#${NS}-cfg .jcs-ext-card.is-off{opacity:.55}
+#${NS}-cfg .jcs-ext-card-main{display:flex;align-items:flex-start;gap:10px;min-width:0;flex:1}
+#${NS}-cfg .jcs-ext-card-main .jcs-switch{flex-shrink:0;margin-top:2px}
+#${NS}-cfg .jcs-ext-card-body{min-width:0;flex:1;display:flex;flex-direction:column;gap:4px}
+#${NS}-cfg .jcs-ext-card-title{
+  font-size:13px;font-weight:700;color:var(--jcs-text);line-height:1.3;
+  display:flex;align-items:center;flex-wrap:wrap;gap:6px;
+  overflow:hidden;text-overflow:ellipsis
+}
+#${NS}-cfg .jcs-ext-ver{
+  font-size:10.5px;font-weight:700;color:var(--jcs-muted);
+  padding:1px 6px;border-radius:999px;border:1px solid var(--jcs-line);
+  background:var(--jcs-fill);letter-spacing:.02em
+}
+#${NS}-cfg .jcs-ext-chips{display:flex;flex-wrap:wrap;gap:4px}
+#${NS}-cfg .jcs-ext-chip{
+  display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:999px;
+  font-size:10.5px;font-weight:700;letter-spacing:.01em;
+  background:var(--jcs-fill);border:1px solid var(--jcs-line);color:var(--jcs-soft)
+}
+#${NS}-cfg .jcs-ext-chip.is-pick{
+  background:var(--jcs-accent-dim);border-color:var(--jcs-accent-line);color:var(--jcs-accent2)
+}
+#${NS}-cfg .jcs-ext-chip.is-style{color:#7dd3fc;border-color:rgba(125,211,252,.35)}
+#${NS}-cfg .jcs-ext-chip.is-mount{color:#c4b5fd;border-color:rgba(196,181,253,.35)}
+#${NS}-cfg .jcs-ext-chip.is-empty{opacity:.7;font-weight:600}
+#${NS}-cfg .jcs-ext-status{
+  font-size:11px;color:var(--jcs-muted);line-height:1.35;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap
+}
+#${NS}-cfg .jcs-ext-status.is-ok{color:var(--jcs-ok)}
+#${NS}-cfg .jcs-ext-status.is-bad{color:var(--jcs-danger)}
+#${NS}-cfg .jcs-ext-id{
+  font:10.5px/1.2 var(--jcs-mono);color:var(--jcs-muted);
+  background:transparent;border:0;padding:0
+}
+#${NS}-cfg .jcs-ext-card-ops{display:flex;gap:6px;flex-shrink:0;align-items:center;padding-top:1px}
+#${NS}-cfg .jcs-ext-card-ops button{
+  height:26px;padding:0 10px;border:1px solid var(--jcs-line);border-radius:8px;
+  background:var(--jcs-fill);color:var(--jcs-muted);cursor:pointer;font:inherit;
+  font-size:11px;font-weight:600;
+  transition:color .12s ease,background .12s ease,border-color .12s ease
+}
+#${NS}-cfg .jcs-ext-card-ops button:hover{color:var(--jcs-text);background:var(--jcs-fill-hover)}
+#${NS}-cfg .jcs-ext-card-ops button.is-danger:hover{
+  color:var(--jcs-danger);background:rgba(244,63,94,.12);border-color:rgba(244,63,94,.35)
+}
+#${NS}-cfg .jcs-empty-src span{display:block;margin-top:4px;font-size:11px;opacity:.8;font-weight:500}
 /* 站点常把 div{overflow:visible!important}，必须 !important 才能出滚动条 */
 #${NS}-cfg .jcs-cfg-body{
   flex:1 1 auto!important;min-height:0!important;max-height:none!important;height:auto!important;
@@ -5113,7 +5906,48 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
 #${NS}-cfg .jcs-ca-row .jcs-ca-name{flex:1;min-width:0}
 #${NS}-cfg .jcs-ca-row .jcs-ca-name b{display:block;font-size:12.5px;font-weight:700;color:var(--jcs-soft)}
 #${NS}-cfg .jcs-ca-row .jcs-ca-name em{display:block;font-size:11.5px;color:var(--jcs-muted);font-style:normal;margin-top:2px;line-height:1.4}
+#${NS}-cfg .jcs-ca-row .jcs-ca-name em code{font:10.5px/1.2 var(--jcs-mono);opacity:.85}
 #${NS}-cfg .jcs-ca-row .jcs-ca-opts{display:inline-flex;align-items:center;gap:8px;flex:0 0 auto}
+#${NS}-cfg .jcs-ca-section-label{
+  margin:12px 0 6px;font-size:11px;font-weight:800;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--jcs-muted)
+}
+#${NS}-cfg .jcs-ca-section-label:first-child{margin-top:0}
+#${NS}-cfg .jcs-ca-ext-list{display:flex;flex-direction:column;gap:0}
+#${NS}-cfg .jcs-ca-row.is-ext-off{opacity:.55}
+#${NS}-cfg .jcs-ca-ext-empty{
+  padding:12px 14px;border:1px dashed var(--jcs-line);border-radius:10px;
+  font-size:12px;color:var(--jcs-muted);line-height:1.45;background:var(--jcs-surface)
+}
+#${NS}-cfg .jcs-ca-ext-empty span{display:block;margin-top:4px;font-size:11px;opacity:.85}
+#${NS}-cfg .jcs-ca-ext-empty code{font:11px var(--jcs-mono)}
+#${NS}-cfg .jcs-ca-pick-block{
+  border:1px solid var(--jcs-line);border-radius:12px;background:var(--jcs-surface);
+  margin-bottom:8px;overflow:hidden
+}
+#${NS}-cfg .jcs-ca-pick-block.is-ext-off{opacity:.55}
+#${NS}-cfg .jcs-ca-pick-block.is-group-off .jcs-ca-pick-children{opacity:.55}
+#${NS}-cfg .jcs-ca-pick-block .jcs-ca-row.is-parent{
+  border:0;border-radius:0;background:transparent;min-height:48px
+}
+#${NS}-cfg .jcs-ca-pick-children{
+  border-top:1px solid var(--jcs-line);padding:4px 0 6px;
+  background:linear-gradient(180deg,var(--jcs-panel2) 0%,var(--jcs-surface) 100%)
+}
+#${NS}-cfg .jcs-ca-row.is-child{
+  border:0;border-radius:0;background:transparent;min-height:40px;
+  padding-left:28px;position:relative
+}
+#${NS}-cfg .jcs-ca-row.is-child::before{
+  content:'';position:absolute;left:16px;top:50%;width:6px;height:6px;
+  border-radius:50%;background:var(--jcs-chip-line);transform:translateY(-50%)
+}
+#${NS}-cfg .jcs-ca-row.is-child.is-dim{opacity:.55}
+#${NS}-cfg .jcs-ca-alias{
+  display:inline-block;margin-left:6px;font-size:11px;font-weight:600;
+  color:var(--jcs-muted);vertical-align:middle
+}
+#${NS}-cfg .jcs-ca-row .jcs-ca-name em .jcs-ext-chip{vertical-align:middle;margin-left:2px}
 #${NS}-cfg .jcs-switch-row:first-of-type{border-top:0;padding-top:0}
 #${NS}-cfg .jcs-switch-row > div{min-width:0;flex:1}
 #${NS}-cfg .jcs-switch-row b{display:block;font-size:12.5px;font-weight:700;color:var(--jcs-soft)}
@@ -5718,7 +6552,9 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
 #${NS}-pick .jcs-pick-card{
   position:absolute;pointer-events:auto;z-index:1;
   display:flex;flex-direction:column;gap:7px;
-  min-width:136px;max-width:min(92vw,320px);
+  width: min(92vw, 300px);   /* 或你算出来的固定值 */
+  max-width: min(92vw, 300px);
+  min-width: 0;
   padding:9px 9px 10px;border-radius:14px;
   background:var(--jcs-panel);color:var(--jcs-text);
   border:1px solid var(--jcs-line);
@@ -5761,6 +6597,79 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
   flex:1;min-width:0;font-size:12px;font-weight:800;color:var(--jcs-accent2);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.01em
 }
+#${NS}-pick .jcs-pick-copy{
+  flex:0 0 auto;height:26px;min-width:26px;padding:0 8px;border-radius:7px;border:0;cursor:pointer;
+  background:var(--jcs-fill);color:var(--jcs-muted);font:inherit;font-size:11px;font-weight:700;
+  display:inline-flex;align-items:center;justify-content:center;gap:2px;
+  transition:background .12s ease,color .12s ease,transform .12s ease
+}
+#${NS}-pick .jcs-pick-copy svg{width:13px;height:13px}
+#${NS}-pick .jcs-pick-copy:hover{background:var(--jcs-fill-hover);color:var(--jcs-text)}
+#${NS}-pick .jcs-pick-copy:active{transform:scale(.94)}
+#${NS}-pick[data-ext-style="compact"] .jcs-pick-btn-ext,
+#${NS}-win .jcs-pick-ext-row[data-ext-style="compact"] .jcs-pick-btn-ext{
+  min-width:36px;max-width:76px;height:32px;padding:0 8px;
+  justify-content:center;overflow:hidden
+}
+#${NS}-pick[data-ext-style="compact"] .jcs-pick-btn-ext.has-icon,
+#${NS}-win .jcs-pick-ext-row[data-ext-style="compact"] .jcs-pick-btn-ext.has-icon{
+  min-width:32px;max-width:44px;padding:0 6px
+}
+#${NS}-pick[data-ext-style="compact"] .jcs-pick-btn-ext .jcs-pick-txt,
+#${NS}-win .jcs-pick-ext-row[data-ext-style="compact"] .jcs-pick-btn-ext .jcs-pick-txt{
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:5.5em
+}
+#${NS}-pick .jcs-pick-btn-ext svg,
+#${NS}-win .jcs-pick-ext-row .jcs-pick-btn-ext svg{width:15px;height:15px;flex:0 0 auto}
+#${NS}-pick .jcs-pick-btn-ext.has-icon .jcs-pick-txt,
+#${NS}-win .jcs-pick-ext-row .jcs-pick-btn-ext.has-icon .jcs-pick-txt{margin-left:4px}
+#${NS}-pick[data-ext-style="compact"] .jcs-pick-btn-ext.has-icon .jcs-pick-txt{display:none}
+/* 选源面板分行：搜索源 / 扩展叶子 / 扩展按钮组 */
+#${NS}-pick .jcs-pick-list-wrap,
+#${NS}-pick .jcs-pick-btns{
+  display:flex;flex-direction:column;gap:6px;align-items:stretch
+}
+#${NS}-pick .jcs-pick-row{
+  display:flex;flex-wrap:wrap;gap:6px;align-items:center;width:100%
+}
+#${NS}-pick .jcs-pick-row-grp{
+  padding-top:1px;
+}
+#${NS}-pick .jcs-pick-btn-group.is-open{
+  border-color:var(--jcs-accent-line);color:var(--jcs-accent2);background:var(--jcs-accent-dim)
+}
+/* 按钮组下拉：竖排纯图标，样式对齐内置 jcs-act-btn，与 pick 面板同色 */
+#${NS}-pick-gpop{
+  position:fixed;inset:0;z-index:40;display:none;font:var(--jcs-font);color:var(--jcs-text);
+  pointer-events:none
+}
+#${NS}-pick-gpop.show{display:block;pointer-events:none}
+#${NS}-pick-gpop .jcs-gpop-mask{
+  position:absolute;inset:0;background:transparent;pointer-events:auto
+}
+#${NS}-pick-gpop .jcs-gpop-card{
+  position:fixed;z-index:1;padding:4px;border-radius:12px;
+  border:1px solid var(--jcs-line);background:var(--jcs-panel);
+  box-shadow:0 10px 28px rgba(0,0,0,.38);pointer-events:auto
+}
+#${NS}-pick-gpop .jcs-gpop-grid{
+  display:flex;flex-direction:column;align-items:stretch;gap:2px
+}
+#${NS}-pick-gpop .jcs-gpop-btn{
+  display:inline-flex;align-items:center;justify-content:center;
+  height:30px;width:34px;min-width:34px;padding:0;border-radius:999px;cursor:pointer;
+  border:1px solid var(--jcs-chip-line);background:var(--jcs-fill-2);color:var(--jcs-soft);
+  transition:background .14s ease,border-color .14s ease,color .14s ease,transform .14s ease
+}
+#${NS}-pick-gpop .jcs-gpop-btn:hover{
+  background:var(--jcs-accent-dim);border-color:var(--jcs-accent-line);color:var(--jcs-accent2);
+  transform:translateY(-1px)
+}
+#${NS}-pick-gpop .jcs-gpop-btn:active{transform:scale(.96)}
+#${NS}-pick-gpop .jcs-gpop-btn svg{width:13px;height:13px;flex:0 0 auto}
+#${NS}-pick-gpop .jcs-gpop-btn.is-done{
+  border-color:var(--jcs-accent-line);color:var(--jcs-accent2);background:var(--jcs-accent-dim)
+}
 #${NS}-pick .jcs-pick-x{
   flex:0 0 auto;width:26px;height:26px;border-radius:7px;border:0;padding:0;cursor:pointer;
   background:var(--jcs-fill);color:var(--jcs-muted);font-size:14px;line-height:1;
@@ -5772,14 +6681,45 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
   display:flex;flex-wrap:wrap;gap:6px;align-items:center
 }
 #${NS}-pick .jcs-pick-btn{
-  height:30px;padding:0 11px;border-radius:999px;cursor:pointer;font:inherit;
+  /* 按内容伸缩：不定死等分格数；短文案约 2 中文/4 英文，长名可略伸 */
+  box-sizing:border-box;width:auto;min-width:2.75em;max-width:7.5em;
+  flex:0 0 auto;height:30px;padding:0 8px;border-radius:999px;cursor:pointer;font:inherit;
   font-size:12px;font-weight:700;border:1px solid var(--jcs-chip-line);
   background:var(--jcs-fill-2);color:var(--jcs-soft);
   -webkit-tap-highlight-color:transparent;white-space:nowrap;
   display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;
+  overflow:hidden;text-overflow:ellipsis;gap:3px;
   opacity:0;transform:translateY(4px) scale(.96);
   transition:background .14s ease,border-color .14s ease,color .14s ease,
     transform .14s ease,box-shadow .14s ease,opacity .16s ease
+}
+/* 扩展/组：有图标时偏方钮，无图标仍走短文案固定感 */
+#${NS}-pick .jcs-pick-btn-ext.has-icon{
+  min-width:30px;padding:0 7px
+}
+#${NS}-pick[data-ext-style="compact"] .jcs-pick-btn-ext.has-icon{
+  width:30px;min-width:30px;max-width:30px;padding:0
+}
+#${NS}-pick .jcs-pick-btn-group{
+  padding-right:6px
+}
+#${NS}-pick .jcs-pick-btn .jcs-pick-txt{
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%
+}
+#${NS}-pick .jcs-pick-more-wrap{position:relative;display:inline-flex}
+#${NS}-pick .jcs-pick-more.is-open{
+  border-color:var(--jcs-accent-line);color:var(--jcs-accent2);background:var(--jcs-accent-dim)
+}
+#${NS}-pick .jcs-pick-more-pop{
+  position:absolute;left:0;top:calc(100% + 4px);z-index:5;
+  display:flex;flex-wrap:wrap;gap:6px;min-width:100%;max-width:min(92vw,280px);
+  padding:8px;border-radius:12px;border:1px solid var(--jcs-line);
+  background:var(--jcs-panel);box-shadow:0 10px 28px rgba(0,0,0,.38)
+}
+#${NS}-pick .jcs-pick-more-pop[hidden]{display:none!important}
+#${NS}-pick .jcs-code-actions{
+  display:inline-flex;gap:6px;align-items:center;width:100%;
+  margin-top:2px;padding-top:4px;
 }
 #${NS}-pick.show .jcs-pick-btn{
   opacity:1;transform:none
@@ -5796,6 +6736,46 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
 }
 #${NS}-pick .jcs-pick-btn:active{
   transform:scale(.96);box-shadow:none
+}
+#${NS}-pick .jcs-pick-sep{
+  display:inline-block;width:1px;height:18px;margin:0 2px;
+  background:var(--jcs-chip-line);opacity:.7;flex:0 0 auto;align-self:center
+}
+#${NS}-pick .jcs-pick-btn-ext{
+  border-style:dashed;font-weight:600;color:var(--jcs-muted)
+}
+#${NS}-pick .jcs-pick-btn-ext:hover{
+  color:var(--jcs-accent2)
+}
+#${NS}-pick .jcs-pick-btn-ext.is-done{
+  border-color:var(--jcs-accent-line);color:var(--jcs-accent2);background:var(--jcs-accent-dim)
+}
+/* 二级按钮组：点击组名展开 items */
+#${NS}-pick .jcs-pick-group,
+#${NS}-win .jcs-pick-ext-row .jcs-pick-group{
+  position:relative;display:inline-flex;align-items:center;flex:0 0 auto
+}
+#${NS}-pick .jcs-pick-btn-group .jcs-pick-caret,
+#${NS}-win .jcs-pick-ext-row .jcs-pick-caret{
+  margin-left:3px;font-size:9px;opacity:.75;line-height:1
+}
+#${NS}-pick .jcs-pick-btn-group.is-open,
+#${NS}-win .jcs-pick-ext-row .jcs-pick-btn-group.is-open{
+  border-color:var(--jcs-accent-line);color:var(--jcs-accent2);background:var(--jcs-accent-dim)
+}
+#${NS}-pick .jcs-pick-sub,
+#${NS}-win .jcs-pick-ext-row .jcs-pick-sub{
+  position:absolute;left:0;top:calc(100% + 4px);z-index:5;
+  display:flex;flex-direction:column;gap:4px;min-width:112px;max-width:200px;
+  padding:6px;border-radius:10px;border:1px solid var(--jcs-line);
+  background:var(--jcs-panel);box-shadow:0 10px 28px rgba(0,0,0,.28)
+}
+#${NS}-pick .jcs-pick-sub[hidden],
+#${NS}-win .jcs-pick-ext-row .jcs-pick-sub[hidden]{display:none!important}
+#${NS}-pick .jcs-pick-sub .jcs-pick-sub-item,
+#${NS}-win .jcs-pick-ext-row .jcs-pick-sub .jcs-pick-sub-item{
+  width:100%;justify-content:flex-start;height:28px;border-radius:8px;
+  border-style:solid;font-weight:600;white-space:nowrap
 }
 a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
   outline:2px solid var(--jcs-accent-line)!important;outline-offset:2px;
@@ -6021,6 +7001,31 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
   font-variant-numeric:tabular-nums
 }
 #${NS}-win .jcs-code-bar .jcs-code-actions{display:inline-flex;gap:4px;align-items:center;margin-left:auto}
+#${NS}-win .jcs-pick-ext-row{
+  display:flex;flex-wrap:wrap;align-items:center;gap:6px;
+  padding:0 12px 8px;min-height:0
+}
+#${NS}-win .jcs-pick-ext-row[hidden]{display:none!important}
+#${NS}-win .jcs-pick-ext-label{
+  font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--jcs-muted);opacity:.85;padding:0 2px;flex:0 0 auto;user-select:none
+}
+#${NS}-win .jcs-pick-ext-row .jcs-pick-btn{
+  height:26px;padding:0 10px;border-radius:999px;cursor:pointer;font:inherit;
+  font-size:11.5px;font-weight:700;border:1px solid var(--jcs-chip-line);
+  background:var(--jcs-fill-2);color:var(--jcs-soft);
+  display:inline-flex;align-items:center;justify-content:center;
+  transition:background .14s ease,border-color .14s ease,color .14s ease,transform .12s ease
+}
+#${NS}-win .jcs-pick-ext-row .jcs-pick-btn-ext{
+  border-style:dashed;font-weight:600;color:var(--jcs-muted)
+}
+#${NS}-win .jcs-pick-ext-row .jcs-pick-btn-ext:hover{
+  background:var(--jcs-accent-dim);border-color:var(--jcs-accent-line);color:var(--jcs-accent2)
+}
+#${NS}-win .jcs-pick-ext-row .jcs-pick-btn-ext.is-done{
+  border-color:var(--jcs-accent-line);color:var(--jcs-accent2);background:var(--jcs-accent-dim)
+}
 #${NS}-win .jcs-code-bar .jcs-act-btn{
   height:30px;min-width:34px;padding:0 10px;border-radius:10px;
   border:1px solid var(--jcs-line);background:var(--jcs-fill);color:var(--jcs-text);
@@ -6639,6 +7644,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
           <span class="jcs-code-bar-label" id="${NS}-code-bar-code"></span>
           <span id="${NS}-code-actions"></span>
         </div>
+        <div class="jcs-pick-ext-row" id="${NS}-pick-ext-btns" hidden aria-hidden="true" aria-label="扩展选源按钮"></div>
         <div class="jcs-tools">
           <div class="jcs-segbox" id="${NS}-providers"></div>
           <div class="jcs-tools-search">
@@ -6740,6 +7746,24 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 <button type="button" data-theme="light" id="${NS}-cfg-theme-light">浅色</button>
               </div>
             </div>
+            <div class="jcs-card">
+              <div class="jcs-card-hd">
+                <div>
+                  <strong>选源面板 · 扩展按钮</strong>
+                  <p class="jcs-card-desc">旁出菜单为经典布局（标题含复制 / 搜索源 / 扩展）。按钮组点击后打开独立弹窗。改动下次打开面板生效。</p>
+                </div>
+              </div>
+              <div class="jcs-switch-row" style="border-top:0;padding-top:0">
+                <div>
+                  <b>扩展按钮样式</b>
+                  <em>紧凑：标准宽度，有图标只显示图标，悬停看完整标题。经典：文字胶囊（兼容旧扩展）。</em>
+                </div>
+              </div>
+              <div class="jcs-seg-mode" id="${NS}-cfg-pick-ext-style" role="group" aria-label="扩展按钮样式">
+                <button type="button" data-pick-ext-style="classic" id="${NS}-cfg-pick-style-classic">经典文字</button>
+                <button type="button" data-pick-ext-style="compact" id="${NS}-cfg-pick-style-compact">紧凑图标</button>
+              </div>
+            </div>
           </div>
           <div class="jcs-cfg-pane" data-pane="extensions" role="tabpanel">
             <div class="jcs-card">
@@ -6760,7 +7784,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
               <div class="jcs-card-hd">
                 <div>
                   <strong>已注册扩展</strong>
-                  <p class="jcs-card-desc">由扩展库或独立油猴脚本经 JavCodeKit.extensions.register 注册。开关为会话级：关闭后本次页面生效，刷新恢复。</p>
+                  <p class="jcs-card-desc">由扩展库或独立油猴脚本经 JavCodeKit.extensions.register 注册（actions 操作条 / pickButtons 选源按钮 / styles / mounts）。开关为会话级：关闭后本次页面生效，刷新恢复。</p>
                 </div>
               </div>
               <div id="${NS}-ext-reg-list" role="list"></div>
@@ -6903,39 +7927,44 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
               <div class="jcs-card-hd">
                 <div>
                   <strong>当前番号操作</strong>
-                  <p class="jcs-card-desc">选源面板与预览弹窗操作栏里的按钮。可分别显示/隐藏，也可收进「⋯」更多菜单。改动立即生效。</p>
+                  <p class="jcs-card-desc">选源面板与预览弹窗操作栏里的按钮。可分别显示/隐藏，也可收进「⋯」更多菜单。改动立即生效。扩展经 <code>actions</code> 注册的按钮也会列在下方。</p>
                 </div>
               </div>
               <p class="jcs-callout is-warn" id="${NS}-ca-emh-hint">Enhanced_Media_Helper 未安装：「加入番号库」「截图预览」依赖它，相关开关已置灰，按钮也不会显示。</p>
+              <div class="jcs-ca-section-label">内置</div>
               <div class="jcs-switch-row jcs-ca-row">
                 <div class="jcs-ca-name"><b>字幕搜索</b><em>搜索当前番号字幕。</em></div>
                 <span class="jcs-ca-opts">
-                  <label class="jcs-switch" title="显示按钮"><input type="checkbox" id="${NS}-ca-sub" /><i></i></label>
-                  <label class="jcs-switch" title="收进「⋯」更多菜单"><input type="checkbox" id="${NS}-ca-sub-fold" /><i></i></label>
+                  <label class="jcs-switch" title="显示按钮"><input type="checkbox" id="${NS}-ca-sub" data-ca-key="sub" data-ca-kind="on" /><i></i></label>
+                  <label class="jcs-switch" title="收进「⋯」更多菜单"><input type="checkbox" id="${NS}-ca-sub-fold" data-ca-key="sub" data-ca-kind="fold" /><i></i></label>
                 </span>
               </div>
               <div class="jcs-switch-row jcs-ca-row">
                 <div class="jcs-ca-name"><b>复制番号</b><em>复制当前番号文本到剪贴板。</em></div>
                 <span class="jcs-ca-opts">
-                  <label class="jcs-switch" title="显示按钮"><input type="checkbox" id="${NS}-ca-copy" /><i></i></label>
-                  <label class="jcs-switch" title="收进「⋯」更多菜单"><input type="checkbox" id="${NS}-ca-copy-fold" /><i></i></label>
+                  <label class="jcs-switch" title="显示按钮"><input type="checkbox" id="${NS}-ca-copy" data-ca-key="copy" data-ca-kind="on" /><i></i></label>
+                  <label class="jcs-switch" title="收进「⋯」更多菜单"><input type="checkbox" id="${NS}-ca-copy-fold" data-ca-key="copy" data-ca-kind="fold" /><i></i></label>
                 </span>
               </div>
               <div class="jcs-switch-row jcs-ca-row">
                 <div class="jcs-ca-name"><b>加入番号库</b><em>写入 Enhanced_Media_Helper 番号库（需已安装该脚本）。</em></div>
                 <span class="jcs-ca-opts">
-                  <label class="jcs-switch" title="显示按钮"><input type="checkbox" id="${NS}-ca-lib" /><i></i></label>
-                  <label class="jcs-switch" title="收进「⋯」更多菜单"><input type="checkbox" id="${NS}-ca-lib-fold" /><i></i></label>
+                  <label class="jcs-switch" title="显示按钮"><input type="checkbox" id="${NS}-ca-lib" data-ca-key="lib" data-ca-kind="on" /><i></i></label>
+                  <label class="jcs-switch" title="收进「⋯」更多菜单"><input type="checkbox" id="${NS}-ca-lib-fold" data-ca-key="lib" data-ca-kind="fold" /><i></i></label>
                 </span>
               </div>
               <div class="jcs-switch-row jcs-ca-row">
                 <div class="jcs-ca-name"><b>截图预览</b><em>从 AVWikiDB 抓取当前番号宫格截图（需已安装该脚本，Shift+点击强制刷新）。</em></div>
                 <span class="jcs-ca-opts">
-                  <label class="jcs-switch" title="显示按钮"><input type="checkbox" id="${NS}-ca-shot" /><i></i></label>
-                  <label class="jcs-switch" title="收进「⋯」更多菜单"><input type="checkbox" id="${NS}-ca-shot-fold" /><i></i></label>
+                  <label class="jcs-switch" title="显示按钮"><input type="checkbox" id="${NS}-ca-shot" data-ca-key="shot" data-ca-kind="on" /><i></i></label>
+                  <label class="jcs-switch" title="收进「⋯」更多菜单"><input type="checkbox" id="${NS}-ca-shot-fold" data-ca-key="shot" data-ca-kind="fold" /><i></i></label>
                 </span>
               </div>
-              <p class="jcs-mode-hint" style="margin:0">左开关 = 显示按钮；右开关 = 收进「⋯」更多菜单（点击 ⋯ 展开）。全部关闭时操作栏不再显示操作按钮（当前番号标签仍保留）。</p>
+              <div class="jcs-ca-section-label">扩展操作按钮</div>
+              <div id="${NS}-ca-ext-list" class="jcs-ca-ext-list"></div>
+              <div class="jcs-ca-section-label">扩展选源按钮 / 按钮组</div>
+              <div id="${NS}-ca-pick-list" class="jcs-ca-ext-list"></div>
+              <p class="jcs-mode-hint" style="margin:0">操作栏图标：左=显示，右=收进「⋯」。选源按钮组：可开关整组，组内每一项也可单独开关（组关闭时子项暂时禁用）。按钮组在选源菜单/大窗以二级菜单呈现。</p>
             </div>
           </div>
           <div class="jcs-cfg-pane" data-pane="sources" role="tabpanel">
@@ -7323,6 +8352,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
     }
 
     function closeProviderPicker() {
+        try { closePickGroupPop(); } catch (e) { /* ignore */ }
         const pick = document.getElementById(NS + '-pick');
         if (!pick) return;
         const wasOpen = pick.classList.contains('show');
@@ -7468,6 +8498,10 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
     function ensurePicker() {
         injectStyles();
         let pick = document.getElementById(NS + '-pick');
+        if (pick && pick.getAttribute('data-ver') !== SCRIPT_VER) {
+            try { pick.remove(); } catch (e) { /* ignore */ }
+            pick = null;
+        }
         if (pick) {
             pick.style.pointerEvents = 'none';
             return pick;
@@ -7475,11 +8509,16 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         pick = document.createElement('div');
         pick.id = NS + '-pick';
         pick.setAttribute('aria-hidden', 'true');
+        pick.setAttribute('data-ver', SCRIPT_VER);
+        // 经典布局：标题（番号 + 复制 + 关闭） / 搜索源与扩展按钮同一行
         pick.innerHTML =
             '<div class="jcs-pick-card" role="dialog" aria-label="搜索源">' +
             '<i class="jcs-pick-arrow" aria-hidden="true"></i>' +
             '<div class="jcs-pick-head">' +
             '<strong id="' + NS + '-pick-code"></strong>' +
+            '<button type="button" class="jcs-pick-copy" id="' + NS + '-pick-copy" title="复制番号" aria-label="复制番号">' +
+            (typeof PICK_ICON !== 'undefined' && PICK_ICON.copy ? PICK_ICON.copy : '复制') +
+            '</button>' +
             '<button type="button" class="jcs-pick-x" id="' + NS + '-pick-close" title="关闭" aria-label="关闭">×</button>' +
             '</div>' +
             '<div class="jcs-pick-btns" id="' + NS + '-pick-list"></div>' +
@@ -7492,6 +8531,15 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             e.stopPropagation();
             closeProviderPicker();
         };
+        const copyBtn = pick.querySelector('#' + NS + '-pick-copy');
+        if (copyBtn) {
+            copyBtn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const code = (state && state.active) || (pick.querySelector('#' + NS + '-pick-code') || {}).textContent || '';
+                if (code) copyCode(String(code).trim());
+            };
+        }
         if (!ensurePicker._docBound) {
             ensurePicker._docBound = true;
             const onOutside = (e) => {
@@ -7510,6 +8558,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                         return;
                     }
                     if (t.closest('a.' + NS + '-link, .' + NS + '-link')) return;
+                    if (t.closest('#' + NS + '-pick-gpop')) return; // 按钮组弹窗内操作不关选源
                 }
                 // 不 preventDefault / stopPropagation：关闭同时放行页面点击
                 closeProviderPicker();
@@ -7558,34 +8607,64 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         clearPickAnchorHighlight();
         if (liveAnchor && liveAnchor.classList) liveAnchor.classList.add('is-pick-on');
 
+        const ui = getPickUi();
+        pick.setAttribute('data-ext-style', ui.extStyle);
+        const card = pick.querySelector('.jcs-pick-card');
+        if (card) card.setAttribute('data-ext-style', ui.extStyle);
+
         const codeEl = pick.querySelector('#' + NS + '-pick-code');
         if (codeEl) {
             codeEl.textContent = c;
             codeEl.title = c;
         }
-        const list = pick.querySelector('#' + NS + '-pick-list');
+
         const providers = getProviders();
-        list.innerHTML = providers.map((p) =>
+        const extPicks = collectPickButtons();
+        const leaves = extPicks.filter((x) => x.kind !== 'group');
+        const groups = extPicks.filter((x) => x.kind === 'group');
+        // 源按钮拆成数组以便溢出收折（一行最多 5，多了进 ⋯）
+        const srcBtns = providers.map((p) =>
             '<button type="button" class="jcs-pick-btn" data-id="' + String(p.id).replace(/"/g, '') +
             '" title="' + String(p.hint || '新窗口打开').replace(/"/g, '') + '">' +
             String(p.name || p.id).replace(/</g, '') + '</button>'
-        ).join('');
-
-        // 当前番号操作条（字幕/复制/入库）与弹窗头部共用同一套按钮逻辑
-        const acts = buildCodeActions(list, {
-            onSub: (c2) => { closeProviderPicker(); openSubtitleSearch(c2); }
-        });
-        if (acts) acts.setCode(c);
-
-        list.querySelectorAll('.jcs-pick-btn').forEach((btn) => {
-            btn.onclick = (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                btn.style.transform = 'scale(.94)';
-                openExternalProvider(c, btn.getAttribute('data-id') || '');
-                closeProviderPicker();
+        );
+        // 分行：搜索源 / 扩展叶子 / 扩展按钮组
+        let pickHtml = buildPickOverflowRow('jcs-pick-row-src', srcBtns);
+        if (leaves.length) {
+            pickHtml += buildPickOverflowRow('jcs-pick-row-ext', leaves.map(renderPickEntryHtml));
+        }
+        if (groups.length) {
+            pickHtml += buildPickOverflowRow('jcs-pick-row-grp', groups.map(renderPickEntryHtml));
+        }
+        const list = pick.querySelector('#' + NS + '-pick-list');
+        if (list) {
+            list.innerHTML = pickHtml;
+            // 内置操作条：字幕/入库/截图（选源面板已有标题栏复制，跳过 copy）
+            const acts = buildCodeActions(list, {
+                onSub: (c2) => { closeProviderPicker(); openSubtitleSearch(c2); },
+                skipActs: ['copy']
+            });
+            if (acts) acts.setCode(c);
+            bindPickRowOverflow(list);
+            const bindSrc = (root) => {
+                root.querySelectorAll('.jcs-pick-btn[data-id]').forEach((btn) => {
+                    btn.onclick = (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        closePickGroupPop();
+                        btn.style.transform = 'scale(.94)';
+                        openExternalProvider(c, btn.getAttribute('data-id') || '');
+                        closeProviderPicker();
+                    };
+                });
             };
-        });
+            bindSrc(list);
+            // ⋯ 弹出层里的源按钮也要绑定
+            list.querySelectorAll('.jcs-pick-more-pop').forEach((pop) => bindSrc(pop));
+            bindPickExtButtons(list, c);
+            // ⋯ 弹出层里的扩展按钮
+            list.querySelectorAll('.jcs-pick-more-pop').forEach((pop) => bindPickExtButtons(pop, c));
+        }
 
         // 重启动画：卸 show → 强制 reflow → 预定位 → 再 show
         pick.classList.remove('show');
@@ -8907,6 +9986,18 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         if (themeDark) themeDark.onclick = () => { setTheme('dark'); syncConfigGeneralUi(); showToast('已切换为深色'); };
         if (themeLight) themeLight.onclick = () => { setTheme('light'); syncConfigGeneralUi(); showToast('已切换为浅色'); };
 
+        // 扩展按钮样式（选源面板固定经典布局）
+        root.querySelectorAll('[data-pick-ext-style]').forEach((btn) => {
+            btn.onclick = () => {
+                const style = btn.getAttribute('data-pick-ext-style') === 'compact' ? 'compact' : 'classic';
+                savePickUi({ extStyle: style, layout: 'flat' });
+                syncConfigGeneralUi();
+                try { refreshPickerIfOpen(); } catch (e) { /* ignore */ }
+                try { renderPanelPickButtons(); } catch (e) { /* ignore */ }
+                showToast(style === 'compact' ? '扩展按钮：紧凑图标' : '扩展按钮：经典文字');
+            };
+        });
+
         // 备份 · 本地文件
         const expBtn = root.querySelector('#' + NS + '-cfg-export');
         if (expBtn) {
@@ -9423,6 +10514,18 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             tl.setAttribute('aria-pressed', t === 'light' ? 'true' : 'false');
         }
 
+        const pui = getPickUi();
+        const psClassic = document.getElementById(NS + '-cfg-pick-style-classic');
+        const psCompact = document.getElementById(NS + '-cfg-pick-style-compact');
+        if (psClassic) {
+            psClassic.classList.toggle('is-on', pui.extStyle === 'classic');
+            psClassic.setAttribute('aria-pressed', pui.extStyle === 'classic' ? 'true' : 'false');
+        }
+        if (psCompact) {
+            psCompact.classList.toggle('is-on', pui.extStyle === 'compact');
+            psCompact.setAttribute('aria-pressed', pui.extStyle === 'compact' ? 'true' : 'false');
+        }
+
         const badge = document.getElementById(NS + '-cfg-store-badge');
         let siteN = 0;
         try {
@@ -9533,31 +10636,64 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             srcBox.innerHTML = list.map((it, i) => {
                 const host = providerHostname(it.url) || it.url;
                 const label = it.name || host;
-                const status = it.lastStatus === 'load-failed'
-                    ? '<small class="is-bad">加载失败 · 检查 URL 或本地服务</small>'
-                    : (it.id
-                        ? '<small class="is-ok">已注册 · ' + escapeHtml(String(it.name || it.id)) + '</small>'
-                        : '<small>' + escapeHtml(host) + '</small>');
-                return '<div class="jcs-blacklist-row" role="listitem" data-url="' + escapeHtml(it.url) + '">' +
-                    '<label class="jcs-switch" title="启用/停用该扩展源"><input type="checkbox" data-ext-src-toggle="' + i + '"' + (it.enabled !== false ? ' checked' : '') + ' /><i></i></label>' +
-                    '<div class="jcs-blacklist-main"><code title="' + escapeHtml(it.url) + '">' + escapeHtml(label) + '</code>' + status + '</div>' +
-                    '<span class="jcs-row-ops">' +
+                const on = it.enabled !== false;
+                let statusCls = 'jcs-ext-status';
+                let statusTxt = escapeHtml(host);
+                if (it.lastStatus === 'load-failed') {
+                    statusCls += ' is-bad';
+                    statusTxt = '加载失败 · 检查 URL 或本地服务';
+                } else if (it.id) {
+                    statusCls += ' is-ok';
+                    statusTxt = '已注册 · ' + escapeHtml(String(it.name || it.id));
+                } else if (it.lastStatus === 'ok') {
+                    statusCls += ' is-ok';
+                    statusTxt = '已加载';
+                }
+                return '<div class="jcs-ext-card' + (on ? '' : ' is-off') + '" role="listitem" data-url="' + escapeHtml(it.url) + '">' +
+                    '<div class="jcs-ext-card-main">' +
+                    '<label class="jcs-switch" title="启用/停用该扩展源"><input type="checkbox" data-ext-src-toggle="' + i + '"' + (on ? ' checked' : '') + ' /><i></i></label>' +
+                    '<div class="jcs-ext-card-body">' +
+                    '<div class="jcs-ext-card-title" title="' + escapeHtml(it.url) + '">' + escapeHtml(label) +
+                    (it.version ? '<span class="jcs-ext-ver">v' + escapeHtml(String(it.version)) + '</span>' : '') +
+                    '</div>' +
+                    '<div class="' + statusCls + '">' + statusTxt + '</div>' +
+                    '</div></div>' +
+                    '<div class="jcs-ext-card-ops">' +
                     '<button type="button" data-ext-src-copy="' + i + '" title="复制链接">复制</button>' +
-                    '<button type="button" data-ext-src-del="' + i + '" title="移除该扩展源" class="is-danger">删除</button></span></div>';
-            }).join('') || '<div class="jcs-empty-src">暂无扩展源（添加库脚本 URL 或安装独立扩展油猴脚本）</div>';
+                    '<button type="button" data-ext-src-del="' + i + '" title="移除该扩展源" class="is-danger">删除</button>' +
+                    '</div></div>';
+            }).join('') || '<div class="jcs-empty-src">暂无扩展源<br><span>添加库脚本 URL，或安装会调用 register 的独立油猴脚本</span></div>';
         }
         const regBox = document.getElementById(NS + '-ext-reg-list');
         if (regBox) {
             const recs = Array.from((typeof _extReg !== 'undefined' ? _extReg : new Map()).values());
             regBox.innerHTML = recs.map((rec) => {
-                const kinds = [rec.actions.length ? rec.actions.length + ' 按钮' : '', rec.styles.length ? rec.styles.length + ' 样式' : '', rec.mounts.length ? rec.mounts.length + ' 挂载' : ''].filter(Boolean).join(' · ');
-                return '<div class="jcs-blacklist-row" role="listitem" data-ext-id="' + escapeHtml(rec.id) + '">' +
+                const nAct = (rec.actions && rec.actions.length) || 0;
+                const nPick = (rec.pickButtons && rec.pickButtons.length) || 0;
+                const nStyle = (rec.styles && rec.styles.length) || 0;
+                const nMount = (rec.mounts && rec.mounts.length) || 0;
+                const chips = [];
+                if (nAct) chips.push('<span class="jcs-ext-chip" title="番号操作条图标按钮">操作 ' + nAct + '</span>');
+                if (nPick) chips.push('<span class="jcs-ext-chip is-pick" title="选源叶子按钮 / 二级按钮组">选源 ' + nPick + '</span>');
+                if (nStyle) chips.push('<span class="jcs-ext-chip is-style" title="注入样式">样式 ' + nStyle + '</span>');
+                if (nMount) chips.push('<span class="jcs-ext-chip is-mount" title="页面挂载">挂载 ' + nMount + '</span>');
+                const srcLabel = rec.source === 'script'
+                    ? '独立脚本'
+                    : (providerHostname(rec.source) || 'URL 注入');
+                return '<div class="jcs-ext-card' + (rec.enabled ? '' : ' is-off') + '" role="listitem" data-ext-id="' + escapeHtml(rec.id) + '">' +
+                    '<div class="jcs-ext-card-main">' +
                     '<label class="jcs-switch" title="启用/停用（会话级）"><input type="checkbox" data-ext-toggle="' + escapeHtml(rec.id) + '"' + (rec.enabled ? ' checked' : '') + ' /><i></i></label>' +
-                    '<div class="jcs-blacklist-main"><code>' + escapeHtml(rec.name) + ' v' + escapeHtml(rec.version) + '</code>' +
-                    '<small>' + escapeHtml(kinds || '无能力') + ' · 来源：' + escapeHtml(rec.source === 'script' ? '独立脚本' : (providerHostname(rec.source) || 'URL')) + '</small></div>' +
-                    '<span class="jcs-row-ops">' +
-                    '<button type="button" data-ext-unreg="' + escapeHtml(rec.id) + '" title="卸载该扩展（本次会话）" class="is-danger">卸载</button></span></div>';
-            }).join('') || '<div class="jcs-empty-src">暂无已注册扩展</div>';
+                    '<div class="jcs-ext-card-body">' +
+                    '<div class="jcs-ext-card-title">' + escapeHtml(rec.name) +
+                    '<span class="jcs-ext-ver">v' + escapeHtml(rec.version) + '</span></div>' +
+                    '<div class="jcs-ext-chips">' + (chips.join('') || '<span class="jcs-ext-chip is-empty">无能力点</span>') + '</div>' +
+                    '<div class="jcs-ext-status">来源 · ' + escapeHtml(srcLabel) +
+                    ' · <code class="jcs-ext-id">' + escapeHtml(rec.id) + '</code></div>' +
+                    '</div></div>' +
+                    '<div class="jcs-ext-card-ops">' +
+                    '<button type="button" data-ext-unreg="' + escapeHtml(rec.id) + '" title="卸载该扩展（本次会话）" class="is-danger">卸载</button>' +
+                    '</div></div>';
+            }).join('') || '<div class="jcs-empty-src">暂无已注册扩展<br><span>扩展脚本调用 JavCodeKit.extensions.register 后会出现在这里</span></div>';
         }
         bindExtensionsTab();
     }
@@ -10440,6 +11576,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             return;
         }
         state.theme = loadTheme();
+        loadPickUi();
         loadSubOpts();
         loadHlOpts();
         loadCodeActions();
@@ -10566,13 +11703,16 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             refreshSubtitleListView();
         },
         DEFAULT_PROVIDERS: DEFAULT_PROVIDERS.map((p) => Object.assign({}, p)),
-        // 扩展宿主 API（契约 v1：docs/jav-code-scanner/jcs-extension-contract.md）
+        // 扩展宿主 API（契约 v1.1：docs/jav-code-scanner/jcs-extension-contract.md）
         extensions: {
             register: (manifest, source) => registerExtension(manifest, source),
             unregister: (id) => unregisterExtension(id),
             list: () => Array.from(_extReg.values()).map((rec) => ({
                 id: rec.id, name: rec.name, version: rec.version, enabled: rec.enabled, source: rec.source,
-                actions: rec.actions.length, styles: rec.styles.length, mounts: rec.mounts.length
+                actions: rec.actions.length,
+                pickButtons: Array.isArray(rec.pickButtons) ? rec.pickButtons.length : 0,
+                styles: rec.styles.length,
+                mounts: rec.mounts.length
             })),
             isEnabled: (id) => isExtensionEnabled(id),
             setEnabled: (id, on) => setExtensionEnabled(id, on)
