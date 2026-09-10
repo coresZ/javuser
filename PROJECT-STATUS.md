@@ -62,5 +62,4 @@
 
 - **提交/推送**：`ego commit "<msg>" --yes`（hooks+暂存+提交）→ `ego push`（Node spawn git，沙箱下需完整权限）
 - **语法校验**：`node --check <脚本>`
-- **会话记录**：`.trellis/workspace/{developer}/journal-N.md`（模板见 `.trellis/workspace/index.md`）
 - **写 docs 前**：读目标域 `MODIFICATIONS.md`，完成后回填

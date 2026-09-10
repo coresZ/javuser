@@ -103,3 +103,16 @@
 - 新增 §3 开发者操作说明（改码流程五步 / 扩展开发 30 分钟上手 / Console 调试命令 /
   备份 bundle JSONC 结构示例 / 宿主实现锚点表）。
 - 原 §4-5 保留为文件地图与已知事项；快捷键与 UI 文案均从源码核对（:1577 hotkeys、:1229 CODE_ACT_DEF、:6970-6972 预览模式）。
+
+## 2026-09-10 · Trellis 卸载后死链清理（新增）
+
+**功能**：Trellis 工作流框架已从项目卸载（`.trellis/` 整目录删除），修正本文档域内指向 `.trellis/spec/` 的失效引用。
+
+**修改内容**：
+- `architecture-jav-code-scanner.md` 删除 2 处死链：「主题系统」节末「详见 `.trellis/spec/frontend/design-system.md`」及「参考」节首条「视觉/交互约束的通用化约定见 `.trellis/spec/frontend/design-system.md`」。原 spec 内容随 Trellis 卸载移除，如需恢复可从 git 历史取回。
+- 本目录 `MODIFICATIONS.md:55` 的「trellis-check 复核修复」为历史记录，保留不动。
+
+**涉及文件与位置**：
+- `docs/jav-code-scanner/architecture-jav-code-scanner.md`（:175、:269 两行删除）
+
+**状态**：grep 全域无 `trellis` 存活引用（仅剩本文件与 `.opencode/skills/MODIFICATIONS.md` 的历史/卸载记录字样）

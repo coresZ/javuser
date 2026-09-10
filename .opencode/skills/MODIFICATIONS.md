@@ -4,7 +4,7 @@
 
 ## 目录约束
 
-- 本目录是**项目级 skills**（opencode 平台加载，frontmatter `name` + `description`）；与 `.opencode/skills/trellis-*` 系统技能并列，新增业务 skill 不得覆盖/修改 trellis-* 目录。
+- 本目录是**项目级 skills**（opencode 平台加载，frontmatter `name` + `description`）；新增业务 skill 不得覆盖/修改其他 skill 目录。
 - skill 命名 kebab-case；SKILL.md 正文为可执行工作流（模板/清单/常见坑），不留占位符。
 - 引用项目内文档一律相对仓库根写明路径（如 `docs/jav-code-scanner/jcs-extension-contract.md`）。
 
@@ -32,3 +32,16 @@
 **状态**：`node --check` + 契约断言（前缀/onCleanup 全量/握手）通过；未提交。
 
 **关联**：规范源 `docs/jav-code-scanner/jcs-extension-contract.md`（契约 v1）；宿主实现 JCS v1.5.73。
+
+## 2026-09-10 · Trellis 卸载（移除 trellis-* skills）
+
+**功能**：应用户要求完整卸载 Trellis 工作流框架。
+
+**修改内容**：
+- 删除本目录下全部 trellis-* 技能（trellis-before-dev / trellis-brainstorm / trellis-break-loop / trellis-check / trellis-update-spec / trellis-channel / trellis-meta / trellis-session-insight / trellis-spec-bootstrap）及 references 子目录；jcs-build 与本文件不受影响。
+- 同步移除：`.trellis/` 整目录、`.opencode/` 下 trellis 的 agents/plugins/commands/lib/package.json/node_modules/package-lock.json/.gitignore、项目根 `AGENTS.md`；全局 CLI `@mindfoldhq/trellis` 已 `npm uninstall -g`。
+- 目录约束一节原「trellis-* 并列」条款随之失效，已改写。
+
+**涉及文件与位置**：本目录 9 个 trellis-* 技能目录（删除）；`.opencode/skills/MODIFICATIONS.md`（本条记录 + 约束改写）
+
+**状态**：未提交，git 可查（全部为删除记录，可从历史恢复）

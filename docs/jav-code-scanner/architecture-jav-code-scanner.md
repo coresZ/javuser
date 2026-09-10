@@ -172,7 +172,6 @@ IIFE 53 → 常量（CODE_ACT_KEY 72 / STORE_KEYS 86）→ 存储层 → 站点�
 ### 主题系统
 
 - CSS 变量 `--jcs-*`（深色默认，浅色覆盖块）；`applyTheme` → host `data-theme` + `colorScheme` + `documentElement[data-jcs-theme]`
-- 详见 `.trellis/spec/frontend/design-system.md`
 
 ## 存储与状态
 
@@ -266,7 +265,6 @@ CBox 精简 API：`{__ready, __cboxLite, extract, extractAll, linkify}`。
 
 ## 参考
 
-- 视觉/交互约束的通用化约定见 `.trellis/spec/frontend/design-system.md`
 - Enhanced_Media_Helper 架构见 `../enhanced-media-helper/architecture-enhanced-media-helper.md`
 - 两脚本桥协议见 `../integration/integration-emh-scanner.md`
 - standalone 模式见 `../enhanced-media-helper/standalone-mode.md`
