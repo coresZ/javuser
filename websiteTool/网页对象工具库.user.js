@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          网页对象工具库
 // @namespace     http://tampermonkey.net/
-// @version       0.4.1
+// @version       0.4.2
 // @description   取选任意网页元素，识别对象类型，绑定动作；支持远程规则订阅；导入导出全局存储
 // @author        cores
 // @match         *://*/*
@@ -32,6 +32,15 @@
   // src/utils/gm.js
   // iOS Safari / Userscripts / Stay: 不要直接写 GM_addStyle，未声明时会 ReferenceError 导致整脚本退出
   function gmApi(name) {
+    // typeof 未声明变量不会抛错；油猴把 GM_* 注在沙箱作用域，不在 window 上
+    try {
+      if (name === "GM_getValue" && typeof GM_getValue === "function") return GM_getValue;
+      if (name === "GM_setValue" && typeof GM_setValue === "function") return GM_setValue;
+      if (name === "GM_xmlhttpRequest" && typeof GM_xmlhttpRequest === "function") return GM_xmlhttpRequest;
+      if (name === "GM_addStyle" && typeof GM_addStyle === "function") return GM_addStyle;
+      if (name === "GM_download" && typeof GM_download === "function") return GM_download;
+      if (name === "GM_listValues" && typeof GM_listValues === "function") return GM_listValues;
+    } catch {}
     const short = name.indexOf("GM_") === 0 ? name.slice(3, 4).toLowerCase() + name.slice(4) : name;
     const alts = [name, short];
     const bags = [];
@@ -2129,22 +2138,27 @@
   // src/ui/RulesPanel.js
 
   var REMOTE_KEY = "ppk:remote";
+  var DEFAULT_REMOTE_URL = "https://raw.githubusercontent.com/coresZ/javuser/refs/heads/main/websiteTool/config/cores-ppk-rules-all.json";
   function getRemoteSettings() {
     const raw = (gm.readScriptValue ? gm.readScriptValue(REMOTE_KEY, null) : null) || gm.getValue(REMOTE_KEY, null);
+    let url = "";
+    let auto = true;
+    let mode = "merge";
+    let lastAt = "";
+    let lastMsg = "";
+    let lastHash = "";
     if (raw && typeof raw === "object") {
-      return {
-        url: String(raw.url || "").trim(),
-        auto: !!raw.auto,
-        mode: raw.mode === "replace" ? "replace" : "merge",
-        lastAt: raw.lastAt || "",
-        lastMsg: raw.lastMsg || "",
-        lastHash: raw.lastHash || ""
-      };
+      url = String(raw.url || "").trim();
+      auto = raw.auto !== false;
+      mode = raw.mode === "replace" ? "replace" : "merge";
+      lastAt = raw.lastAt || "";
+      lastMsg = raw.lastMsg || "";
+      lastHash = raw.lastHash || "";
+    } else if (typeof raw === "string") {
+      url = raw.trim();
     }
-    if (typeof raw === "string") {
-      return { url: raw.trim(), auto: false, mode: "merge", lastAt: "", lastMsg: "", lastHash: "" };
-    }
-    return { url: "", auto: false, mode: "merge", lastAt: "", lastMsg: "", lastHash: "" };
+    if (!url) url = DEFAULT_REMOTE_URL;
+    return { url, auto, mode, lastAt, lastMsg, lastHash };
   }
   function saveRemoteSettings(next) {
     const cur = Object.assign(getRemoteSettings(), next || {});
@@ -2742,9 +2756,9 @@
         onRemote: () => remotePanel.open()
       });
       const remote = getRemoteSettings();
-      if (remote.auto && remote.url) {
-        pullRemoteRules({ silent: true, force: false }).then((res) => {
-          if (res && res.ok && !res.skipped) {
+      if (remote.auto !== false && remote.url) {
+        pullRemoteRules({ url: remote.url, mode: remote.mode || "merge", force: false }).then((res) => {
+          if (res && res.ok) {
             try { ruleEngine.applyRules(window.location.hostname); } catch {}
           }
         });
