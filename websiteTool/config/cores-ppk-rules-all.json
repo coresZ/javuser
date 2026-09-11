@@ -1,0 +1,66 @@
+{
+  "version": 2,
+  "exportedAt": "2026-09-11T15:18:41.390Z",
+  "name": "网页对象工具库配置",
+  "hosts": [
+    "ugak.bhefwntk.cc",
+    "18mh.net"
+  ],
+  "packs": [
+    {
+      "id": "p_mtx253zp_tsdriu",
+      "name": "",
+      "hosts": [
+        "ugak.bhefwntk.cc"
+      ],
+      "enabled": true,
+      "rules": [
+        {
+          "selector": "aside.hg-ssp-slot div",
+          "targetType": "image",
+          "action": "hide",
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "id": "p_mtx2djqu_k5t1nl",
+      "name": "",
+      "hosts": [
+        "18mh.net"
+      ],
+      "enabled": true,
+      "rules": [
+        {
+          "selector": ".py-3",
+          "targetType": "card",
+          "action": "hide",
+          "enabled": true
+        },
+        {
+          "selector": ".nv2-ad__group",
+          "targetType": "image",
+          "action": "hide",
+          "enabled": true
+        },
+        {
+          "selector": "div.swiper.h-full .block",
+          "targetType": "image",
+          "action": "hide",
+          "enabled": true
+        },
+        {
+          "selector": "div.apd a",
+          "targetType": "image",
+          "action": "hide",
+          "enabled": true
+        }
+      ]
+    }
+  ],
+  "siteEnabled": {
+    "linux.do": false,
+    "x.com": true,
+    "18mh.net": true
+  }
+}

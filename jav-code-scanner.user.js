@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         通用番号扫描 & 多源搜索
 // @namespace    http://tampermonkey.net/
-// @version      1.5.86
+// @version      1.5.88
 // @description  扫描页面番号，多源搜索与页内预览（iframe/GM 自渲染、拒绝自动降级）、字幕/原名下载、页面高亮自定义、番号库协作（Enhanced_Media_Helper）、扩展宿主（第三方油猴库接入，含选源 picker 按钮组 pickButtons）、全站配置备份（WebDAV 可加密）、window.JavCodeKit 开放 API
 // @author       You
 // @include      *://*jav*/*
@@ -58,8 +58,8 @@
     if (_pageWin.JavCodeKit && _pageWin.JavCodeKit.__ready) return;
 
     const NS = 'jcs';
-    const STYLE_VER = '1.5.86';
-    const SCRIPT_VER = '1.5.86';
+    const STYLE_VER = '1.5.88';
+    const SCRIPT_VER = '1.5.88';
     const IS_CBOX = /(^|\.)cbox\.ws$/i.test(location.hostname || '');
     const CBOX_MSG_SOURCE = 'jcs-cbox';
     const ENC_MARK = 'jcs-aes-gcm-v1';
@@ -464,7 +464,8 @@
                     act: a.act,
                     title: a.title || a.act,
                     extName: rec.name || rec.id,
-                    extEnabled: !!rec.enabled
+                    extEnabled: !!rec.enabled,
+                    icon: a.icon || ''
                 });
             });
         });
@@ -876,6 +877,7 @@
                     extEnabled: !!rec.enabled,
                     kind: isGroup ? 'group' : 'leaf',
                     itemCount: isGroup ? b.items.length : 0,
+                    icon: b.icon || '',
                     items: null
                 };
                 if (isGroup) {
@@ -884,13 +886,43 @@
                         id: it.id,
                         label: it.label,
                         title: (it.title && String(it.title).trim()) || it.label,
-                        parentKey: slot.key
+                        parentKey: slot.key,
+                        icon: it.icon || ''
                     }));
                 }
                 out.push(slot);
             });
         });
         return out;
+    }
+
+    /** 按扩展分组（设置「操作」列表用） */
+    function groupSlotsByExt(slots) {
+        const groups = [];
+        const map = Object.create(null);
+        (slots || []).forEach((slot) => {
+            const id = String((slot && slot.extId) || '_');
+            let g = map[id];
+            if (!g) {
+                g = {
+                    extId: id,
+                    extName: (slot && slot.extName) || id,
+                    extEnabled: !!(slot && slot.extEnabled),
+                    items: []
+                };
+                map[id] = g;
+                groups.push(g);
+            }
+            g.items.push(slot);
+        });
+        return groups;
+    }
+
+    function extSlotIconHtml(icon) {
+        if (icon && String(icon).indexOf('<svg') >= 0) {
+            return '<span class="jcs-ca-ico" aria-hidden="true">' + icon + '</span>';
+        }
+        return '';
     }
 
     /** 选源菜单已打开时静默重建列表（扩展注册/开关后刷新 pickButtons） */
@@ -1141,16 +1173,18 @@
             }
         });
         if (grid) {
-            // 子项：与内置操作条一致，仅图标 + title tip，竖排
-            grid.innerHTML = group.items.map((it) => {
-                const tip = escapeHtml(it.title || it.label || '');
-                const icon = (it.icon && String(it.icon).indexOf('<svg') >= 0)
-                    ? it.icon
-                    : EXT_DEFAULT_ICON;
-                return '<button type="button" class="jcs-gpop-btn has-icon" data-pick="' +
-                    escapeHtml(it.key) + '" title="' + tip + '" role="menuitem">' +
-                    icon + '</button>';
-            }).join('');
+            const head = escapeHtml(group.label || group.title || '扩展');
+            grid.innerHTML = '<div class="jcs-gpop-hd">' + head + '</div>' +
+                group.items.map((it) => {
+                    const tip = escapeHtml(it.title || it.label || '');
+                    const label = escapeHtml(it.label || it.title || '');
+                    const icon = (it.icon && String(it.icon).indexOf('<svg') >= 0)
+                        ? it.icon
+                        : EXT_DEFAULT_ICON;
+                    return '<button type="button" class="jcs-gpop-btn has-icon" data-pick="' +
+                        escapeHtml(it.key) + '" title="' + tip + '" role="menuitem">' +
+                        icon + '<span class="jcs-gpop-txt">' + label + '</span></button>';
+                }).join('');
             grid.querySelectorAll('[data-pick]').forEach((btn) => {
                 btn.onclick = (e) => {
                     e.preventDefault();
@@ -1174,8 +1208,8 @@
             card.style.visibility = 'hidden';
             card.style.left = '0';
             card.style.top = '0';
-            const cw = card.offsetWidth || 160;
-            const ch = card.offsetHeight || 80;
+            const cw = card.offsetWidth || 188;
+            const ch = card.offsetHeight || 120;
             let left = r.left;
             let top = r.bottom + gap;
             const vw = window.innerWidth || 360;
@@ -1650,7 +1684,7 @@
         return !!(el.closest && el.closest('input,textarea,select,[contenteditable="true"]'));
     }
 
-    function showToast(msg) {
+    function showToast(msg, type) {
         injectStyles();
         let el = document.getElementById(NS + '-toast');
         if (!el) {
@@ -1659,10 +1693,16 @@
             el.setAttribute('role', 'status');
             mountUI(el);
         }
-        el.textContent = msg;
+        el.textContent = String(msg == null ? '' : msg);
+        el.classList.remove('is-ok', 'is-err', 'is-warn');
+        const kind = type === 'success' || type === 'ok' ? 'is-ok'
+            : (type === 'error' || type === 'err' ? 'is-err'
+                : (type === 'warn' || type === 'warning' ? 'is-warn' : ''));
+        if (kind) el.classList.add(kind);
         el.classList.add('show');
         clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => el.classList.remove('show'), 1600);
+        const hold = kind === 'is-err' ? 2400 : 1600;
+        toastTimer = setTimeout(() => el.classList.remove('show'), hold);
     }
 
     function copyText(text) {
@@ -3133,80 +3173,118 @@
                 fold.disabled = !(ca[k] && ca[k].on) || (needEmh && !emhOk);
             }
         });
-        // 扩展 actions：动态写入「扩展操作按钮」列表
+        // 扩展 actions：按扩展分组写入「扩展操作按钮」
         const extBox = document.getElementById(NS + '-ca-ext-list');
         if (extBox) {
             const slots = listExtActionSlots();
+            const extCols = document.getElementById(NS + '-ca-ext-cols');
+            if (extCols) {
+                extCols.hidden = !slots.length;
+                extCols.setAttribute('aria-hidden', slots.length ? 'false' : 'true');
+            }
             if (!slots.length) {
-                extBox.innerHTML = '<div class="jcs-ca-ext-empty">暂无扩展操作按钮<br><span>在「扩展」页注册带 <code>actions</code> 的扩展后，会出现在这里，可与内置按钮一样显示/折叠。</span></div>';
+                extBox.innerHTML = '<div class="jcs-ca-ext-empty">暂无扩展操作按钮<span>在「扩展」页注册带 <code>actions</code> 的库后会出现，可与内置按钮一样显示 / 收进「⋯」。</span></div>';
             } else {
-                extBox.innerHTML = slots.map((slot) => {
-                    const cfg = ca[slot.key] || { on: true, fold: false };
-                    const offCls = slot.extEnabled ? '' : ' is-ext-off';
-                    return '<div class="jcs-switch-row jcs-ca-row' + offCls + '" data-ca-ext-key="' + escapeHtml(slot.key) + '">' +
-                        '<div class="jcs-ca-name"><b>' + escapeHtml(slot.title) + '</b>' +
-                        '<em>' + escapeHtml(slot.extName) + (slot.extEnabled ? '' : ' · 已停用') +
-                        ' · <code>' + escapeHtml(slot.key) + '</code></em></div>' +
-                        '<span class="jcs-ca-opts">' +
-                        '<label class="jcs-switch" title="显示按钮"><input type="checkbox" data-ca-key="' + escapeHtml(slot.key) + '" data-ca-kind="on"' +
-                        (cfg.on ? ' checked' : '') + (slot.extEnabled ? '' : ' disabled') + ' /><i></i></label>' +
-                        '<label class="jcs-switch" title="收进「⋯」更多菜单"><input type="checkbox" data-ca-key="' + escapeHtml(slot.key) + '" data-ca-kind="fold"' +
-                        (cfg.fold ? ' checked' : '') + (cfg.on && slot.extEnabled ? '' : ' disabled') + ' /><i></i></label>' +
-                        '</span></div>';
+                extBox.innerHTML = groupSlotsByExt(slots).map((grp) => {
+                    const rows = grp.items.map((slot) => {
+                        const cfg = ca[slot.key] || { on: true, fold: false };
+                        const offCls = slot.extEnabled ? '' : ' is-ext-off';
+                        return '<div class="jcs-switch-row jcs-ca-row is-action' + offCls + '" data-ca-ext-key="' + escapeHtml(slot.key) + '">' +
+                            '<div class="jcs-ca-name">' + extSlotIconHtml(slot.icon) +
+                            '<div class="jcs-ca-copy"><b>' + escapeHtml(slot.title) + '</b>' +
+                            '<em>' + escapeHtml(slot.act) + (slot.extEnabled ? '' : ' · 已停用') + '</em></div></div>' +
+                            '<span class="jcs-ca-opts">' +
+                            '<label class="jcs-switch" title="显示按钮"><input type="checkbox" data-ca-key="' + escapeHtml(slot.key) + '" data-ca-kind="on"' +
+                            (cfg.on ? ' checked' : '') + (slot.extEnabled ? '' : ' disabled') + ' /><i></i></label>' +
+                            '<label class="jcs-switch" title="收进「⋯」更多菜单"><input type="checkbox" data-ca-key="' + escapeHtml(slot.key) + '" data-ca-kind="fold"' +
+                            (cfg.fold ? ' checked' : '') + (cfg.on && slot.extEnabled ? '' : ' disabled') + ' /><i></i></label>' +
+                            '</span></div>';
+                    }).join('');
+                    return '<div class="jcs-ca-ext-group' + (grp.extEnabled ? '' : ' is-off') + '">' +
+                        '<div class="jcs-ca-ext-group-hd"><span class="jcs-ca-ext-group-name">' + escapeHtml(grp.extName) + '</span>' +
+                        '<span class="jcs-ca-ext-group-meta">' + grp.items.length + ' 个按钮' +
+                        (grp.extEnabled ? '' : ' · 已停用') + '</span></div>' + rows + '</div>';
                 }).join('');
             }
         }
-        // 扩展 pickButtons / 按钮组（组可展开到组内单项开关）
+        // 扩展 pickButtons / 按钮组：按扩展分组，组内树状列出子项
         const pickBox = document.getElementById(NS + '-ca-pick-list');
         if (pickBox) {
             const slots = listExtPickSlots();
+            const pickCols = document.getElementById(NS + '-ca-pick-cols');
+            if (pickCols) {
+                pickCols.hidden = !slots.length;
+                pickCols.setAttribute('aria-hidden', slots.length ? 'false' : 'true');
+            }
             if (!slots.length) {
-                pickBox.innerHTML = '<div class="jcs-ca-ext-empty">暂无扩展选源按钮<br><span>注册带 <code>pickButtons</code> 的扩展后出现。带 <code>items</code> 的为二级按钮组，可分别开关组与组内项。</span></div>';
+                pickBox.innerHTML = '<div class="jcs-ca-ext-empty">暂无扩展选源按钮<span>注册带 <code>pickButtons</code> 的扩展后出现。带 <code>items</code> 的为二级按钮组，可分别开关整组与组内项。</span></div>';
             } else {
-                pickBox.innerHTML = slots.map((slot) => {
-                    const cfg = ca[slot.key] || { on: true, fold: false };
-                    const offCls = slot.extEnabled ? '' : ' is-ext-off';
-                    const groupOff = !cfg.on;
-                    // 主标题：title（更完整）优先，否则 label；副标题只放扩展名 + 类型
-                    const head = escapeHtml(slot.title || slot.label);
-                    const subLabel = slot.label && slot.title && slot.label !== slot.title
-                        ? '<span class="jcs-ca-alias">' + escapeHtml(slot.label) + '</span>'
-                        : '';
-                    const kindTag = slot.kind === 'group'
-                        ? '<span class="jcs-ext-chip is-pick">按钮组 · ' + slot.itemCount + ' 项</span>'
-                        : '<span class="jcs-ext-chip is-pick">单按钮</span>';
-                    let html = '<div class="jcs-ca-pick-block' + offCls + (groupOff ? ' is-group-off' : '') + '">' +
-                        '<div class="jcs-switch-row jcs-ca-row is-parent">' +
-                        '<div class="jcs-ca-name"><b>' + head + '</b>' + subLabel +
-                        '<em>来自 ' + escapeHtml(slot.extName) + (slot.extEnabled ? '' : ' · 已停用') +
-                        ' · ' + kindTag + '</em></div>' +
-                        '<span class="jcs-ca-opts">' +
-                        '<label class="jcs-switch" title="显示整组/按钮"><input type="checkbox" data-ca-key="' +
-                        escapeHtml(slot.key) + '" data-ca-kind="on"' +
-                        (cfg.on ? ' checked' : '') + (slot.extEnabled ? '' : ' disabled') + ' /><i></i></label>' +
-                        '</span></div>';
-                    if (slot.kind === 'group' && slot.items && slot.items.length) {
-                        html += '<div class="jcs-ca-pick-children" role="group" aria-label="' + head + ' 组内按钮">';
-                        slot.items.forEach((it) => {
-                            const icfg = ca[it.key] || { on: true, fold: false };
-                            const childDisabled = !slot.extEnabled || groupOff;
-                            html += '<div class="jcs-switch-row jcs-ca-row is-child' + (childDisabled ? ' is-dim' : '') + '">' +
-                                '<div class="jcs-ca-name"><b>' + escapeHtml(it.title || it.label) + '</b>' +
-                                (it.label && it.title && it.label !== it.title
-                                    ? '<em class="jcs-ca-alias">' + escapeHtml(it.label) + '</em>'
-                                    : '<em>组内项</em>') +
-                                '</div>' +
-                                '<span class="jcs-ca-opts">' +
-                                '<label class="jcs-switch" title="显示该组内按钮"><input type="checkbox" data-ca-key="' +
-                                escapeHtml(it.key) + '" data-ca-kind="on"' +
-                                (icfg.on !== false ? ' checked' : '') +
-                                (childDisabled ? ' disabled' : '') + ' /><i></i></label>' +
-                                '</span></div>';
-                        });
+                pickBox.innerHTML = groupSlotsByExt(slots).map((grp) => {
+                    const nGroup = grp.items.filter((s) => s.kind === 'group').length;
+                    const nLeaf = grp.items.length - nGroup;
+                    const metaBits = [];
+                    if (nGroup) metaBits.push(nGroup + ' 组');
+                    if (nLeaf) metaBits.push(nLeaf + ' 按钮');
+                    const blocks = grp.items.map((slot) => {
+                        const cfg = ca[slot.key] || { on: true, fold: false };
+                        const offCls = slot.extEnabled ? '' : ' is-ext-off';
+                        const groupOff = !cfg.on;
+                        const head = escapeHtml(slot.title || slot.label);
+                        const alias = slot.label && slot.title && slot.label !== slot.title
+                            ? '<span class="jcs-ca-alias">' + escapeHtml(slot.label) + '</span>'
+                            : '';
+                        const kindTag = slot.kind === 'group'
+                            ? '<span class="jcs-ca-kind-tag is-group">组 · ' + slot.itemCount + '</span>'
+                            : '<span class="jcs-ca-kind-tag is-leaf">按钮</span>';
+                        let onCount = 0;
+                        if (slot.kind === 'group' && slot.items) {
+                            slot.items.forEach((it) => {
+                                const ic = ca[it.key] || { on: true, fold: false };
+                                if (ic.on !== false) onCount++;
+                            });
+                        }
+                        const sub = slot.kind === 'group'
+                            ? (groupOff ? '整组已隐藏' : (onCount + ' / ' + slot.itemCount + ' 项显示'))
+                            : (groupOff ? '已隐藏' : '显示在选源面板');
+                        let html = '<div class="jcs-ca-pick-block' + offCls + (groupOff ? ' is-group-off' : '') +
+                            (slot.kind === 'group' ? ' is-group' : ' is-leaf') + '">' +
+                            '<div class="jcs-switch-row jcs-ca-row is-parent">' +
+                            '<div class="jcs-ca-name">' + extSlotIconHtml(slot.icon) +
+                            '<div class="jcs-ca-copy"><div class="jcs-ca-titleline"><b>' + head + '</b>' + alias + kindTag + '</div>' +
+                            '<em>' + sub + '</em></div></div>' +
+                            '<span class="jcs-ca-opts">' +
+                            '<label class="jcs-switch" title="' + (slot.kind === 'group' ? '显示整组' : '显示该按钮') + '"><input type="checkbox" data-ca-key="' +
+                            escapeHtml(slot.key) + '" data-ca-kind="on"' +
+                            (cfg.on ? ' checked' : '') + (slot.extEnabled ? '' : ' disabled') + ' /><i></i></label>' +
+                            '</span></div>';
+                        if (slot.kind === 'group' && slot.items && slot.items.length) {
+                            html += '<div class="jcs-ca-pick-children" role="group" aria-label="' + head + ' 组内按钮">';
+                            slot.items.forEach((it, idx) => {
+                                const icfg = ca[it.key] || { on: true, fold: false };
+                                const childDisabled = !slot.extEnabled || groupOff;
+                                const lastCls = idx === slot.items.length - 1 ? ' is-last' : '';
+                                const childAlias = it.label && it.title && it.label !== it.title
+                                    ? '<span class="jcs-ca-alias">' + escapeHtml(it.label) + '</span>'
+                                    : '';
+                                html += '<div class="jcs-switch-row jcs-ca-row is-child' + lastCls + (childDisabled ? ' is-dim' : '') + '">' +
+                                    '<div class="jcs-ca-name">' + extSlotIconHtml(it.icon) +
+                                    '<div class="jcs-ca-copy"><div class="jcs-ca-titleline"><b>' + escapeHtml(it.title || it.label) + '</b>' + childAlias + '</div></div></div>' +
+                                    '<span class="jcs-ca-opts">' +
+                                    '<label class="jcs-switch" title="显示该组内按钮"><input type="checkbox" data-ca-key="' +
+                                    escapeHtml(it.key) + '" data-ca-kind="on"' +
+                                    (icfg.on !== false ? ' checked' : '') +
+                                    (childDisabled ? ' disabled' : '') + ' /><i></i></label>' +
+                                    '</span></div>';
+                            });
+                            html += '</div>';
+                        }
                         html += '</div>';
-                    }
-                    html += '</div>';
-                    return html;
+                        return html;
+                    }).join('');
+                    return '<div class="jcs-ca-ext-group' + (grp.extEnabled ? '' : ' is-off') + '">' +
+                        '<div class="jcs-ca-ext-group-hd"><span class="jcs-ca-ext-group-name">' + escapeHtml(grp.extName) + '</span>' +
+                        '<span class="jcs-ca-ext-group-meta">' + escapeHtml(metaBits.join(' · ') || (grp.items.length + ' 项')) +
+                        (grp.extEnabled ? '' : ' · 已停用') + '</span></div>' + blocks + '</div>';
                 }).join('');
             }
         }
@@ -5434,15 +5512,18 @@ html[data-jcs-theme="dark"],
 #${NS}-toast{
   position:absolute;left:50%;bottom:max(24px,env(safe-area-inset-bottom));
   transform:translateX(-50%) translateY(12px);z-index:20;
-  max-width:min(90vw,340px);padding:10px 18px;border-radius:999px;
+  max-width:min(92vw,360px);padding:10px 16px;border-radius:14px;
   background:var(--jcs-toast-bg);color:var(--jcs-toast-fg);
-  font:var(--jcs-font);font-size:13px;font-weight:700;
+  font:var(--jcs-font);font-size:13px;font-weight:700;line-height:1.35;
   box-shadow:var(--jcs-shadow-sm),0 0 0 1px rgba(255,255,255,.06) inset;
   opacity:0;pointer-events:none;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
   transition:opacity var(--jcs-med) var(--jcs-ease),transform var(--jcs-med) var(--jcs-ease);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+  text-align:center;overflow:hidden;overflow-wrap:anywhere
 }
 #${NS}-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#${NS}-toast.is-ok{box-shadow:var(--jcs-shadow-sm),0 0 0 1px color-mix(in srgb,var(--jcs-ok) 55%,transparent) inset}
+#${NS}-toast.is-err{box-shadow:var(--jcs-shadow-sm),0 0 0 1px color-mix(in srgb,var(--jcs-danger) 60%,transparent) inset}
+#${NS}-toast.is-warn{box-shadow:var(--jcs-shadow-sm),0 0 0 1px color-mix(in srgb,var(--jcs-warn) 60%,transparent) inset}
 /* 行内插入的番号链 / 短文字原链 */
 a.${NS}-link{
   color:var(--jcs-accent)!important;font-weight:700!important;cursor:pointer!important;
@@ -5639,6 +5720,7 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
 #${NS}-panel.show{display:flex;animation:jcs-panel-in .18s var(--jcs-ease)}
 @keyframes jcs-panel-in{from{opacity:.55;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
 #${NS}-panel .jcs-sheet-bar{display:none}
+#${NS}-host[data-theme="light"] #${NS}-panel .jcs-sheet-bar i{background:rgba(15,23,42,.22)}
 #${NS}-panel .jcs-head{
   display:flex;align-items:center;gap:8px;padding:12px 12px 10px;cursor:move;user-select:none;
   border-bottom:1px solid var(--jcs-line);flex-shrink:0;touch-action:none;
@@ -5762,28 +5844,41 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
 /* 行内操作按钮组：固定右侧（扩展 tab 复制/删除/卸载） */
 #${NS}-cfg .jcs-row-ops{display:flex;gap:6px;flex-shrink:0;align-items:center}
 /* 扩展卡片（库脚本列表 / 已注册列表） */
+#${NS}-cfg .jcs-ext-list{display:flex;flex-direction:column;gap:8px;min-width:0}
 #${NS}-cfg .jcs-ext-card{
-  display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
-  padding:10px 12px;border:1px solid var(--jcs-line);border-radius:12px;
+  display:flex;align-items:flex-start;gap:10px;
+  padding:11px 12px;border:1px solid var(--jcs-line);border-radius:12px;
   background:linear-gradient(180deg,var(--jcs-panel2) 0%,var(--jcs-surface) 100%);
   transition:border-color .14s ease,opacity .14s ease,box-shadow .14s ease
 }
 #${NS}-cfg .jcs-ext-card:hover{
   border-color:var(--jcs-chip-line);box-shadow:0 4px 14px rgba(0,0,0,.12)
 }
-#${NS}-cfg .jcs-ext-card.is-off{opacity:.55}
+#${NS}-cfg .jcs-ext-card.is-off{opacity:.62}
+#${NS}-cfg .jcs-ext-card.is-off .jcs-ext-card-title{color:var(--jcs-muted)}
+#${NS}-cfg .jcs-ext-card > .jcs-switch{flex-shrink:0;margin-top:3px}
 #${NS}-cfg .jcs-ext-card-main{display:flex;align-items:flex-start;gap:10px;min-width:0;flex:1}
 #${NS}-cfg .jcs-ext-card-main .jcs-switch{flex-shrink:0;margin-top:2px}
-#${NS}-cfg .jcs-ext-card-body{min-width:0;flex:1;display:flex;flex-direction:column;gap:4px}
+#${NS}-cfg .jcs-ext-card-body{min-width:0;flex:1;display:flex;flex-direction:column;gap:5px}
+#${NS}-cfg .jcs-ext-card-hdline{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:8px;min-width:0;flex-wrap:wrap
+}
 #${NS}-cfg .jcs-ext-card-title{
-  font-size:13px;font-weight:700;color:var(--jcs-text);line-height:1.3;
-  display:flex;align-items:center;flex-wrap:wrap;gap:6px;
-  overflow:hidden;text-overflow:ellipsis
+  font-size:13px;font-weight:750;color:var(--jcs-text);line-height:1.35;
+  display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0
+}
+#${NS}-cfg .jcs-ext-card-title > span.jcs-ext-name{
+  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%
 }
 #${NS}-cfg .jcs-ext-ver{
-  font-size:10.5px;font-weight:700;color:var(--jcs-muted);
+  font-size:10px;font-weight:750;color:var(--jcs-muted);
   padding:1px 6px;border-radius:999px;border:1px solid var(--jcs-line);
   background:var(--jcs-fill);letter-spacing:.02em
+}
+#${NS}-cfg .jcs-ext-src-tag{
+  font-size:10px;font-weight:750;color:var(--jcs-muted);
+  padding:1px 6px;border-radius:999px;border:1px solid var(--jcs-line);
+  background:transparent
 }
 #${NS}-cfg .jcs-ext-chips{display:flex;flex-wrap:wrap;gap:4px}
 #${NS}-cfg .jcs-ext-chip{
@@ -5803,11 +5898,15 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
 }
 #${NS}-cfg .jcs-ext-status.is-ok{color:var(--jcs-ok)}
 #${NS}-cfg .jcs-ext-status.is-bad{color:var(--jcs-danger)}
+#${NS}-cfg .jcs-ext-url{
+  font:10.5px/1.35 var(--jcs-mono);color:var(--jcs-muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap
+}
 #${NS}-cfg .jcs-ext-id{
   font:10.5px/1.2 var(--jcs-mono);color:var(--jcs-muted);
   background:transparent;border:0;padding:0
 }
-#${NS}-cfg .jcs-ext-card-ops{display:flex;gap:6px;flex-shrink:0;align-items:center;padding-top:1px}
+#${NS}-cfg .jcs-ext-card-ops{display:flex;gap:6px;flex-shrink:0;align-items:center;padding-top:0}
 #${NS}-cfg .jcs-ext-card-ops button{
   height:26px;padding:0 10px;border:1px solid var(--jcs-line);border-radius:8px;
   background:var(--jcs-fill);color:var(--jcs-muted);cursor:pointer;font:inherit;
@@ -5856,6 +5955,14 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
 #${NS}-cfg .jcs-card-hd p,#${NS}-cfg .jcs-card-desc{
   margin:4px 0 0;font-size:11.5px;line-height:1.5;color:var(--jcs-muted);font-weight:500
 }
+#${NS}-cfg .jcs-card-count{
+  flex:0 0 auto;align-self:flex-start;margin-top:2px;
+  height:20px;padding:0 8px;border-radius:999px;
+  display:inline-flex;align-items:center;
+  font-size:10.5px;font-weight:750;letter-spacing:.02em;
+  color:var(--jcs-muted);background:var(--jcs-fill);border:1px solid var(--jcs-line)
+}
+#${NS}-cfg .jcs-card-count[hidden]{display:none!important}
 /* 统一设置内按钮 */
 #${NS}-cfg .jcs-btn{
   height:36px;padding:0 14px;border-radius:10px;border:1px solid var(--jcs-line);
@@ -5904,50 +6011,111 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
   padding:8px 0;border-top:1px solid var(--jcs-line)
 }
 #${NS}-cfg .jcs-ca-row .jcs-ca-name{flex:1;min-width:0}
+#${NS}-cfg .jcs-ca-row .jcs-ca-name:has(.jcs-ca-copy),
+#${NS}-cfg .jcs-ca-row .jcs-ca-name:has(.jcs-ca-ico){
+  display:flex;align-items:flex-start;gap:8px
+}
+#${NS}-cfg .jcs-ca-row .jcs-ca-copy{min-width:0;flex:1}
 #${NS}-cfg .jcs-ca-row .jcs-ca-name b{display:block;font-size:12.5px;font-weight:700;color:var(--jcs-soft)}
-#${NS}-cfg .jcs-ca-row .jcs-ca-name em{display:block;font-size:11.5px;color:var(--jcs-muted);font-style:normal;margin-top:2px;line-height:1.4}
+#${NS}-cfg .jcs-ca-row .jcs-ca-name em{display:block;font-size:11px;color:var(--jcs-muted);font-style:normal;margin-top:2px;line-height:1.4}
 #${NS}-cfg .jcs-ca-row .jcs-ca-name em code{font:10.5px/1.2 var(--jcs-mono);opacity:.85}
 #${NS}-cfg .jcs-ca-row .jcs-ca-opts{display:inline-flex;align-items:center;gap:8px;flex:0 0 auto}
 #${NS}-cfg .jcs-ca-section-label{
-  margin:12px 0 6px;font-size:11px;font-weight:800;letter-spacing:.06em;
+  margin:14px 0 4px;font-size:11px;font-weight:800;letter-spacing:.06em;
   text-transform:uppercase;color:var(--jcs-muted)
 }
 #${NS}-cfg .jcs-ca-section-label:first-child{margin-top:0}
-#${NS}-cfg .jcs-ca-ext-list{display:flex;flex-direction:column;gap:0}
+#${NS}-cfg .jcs-ca-cols{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:0 2px 4px;font-size:10px;font-weight:750;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--jcs-muted);opacity:.85
+}
+#${NS}-cfg .jcs-ca-cols[hidden]{display:none!important}
+#${NS}-cfg .jcs-ca-ext-list{display:flex;flex-direction:column;gap:10px}
 #${NS}-cfg .jcs-ca-row.is-ext-off{opacity:.55}
 #${NS}-cfg .jcs-ca-ext-empty{
-  padding:12px 14px;border:1px dashed var(--jcs-line);border-radius:10px;
-  font-size:12px;color:var(--jcs-muted);line-height:1.45;background:var(--jcs-surface)
+  padding:14px 14px;border:1px dashed var(--jcs-line);border-radius:12px;
+  font-size:12.5px;font-weight:650;color:var(--jcs-muted);line-height:1.45;background:var(--jcs-surface);
+  text-align:center
 }
-#${NS}-cfg .jcs-ca-ext-empty span{display:block;margin-top:4px;font-size:11px;opacity:.85}
+#${NS}-cfg .jcs-ca-ext-empty span{display:block;margin-top:4px;font-size:11px;font-weight:500;opacity:.85}
 #${NS}-cfg .jcs-ca-ext-empty code{font:11px var(--jcs-mono)}
+#${NS}-cfg .jcs-ca-ext-group{display:flex;flex-direction:column;gap:6px;min-width:0}
+#${NS}-cfg .jcs-ca-ext-group.is-off{opacity:.72}
+#${NS}-cfg .jcs-ca-ext-group-hd{
+  display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+  padding:0 2px
+}
+#${NS}-cfg .jcs-ca-ext-group-name{
+  font-size:11px;font-weight:800;color:var(--jcs-soft);letter-spacing:.02em;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap
+}
+#${NS}-cfg .jcs-ca-ext-group-meta{
+  flex:0 0 auto;font-size:10.5px;font-weight:650;color:var(--jcs-muted)
+}
+#${NS}-cfg .jcs-ca-ico{
+  flex:0 0 auto;width:22px;height:22px;margin-top:1px;
+  display:inline-flex;align-items:center;justify-content:center;
+  color:var(--jcs-muted)
+}
+#${NS}-cfg .jcs-ca-ico svg{width:14px;height:14px;display:block}
+#${NS}-cfg .jcs-ca-titleline{
+  display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0
+}
+#${NS}-cfg .jcs-ca-titleline b{display:inline;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+#${NS}-cfg .jcs-ca-kind-tag{
+  display:inline-flex;align-items:center;height:16px;padding:0 6px;border-radius:999px;
+  font-size:10px;font-weight:750;letter-spacing:.02em;
+  border:1px solid var(--jcs-line);background:var(--jcs-fill);color:var(--jcs-muted)
+}
+#${NS}-cfg .jcs-ca-kind-tag.is-group{
+  background:var(--jcs-accent-dim);border-color:var(--jcs-accent-line);color:var(--jcs-accent2)
+}
 #${NS}-cfg .jcs-ca-pick-block{
-  border:1px solid var(--jcs-line);border-radius:12px;background:var(--jcs-surface);
-  margin-bottom:8px;overflow:hidden
+  border:1px solid var(--jcs-line);border-radius:12px;
+  background:linear-gradient(180deg,var(--jcs-panel2) 0%,var(--jcs-surface) 100%);
+  overflow:hidden
 }
 #${NS}-cfg .jcs-ca-pick-block.is-ext-off{opacity:.55}
-#${NS}-cfg .jcs-ca-pick-block.is-group-off .jcs-ca-pick-children{opacity:.55}
+#${NS}-cfg .jcs-ca-pick-block.is-group-off{opacity:.78}
+#${NS}-cfg .jcs-ca-pick-block.is-group-off .jcs-ca-pick-children{opacity:.5}
 #${NS}-cfg .jcs-ca-pick-block .jcs-ca-row.is-parent{
-  border:0;border-radius:0;background:transparent;min-height:48px
+  border:0;border-radius:0;background:transparent;min-height:44px;
+  padding:9px 12px
+}
+#${NS}-cfg .jcs-ca-pick-block .jcs-switch-row:first-of-type{
+  border-top:0;padding-top:9px
 }
 #${NS}-cfg .jcs-ca-pick-children{
-  border-top:1px solid var(--jcs-line);padding:4px 0 6px;
-  background:linear-gradient(180deg,var(--jcs-panel2) 0%,var(--jcs-surface) 100%)
+  position:relative;
+  border-top:1px solid var(--jcs-line);
+  padding:2px 8px 8px 14px;
+  background:var(--jcs-fill-2)
 }
 #${NS}-cfg .jcs-ca-row.is-child{
-  border:0;border-radius:0;background:transparent;min-height:40px;
-  padding-left:28px;position:relative
+  border:0;border-radius:8px;background:transparent;min-height:36px;
+  padding:5px 8px 5px 22px;position:relative
 }
 #${NS}-cfg .jcs-ca-row.is-child::before{
-  content:'';position:absolute;left:16px;top:50%;width:6px;height:6px;
-  border-radius:50%;background:var(--jcs-chip-line);transform:translateY(-50%)
+  content:'';position:absolute;left:8px;top:0;bottom:50%;
+  width:10px;border-left:1px solid var(--jcs-chip-line);border-bottom:1px solid var(--jcs-chip-line);
+  border-radius:0 0 0 4px;background:transparent;transform:none
 }
-#${NS}-cfg .jcs-ca-row.is-child.is-dim{opacity:.55}
+#${NS}-cfg .jcs-ca-row.is-child:not(.is-last)::after{
+  content:'';position:absolute;left:8px;top:50%;bottom:0;
+  width:0;border-left:1px solid var(--jcs-chip-line)
+}
+#${NS}-cfg .jcs-ca-row.is-child.is-dim{opacity:.5}
 #${NS}-cfg .jcs-ca-alias{
-  display:inline-block;margin-left:6px;font-size:11px;font-weight:600;
-  color:var(--jcs-muted);vertical-align:middle
+  display:inline-flex;align-items:center;height:16px;padding:0 6px;border-radius:6px;
+  font-size:10.5px;font-weight:650;color:var(--jcs-muted);
+  background:var(--jcs-fill);border:1px solid var(--jcs-line)
 }
 #${NS}-cfg .jcs-ca-row .jcs-ca-name em .jcs-ext-chip{vertical-align:middle;margin-left:2px}
+#${NS}-cfg .jcs-ca-row.is-action{
+  padding:8px 4px;border-top:1px solid var(--jcs-line)
+}
+#${NS}-cfg .jcs-ca-ext-group .jcs-ca-row.is-action:first-of-type{border-top:1px solid var(--jcs-line);padding-top:8px}
 #${NS}-cfg .jcs-switch-row:first-of-type{border-top:0;padding-top:0}
 #${NS}-cfg .jcs-switch-row > div{min-width:0;flex:1}
 #${NS}-cfg .jcs-switch-row b{display:block;font-size:12.5px;font-weight:700;color:var(--jcs-soft)}
@@ -6552,8 +6720,8 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
 #${NS}-pick .jcs-pick-card{
   position:absolute;pointer-events:auto;z-index:1;
   display:flex;flex-direction:column;gap:7px;
-  width: min(92vw, 300px);   /* 或你算出来的固定值 */
-  max-width: min(92vw, 300px);
+  width:min(92vw,300px);
+  max-width:min(92vw,300px);
   min-width: 0;
   padding:9px 9px 10px;border-radius:14px;
   background:var(--jcs-panel);color:var(--jcs-text);
@@ -6648,27 +6816,36 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
   position:absolute;inset:0;background:transparent;pointer-events:auto
 }
 #${NS}-pick-gpop .jcs-gpop-card{
-  position:fixed;z-index:1;padding:4px;border-radius:12px;
+  position:fixed;z-index:1;padding:6px;border-radius:12px;
+  min-width:168px;max-width:min(240px,calc(100vw - 16px));
   border:1px solid var(--jcs-line);background:var(--jcs-panel);
-  box-shadow:0 10px 28px rgba(0,0,0,.38);pointer-events:auto
+  box-shadow:var(--jcs-shadow-sm),0 10px 28px rgba(0,0,0,.28);pointer-events:auto
 }
 #${NS}-pick-gpop .jcs-gpop-grid{
   display:flex;flex-direction:column;align-items:stretch;gap:2px
 }
+#${NS}-pick-gpop .jcs-gpop-hd{
+  padding:4px 8px 6px;font-size:10.5px;font-weight:750;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--jcs-muted);line-height:1.2
+}
 #${NS}-pick-gpop .jcs-gpop-btn{
-  display:inline-flex;align-items:center;justify-content:center;
-  height:30px;width:34px;min-width:34px;padding:0;border-radius:999px;cursor:pointer;
-  border:1px solid var(--jcs-chip-line);background:var(--jcs-fill-2);color:var(--jcs-soft);
-  transition:background .14s ease,border-color .14s ease,color .14s ease,transform .14s ease
+  display:flex;align-items:center;justify-content:flex-start;gap:8px;
+  height:32px;width:100%;min-width:0;padding:0 8px;border-radius:8px;cursor:pointer;
+  border:0;background:transparent;color:var(--jcs-soft);font:inherit;
+  transition:background .14s ease,color .14s ease
 }
-#${NS}-pick-gpop .jcs-gpop-btn:hover{
-  background:var(--jcs-accent-dim);border-color:var(--jcs-accent-line);color:var(--jcs-accent2);
-  transform:translateY(-1px)
+#${NS}-pick-gpop .jcs-gpop-btn:hover,
+#${NS}-pick-gpop .jcs-gpop-btn:focus-visible{
+  background:var(--jcs-accent-dim);color:var(--jcs-accent2);outline:none
 }
-#${NS}-pick-gpop .jcs-gpop-btn:active{transform:scale(.96)}
-#${NS}-pick-gpop .jcs-gpop-btn svg{width:13px;height:13px;flex:0 0 auto}
+#${NS}-pick-gpop .jcs-gpop-btn:active{background:var(--jcs-fill-hover)}
+#${NS}-pick-gpop .jcs-gpop-btn svg{width:14px;height:14px;flex:0 0 auto}
+#${NS}-pick-gpop .jcs-gpop-txt{
+  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:12px;font-weight:650;line-height:1.2;text-align:left
+}
 #${NS}-pick-gpop .jcs-gpop-btn.is-done{
-  border-color:var(--jcs-accent-line);color:var(--jcs-accent2);background:var(--jcs-accent-dim)
+  color:var(--jcs-accent2);background:var(--jcs-accent-dim)
 }
 #${NS}-pick .jcs-pick-x{
   flex:0 0 auto;width:26px;height:26px;border-radius:7px;border:0;padding:0;cursor:pointer;
@@ -6737,6 +6914,9 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
 #${NS}-pick .jcs-pick-btn:active{
   transform:scale(.96);box-shadow:none
 }
+#${NS}-pick .jcs-pick-btn:focus-visible{
+  outline:none;box-shadow:var(--jcs-focus)
+}
 #${NS}-pick .jcs-pick-sep{
   display:inline-block;width:1px;height:18px;margin:0 2px;
   background:var(--jcs-chip-line);opacity:.7;flex:0 0 auto;align-self:center
@@ -6757,7 +6937,12 @@ html.${NS}-sub-open #${NS}-fab{display:none!important}
 }
 #${NS}-pick .jcs-pick-btn-group .jcs-pick-caret,
 #${NS}-win .jcs-pick-ext-row .jcs-pick-caret{
-  margin-left:3px;font-size:9px;opacity:.75;line-height:1
+  margin-left:3px;font-size:9px;opacity:.75;line-height:1;
+  display:inline-block;transform-origin:center;transition:transform .14s ease
+}
+#${NS}-pick .jcs-pick-btn-group.is-open .jcs-pick-caret,
+#${NS}-win .jcs-pick-ext-row .jcs-pick-btn-group.is-open .jcs-pick-caret{
+  transform:rotate(90deg)
 }
 #${NS}-pick .jcs-pick-btn-group.is-open,
 #${NS}-win .jcs-pick-ext-row .jcs-pick-btn-group.is-open{
@@ -6783,7 +6968,8 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
 }
 @media (prefers-reduced-motion:reduce){
   #${NS}-pick,#${NS}-pick .jcs-pick-card,#${NS}-pick .jcs-pick-btn,#${NS}-pick .jcs-pick-x,
-  #${NS}-panel,#${NS}-popup,#${NS}-win,#${NS}-cfg,#${NS}-fab,#${NS}-toast{
+  #${NS}-panel,#${NS}-popup,#${NS}-win,#${NS}-cfg,#${NS}-fab,#${NS}-toast,
+  #${NS}-pick-gpop .jcs-gpop-btn,#${NS}-pick .jcs-pick-caret{
     transition:none!important;animation:none!important
   }
   #${NS}-pick .jcs-pick-card,#${NS}-pick .jcs-pick-btn{opacity:1;transform:none!important}
@@ -7770,24 +7956,26 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
               <div class="jcs-card-hd">
                 <div>
                   <strong>扩展库脚本</strong>
-                  <p class="jcs-card-desc">添加库脚本 URL（http/https），本站加载时自动注入并按契约注册能力。规范见 docs/jav-code-scanner/jcs-extension-contract.md。</p>
+                  <p class="jcs-card-desc">添加库脚本 URL（http/https），本站加载时自动注入并按契约注册。仅添加可信来源。</p>
                 </div>
+                <span class="jcs-card-count" id="${NS}-ext-src-count" hidden></span>
               </div>
-              <p class="jcs-callout is-warn">扩展等同任意代码：仅添加可信来源；运行在页面环境，无法使用 GM 存储与跨域 API。</p>
+              <p class="jcs-callout is-on is-warn">扩展运行在页面环境，无法使用 GM 存储与跨域 API。</p>
               <div class="jcs-blacklist-form">
                 <input id="${NS}-ext-url-input" type="url" inputmode="url" placeholder="https://example.com/my-extension.user.js" autocomplete="off" spellcheck="false" />
                 <button type="button" class="jcs-btn solid" id="${NS}-ext-url-add">添加</button>
               </div>
-              <div class="jcs-blacklist-list" id="${NS}-ext-source-list" role="list"></div>
+              <div class="jcs-ext-list" id="${NS}-ext-source-list" role="list"></div>
             </div>
             <div class="jcs-card">
               <div class="jcs-card-hd">
                 <div>
                   <strong>已注册扩展</strong>
-                  <p class="jcs-card-desc">由扩展库或独立油猴脚本经 JavCodeKit.extensions.register 注册（actions 操作条 / pickButtons 选源按钮 / styles / mounts）。开关为会话级：关闭后本次页面生效，刷新恢复。</p>
+                  <p class="jcs-card-desc">经 <code>JavCodeKit.extensions.register</code> 接入。开关仅本次会话有效，刷新后恢复。</p>
                 </div>
+                <span class="jcs-card-count" id="${NS}-ext-reg-count" hidden></span>
               </div>
-              <div id="${NS}-ext-reg-list" role="list"></div>
+              <div class="jcs-ext-list" id="${NS}-ext-reg-list" role="list"></div>
             </div>
           </div>
           <div class="jcs-cfg-pane" data-pane="backup" role="tabpanel">
@@ -7961,10 +8149,12 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 </span>
               </div>
               <div class="jcs-ca-section-label">扩展操作按钮</div>
+              <div class="jcs-ca-cols" id="${NS}-ca-ext-cols" hidden aria-hidden="true"><span>按钮</span><span>显示 / 折叠</span></div>
               <div id="${NS}-ca-ext-list" class="jcs-ca-ext-list"></div>
               <div class="jcs-ca-section-label">扩展选源按钮 / 按钮组</div>
-              <div id="${NS}-ca-pick-list" class="jcs-ca-ext-list"></div>
-              <p class="jcs-mode-hint" style="margin:0">操作栏图标：左=显示，右=收进「⋯」。选源按钮组：可开关整组，组内每一项也可单独开关（组关闭时子项暂时禁用）。按钮组在选源菜单/大窗以二级菜单呈现。</p>
+              <div class="jcs-ca-cols" id="${NS}-ca-pick-cols" hidden aria-hidden="true"><span>选源入口</span><span>显示</span></div>
+              <div id="${NS}-ca-pick-list" class="jcs-ca-ext-list is-pick"></div>
+              <p class="jcs-mode-hint" style="margin:0">操作栏：左开显示，右开收进「⋯」。选源组可关整组，组内项可单独关；整组关闭时子项暂时禁用，并以二级菜单出现在选源面板。</p>
             </div>
           </div>
           <div class="jcs-cfg-pane" data-pane="sources" role="tabpanel">
@@ -10633,12 +10823,23 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         const srcBox = document.getElementById(NS + '-ext-source-list');
         if (srcBox) {
             const list = loadExtensionSources();
+            const srcCount = document.getElementById(NS + '-ext-src-count');
+            if (srcCount) {
+                if (list.length) {
+                    const offN = list.filter((x) => x.enabled === false).length;
+                    srcCount.hidden = false;
+                    srcCount.textContent = list.length + ' 个源' + (offN ? ' · ' + offN + ' 停用' : '');
+                } else {
+                    srcCount.hidden = true;
+                    srcCount.textContent = '';
+                }
+            }
             srcBox.innerHTML = list.map((it, i) => {
                 const host = providerHostname(it.url) || it.url;
                 const label = it.name || host;
                 const on = it.enabled !== false;
                 let statusCls = 'jcs-ext-status';
-                let statusTxt = escapeHtml(host);
+                let statusTxt = '待加载 · 刷新页面后注入';
                 if (it.lastStatus === 'load-failed') {
                     statusCls += ' is-bad';
                     statusTxt = '加载失败 · 检查 URL 或本地服务';
@@ -10647,51 +10848,72 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                     statusTxt = '已注册 · ' + escapeHtml(String(it.name || it.id));
                 } else if (it.lastStatus === 'ok') {
                     statusCls += ' is-ok';
-                    statusTxt = '已加载';
+                    statusTxt = '已加载，等待 register';
                 }
                 return '<div class="jcs-ext-card' + (on ? '' : ' is-off') + '" role="listitem" data-url="' + escapeHtml(it.url) + '">' +
-                    '<div class="jcs-ext-card-main">' +
                     '<label class="jcs-switch" title="启用/停用该扩展源"><input type="checkbox" data-ext-src-toggle="' + i + '"' + (on ? ' checked' : '') + ' /><i></i></label>' +
                     '<div class="jcs-ext-card-body">' +
-                    '<div class="jcs-ext-card-title" title="' + escapeHtml(it.url) + '">' + escapeHtml(label) +
+                    '<div class="jcs-ext-card-hdline">' +
+                    '<div class="jcs-ext-card-title" title="' + escapeHtml(it.url) + '"><span class="jcs-ext-name">' + escapeHtml(label) + '</span>' +
                     (it.version ? '<span class="jcs-ext-ver">v' + escapeHtml(String(it.version)) + '</span>' : '') +
                     '</div>' +
-                    '<div class="' + statusCls + '">' + statusTxt + '</div>' +
-                    '</div></div>' +
                     '<div class="jcs-ext-card-ops">' +
                     '<button type="button" data-ext-src-copy="' + i + '" title="复制链接">复制</button>' +
                     '<button type="button" data-ext-src-del="' + i + '" title="移除该扩展源" class="is-danger">删除</button>' +
+                    '</div></div>' +
+                    '<div class="jcs-ext-url" title="' + escapeHtml(it.url) + '">' + escapeHtml(it.url) + '</div>' +
+                    '<div class="' + statusCls + '">' + statusTxt + '</div>' +
                     '</div></div>';
             }).join('') || '<div class="jcs-empty-src">暂无扩展源<br><span>添加库脚本 URL，或安装会调用 register 的独立油猴脚本</span></div>';
         }
         const regBox = document.getElementById(NS + '-ext-reg-list');
         if (regBox) {
             const recs = Array.from((typeof _extReg !== 'undefined' ? _extReg : new Map()).values());
+            const regCount = document.getElementById(NS + '-ext-reg-count');
+            if (regCount) {
+                if (recs.length) {
+                    const offN = recs.filter((r) => !r.enabled).length;
+                    regCount.hidden = false;
+                    regCount.textContent = recs.length + ' 个' + (offN ? ' · ' + offN + ' 停用' : '');
+                } else {
+                    regCount.hidden = true;
+                    regCount.textContent = '';
+                }
+            }
             regBox.innerHTML = recs.map((rec) => {
                 const nAct = (rec.actions && rec.actions.length) || 0;
-                const nPick = (rec.pickButtons && rec.pickButtons.length) || 0;
+                const picks = Array.isArray(rec.pickButtons) ? rec.pickButtons : [];
+                const nPick = picks.length;
+                const nPickGroup = picks.filter((b) => b && b.kind === 'group').length;
+                const nPickLeaf = nPick - nPickGroup;
                 const nStyle = (rec.styles && rec.styles.length) || 0;
                 const nMount = (rec.mounts && rec.mounts.length) || 0;
                 const chips = [];
                 if (nAct) chips.push('<span class="jcs-ext-chip" title="番号操作条图标按钮">操作 ' + nAct + '</span>');
-                if (nPick) chips.push('<span class="jcs-ext-chip is-pick" title="选源叶子按钮 / 二级按钮组">选源 ' + nPick + '</span>');
+                if (nPick) {
+                    let pickTxt = '选源 ' + nPick;
+                    if (nPickGroup && nPickLeaf) pickTxt = '选源 ' + nPickLeaf + ' + 组 ' + nPickGroup;
+                    else if (nPickGroup) pickTxt = '选源组 ' + nPickGroup;
+                    chips.push('<span class="jcs-ext-chip is-pick" title="选源叶子按钮 / 二级按钮组">' + pickTxt + '</span>');
+                }
                 if (nStyle) chips.push('<span class="jcs-ext-chip is-style" title="注入样式">样式 ' + nStyle + '</span>');
                 if (nMount) chips.push('<span class="jcs-ext-chip is-mount" title="页面挂载">挂载 ' + nMount + '</span>');
                 const srcLabel = rec.source === 'script'
                     ? '独立脚本'
                     : (providerHostname(rec.source) || 'URL 注入');
                 return '<div class="jcs-ext-card' + (rec.enabled ? '' : ' is-off') + '" role="listitem" data-ext-id="' + escapeHtml(rec.id) + '">' +
-                    '<div class="jcs-ext-card-main">' +
-                    '<label class="jcs-switch" title="启用/停用（会话级）"><input type="checkbox" data-ext-toggle="' + escapeHtml(rec.id) + '"' + (rec.enabled ? ' checked' : '') + ' /><i></i></label>' +
+                    '<label class="jcs-switch" title="启用/停用（会话级，刷新恢复）"><input type="checkbox" data-ext-toggle="' + escapeHtml(rec.id) + '"' + (rec.enabled ? ' checked' : '') + ' /><i></i></label>' +
                     '<div class="jcs-ext-card-body">' +
-                    '<div class="jcs-ext-card-title">' + escapeHtml(rec.name) +
-                    '<span class="jcs-ext-ver">v' + escapeHtml(rec.version) + '</span></div>' +
-                    '<div class="jcs-ext-chips">' + (chips.join('') || '<span class="jcs-ext-chip is-empty">无能力点</span>') + '</div>' +
-                    '<div class="jcs-ext-status">来源 · ' + escapeHtml(srcLabel) +
-                    ' · <code class="jcs-ext-id">' + escapeHtml(rec.id) + '</code></div>' +
-                    '</div></div>' +
+                    '<div class="jcs-ext-card-hdline">' +
+                    '<div class="jcs-ext-card-title"><span class="jcs-ext-name">' + escapeHtml(rec.name) + '</span>' +
+                    '<span class="jcs-ext-ver">v' + escapeHtml(rec.version) + '</span>' +
+                    '<span class="jcs-ext-src-tag">' + escapeHtml(srcLabel) + '</span></div>' +
                     '<div class="jcs-ext-card-ops">' +
                     '<button type="button" data-ext-unreg="' + escapeHtml(rec.id) + '" title="卸载该扩展（本次会话）" class="is-danger">卸载</button>' +
+                    '</div></div>' +
+                    '<div class="jcs-ext-chips">' + (chips.join('') || '<span class="jcs-ext-chip is-empty">无能力点</span>') + '</div>' +
+                    '<div class="jcs-ext-status"><code class="jcs-ext-id">' + escapeHtml(rec.id) + '</code>' +
+                    (rec.enabled ? '' : ' · 本次已停用') + '</div>' +
                     '</div></div>';
             }).join('') || '<div class="jcs-empty-src">暂无已注册扩展<br><span>扩展脚本调用 JavCodeKit.extensions.register 后会出现在这里</span></div>';
         }
