@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          网页对象工具库
 // @namespace     http://tampermonkey.net/
-// @version       0.4.2
+// @version       0.4.3
 // @description   取选任意网页元素，识别对象类型，绑定动作；支持远程规则订阅；导入导出全局存储
 // @author        cores
 // @match         *://*/*
@@ -534,11 +534,38 @@
       this._loaded = true;
       const fromScript = this._migrate(gm.readScriptValue(KEY, null));
       const fromLocal = this._migrate(localGet(KEY, null));
-      this.packs = this._mergePacks(fromScript, fromLocal);
-      if (fromLocal.length && fromScript.length !== this.packs.length) {
-        gm.writeScriptValue(KEY, { version: 2, packs: this.packs });
-      }
+      this.packs = this._dedupePacks(this._mergePacks(fromScript, fromLocal));
       return this.packs;
+    }
+    _dedupePacks(list) {
+      const packs = (list || []).filter(Boolean);
+      const keep = [];
+      const used = Object.create(null);
+      for (let i = 0; i < packs.length; i++) {
+        if (used[i]) continue;
+        let cur = normalizePack(packs[i]);
+        for (let j = i + 1; j < packs.length; j++) {
+          if (used[j]) continue;
+          const other = packs[j];
+          const overlap = (cur.hosts || []).some((h) => (other.hosts || []).some((x) => h === x));
+          if (!overlap && cur.id && other.id && cur.id === other.id) {
+            /* same id */
+          } else if (!overlap) continue;
+          used[j] = 1;
+          const hosts = normalizeHosts([].concat(cur.hosts || [], other.hosts || []));
+          const seen = Object.create(null);
+          const rules = [];
+          for (const r of [].concat(cur.rules || [], other.rules || [])) {
+            const k = (r.selector || "") + "\0" + (r.action || "") + "\0" + (r.targetType || "");
+            if (seen[k]) continue;
+            seen[k] = 1;
+            rules.push(normalizeRule(r));
+          }
+          cur = normalizePack({ ...cur, hosts, rules });
+        }
+        keep.push(cur);
+      }
+      return keep;
     }
     reloadFromStorage() {
       this._loaded = false;
@@ -595,9 +622,8 @@
       return packs;
     }
     _persist() {
-      const existing = this._migrate(gm.readScriptValue(KEY, null));
-      this.packs = this._mergePacks(existing, this.packs || []);
-      gm.writeScriptValue(KEY, { version: 2, packs: this.packs });
+      // 内存里的 packs 是准的。不能再和 GM 旧数据按规则并集，否则电脑上改动作/删除会被旧远程数据盖回去
+      gm.writeScriptValue(KEY, { version: 2, packs: this.packs || [] });
     }
     getPacks() {
       return this.load();
@@ -1461,7 +1487,16 @@
         pull("replace");
       });
       remoteBox.appendChild(el("div", { class: "cores-ppk-remote-row" }, urlInput));
-      remoteBox.appendChild(el("div", { class: "cores-ppk-remote-row" }, mergeBtn, replaceBtn));
+      const cleanBtn = el("button", { type: "button", class: "cores-ppk-rules-hosts-btn", text: "清理脏数据" });
+      cleanBtn.addEventListener("click", () => {
+        if (!confirm("将清空本脚本本地规则，再按远程地址重新拉取。确定？")) return;
+        rulesManager.packs = [];
+        rulesManager._loaded = true;
+        gm.writeScriptValue(KEY, { version: 2, packs: [] });
+        if (gm._cache) delete gm._cache[KEY];
+        pull("replace");
+      });
+      remoteBox.appendChild(el("div", { class: "cores-ppk-remote-row" }, mergeBtn, replaceBtn, cleanBtn));
       const auto = el("input", { type: "checkbox" });
       auto.checked = !!cfg.auto;
       auto.addEventListener("change", () => {
