@@ -536,14 +536,24 @@
 </div>
 
 <script>
+  var PANES = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6'];
+  function showPane(id) {
+    document.querySelectorAll('.cfg-tab').forEach(function (x) { x.classList.toggle('on', x.getAttribute('data-p') === id); });
+    document.querySelectorAll('.pane').forEach(function (x) { x.classList.toggle('on', x.id === id); });
+  }
   document.querySelectorAll('.cfg-tab').forEach(function (t) {
     t.addEventListener('click', function () {
-      document.querySelectorAll('.cfg-tab').forEach(function (x) { x.classList.remove('on'); });
-      document.querySelectorAll('.pane').forEach(function (x) { x.classList.remove('on'); });
-      t.classList.add('on');
-      document.getElementById(t.getAttribute('data-p')).classList.add('on');
+      var id = t.getAttribute('data-p');
+      showPane(id);
+      history.replaceState(null, '', '#' + id);
     });
   });
+  window.addEventListener('hashchange', function () {
+    var id = decodeURIComponent(location.hash.slice(1));
+    if (PANES.indexOf(id) > -1) showPane(id);
+  });
+  var initHash = decodeURIComponent(location.hash.slice(1));
+  if (PANES.indexOf(initHash) > -1) showPane(initHash);
   document.querySelectorAll('.src-btn').forEach(function (b) {
     b.addEventListener('click', function () {
       this.closest('.picker-row').querySelectorAll('.src-btn').forEach(function (x) { x.classList.remove('on'); });
