@@ -1,10 +1,13 @@
 {
   "version": 2,
-  "exportedAt": "2026-09-11T15:18:41.390Z",
+  "exportedAt": "2026-09-11T16:39:20.671Z",
   "name": "网页对象工具库配置",
   "hosts": [
     "ugak.bhefwntk.cc",
-    "18mh.net"
+    "18mh.net",
+    "*.bhefwntk.cc",
+    "greasyfork.org",
+    "grok.com"
   ],
   "packs": [
     {
@@ -54,8 +57,66 @@
           "targetType": "image",
           "action": "hide",
           "enabled": true
+        },
+        {
+          "selector": "a.adsClick div",
+          "targetType": "image",
+          "action": "hide",
+          "enabled": true
+        },
+        {
+          "selector": "div.modal.dx-modal.ad-dialog.in",
+          "targetType": "image",
+          "action": "hide",
+          "enabled": true
+        },
+        {
+          "selector": "div.modal-backdrop",
+          "targetType": "region",
+          "action": "popup-open",
+          "enabled": true
+        },
+        {
+          "selector": ".modal-backdrop",
+          "targetType": "region",
+          "action": "hide",
+          "enabled": true
         }
       ]
+    },
+    {
+      "id": "p_mtx25tjh_bkbebm",
+      "name": "",
+      "hosts": [
+        "*.bhefwntk.cc"
+      ],
+      "enabled": true,
+      "rules": [
+        {
+          "selector": "aside.hg-ssp-slot div",
+          "targetType": "image",
+          "action": "hide",
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "id": "p_mtx2k7v6_sor6oq",
+      "name": "",
+      "hosts": [
+        "greasyfork.org"
+      ],
+      "enabled": true,
+      "rules": []
+    },
+    {
+      "id": "p_mtx2l88d_v1gyqy",
+      "name": "",
+      "hosts": [
+        "grok.com"
+      ],
+      "enabled": true,
+      "rules": []
     }
   ],
   "siteEnabled": {
