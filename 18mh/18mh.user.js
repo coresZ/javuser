@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         18dm小说下载器
 // @namespace    http://tampermonkey.net/
-// @version      3.9.4
-// @description  一键下载18dm/18mh小说为TXT · 章节内容缓存 · 增量更新 · 全新内置现代UI组件 · 悬浮条自由拖拽磁吸/收起 · PC端锚定气泡交互/移动端底部抽屉 · 完美适配iOS Safari与移动端
+// @version      4.2.0
+// @description  一键下载18dm/18mh小说为TXT · UI v2（Lobe 实色层 / Lucide 图标 / PowerGlitch 成功态）· 章节缓存 · 增量更新 · 标签抽屉 · 悬浮条拖拽磁吸 · 收藏/黑名单 WebDAV 同步
 // @author       you
 // @match        *://18dm.net/*
 // @match        *://*.18dm.net/*
 // @match        *://18mh.net/*
 // @match        *://*.18mh.net/*
+// @require      https://update.greasyfork.org/scripts/593538/1936318/webdev-component.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_notification
 // @grant        GM_setValue
@@ -17,6 +18,7 @@
 // @connect      18mh.net
 // @connect      *.18mh.net
 // @connect      self
+// @connect      *
 // @run-at       document-idle
 // @license      MIT
 // ==/UserScript==
@@ -28,6 +30,7 @@
   var MAX_RETRY = 2;
   var STORE_KEY = 'dm_dl_history_v2';
   var FAV_KEY = 'dm_dl_favorites_v1';
+  var BAN_KEY = 'dm_dl_blacklist_v1';
   var CONTENT_KEY = 'dm_dl_content_v1';
   var DOCK_POS_KEY = 'dm_dl_dock_pos_v3';
   var downloading = false;
@@ -41,14 +44,16 @@
 
   // ========== SVG 图标（统一尺寸与颜色） ==========
   var ICONS = {
-    download: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 19h14"/></svg>',
-    heart: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>',
+    download: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17V3"/><path d="m6 11 6 6 6-6"/><path d="M19 21H5"/></svg>',
+    heart: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>',
     heartFill: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>',
-    menu: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/></svg>',
-    fold: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="3"/></svg>',
-    refresh: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>',
-    check: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
-    arrow: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>'
+    menu: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/><path d="M8 7h6"/><path d="M8 11h8"/></svg>',
+    fold: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m14 10 7-7"/><path d="M20 10h-6V4"/><path d="m3 21 7-7"/><path d="M4 14h6v6"/></svg>',
+    refresh: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>',
+    check: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
+    arrow: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>',
+    cloud: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>',
+    ban: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>'
   };
 
   function isIOS() {
@@ -64,12 +69,12 @@
     css.id = 'dm-dl-styles';
     css.textContent = [
       ':root{',
-      '--dm-glass:rgba(22,23,32,0.94);--dm-glass-border:rgba(255,255,255,0.13);',
-      '--dm-text:#f1f3f5;--dm-text-dim:#9aa0a6;--dm-text-mute:#6b7280;',
-      '--dm-accent:#818cf8;--dm-accent-soft:rgba(129,140,248,0.22);',
-      '--dm-success:#34d399;--dm-fav:#fb7185;--dm-danger:#f87171;',
+      '--dm-glass:#1a1a1f;--dm-glass-border:rgba(255,255,255,0.08);',
+      '--dm-text:#f4f4f5;--dm-text-dim:#a1a1aa;--dm-text-mute:#71717a;',
+      '--dm-accent:#3b82f6;--dm-accent-soft:rgba(59,130,246,0.16);',
+      '--dm-success:#34d399;--dm-fav:#fb7185;--dm-danger:#f87171;--dm-ban:#a1a1aa;',
       '--dm-ease:cubic-bezier(0.16, 1, 0.3, 1);',
-      '--dm-r-lg:16px;--dm-r-md:11px;--dm-r-sm:8px;--dm-r-pill:999px;',
+      '--dm-r-lg:12px;--dm-r-md:10px;--dm-r-sm:8px;--dm-r-pill:999px;',
       '}',
       '#dm-dl-root *{box-sizing:border-box!important;-webkit-tap-highlight-color:transparent!important;outline:none!important}',
       '#dm-dl-root button{font-family:inherit!important;margin:0!important;border:none!important;background:none!important;cursor:pointer!important;user-select:none!important;-webkit-user-select:none!important}',
@@ -79,7 +84,7 @@
       '#dm-dl-toast-box{position:fixed!important;top:calc(14px + env(safe-area-inset-top, 0px))!important;left:50%!important;',
       'transform:translateX(-50%) translateY(-20px)!important;opacity:0!important;pointer-events:none!important;z-index:2147483647!important;',
       'width:min(90vw, 360px)!important;padding:12px 16px!important;border-radius:var(--dm-r-md)!important;',
-      'background:var(--dm-glass)!important;backdrop-filter:blur(24px) saturate(160%)!important;-webkit-backdrop-filter:blur(24px) saturate(160%)!important;',
+      'background:var(--dm-glass)!important;',
       'border:1px solid var(--dm-glass-border)!important;box-shadow:0 12px 36px rgba(0,0,0,0.55)!important;',
       'color:var(--dm-text)!important;font-size:13px!important;line-height:1.5!important;',
       'transition:opacity .25s var(--dm-ease),transform .25s var(--dm-ease)!important}',
@@ -91,20 +96,19 @@
       'background:rgba(255,255,255,0.08);color:#fff;transition:background .15s,transform .12s}',
       '.dm-dl-toast-btn:hover{background:rgba(255,255,255,0.15)}',
       '.dm-dl-toast-btn:active{transform:scale(0.96)}',
-      '.dm-dl-toast-btn.highlight{background:linear-gradient(135deg,#6366f1,#8b5cf6);box-shadow:0 2px 10px rgba(99,102,241,0.4)}',
+      '.dm-dl-toast-btn.highlight{background:#3b82f6;box-shadow:0 2px 10px rgba(59,130,246,0.35)}',
       '.dm-dl-toast-btn.highlight:hover{filter:brightness(1.08)}',
 
       /* ===== 确认/提示弹窗（底部抽屉风格，PC+手机统一） ===== */
       '#dm-dl-modal-mask{position:fixed!important;inset:0!important;top:0!important;left:0!important;right:0!important;bottom:0!important;',
-      'background:rgba(0,0,0,0.42)!important;',
-      'backdrop-filter:blur(8px)!important;-webkit-backdrop-filter:blur(8px)!important;z-index:2147483647!important;',
+      'background:rgba(0,0,0,0.48)!important;z-index:2147483647!important;',
       'display:flex!important;align-items:flex-end!important;justify-content:center!important;overflow:hidden!important;',
       'opacity:0!important;visibility:hidden!important;pointer-events:none!important;will-change:opacity!important;',
       'transition:opacity .22s var(--dm-ease),visibility 0s linear .22s!important}',
       '#dm-dl-modal-mask.open{opacity:1!important;visibility:visible!important;pointer-events:auto!important;',
       'transition:opacity .22s var(--dm-ease),visibility 0s linear 0s!important}',
       '#dm-dl-dialog{width:100%!important;max-width:400px!important;margin:0 auto!important;',
-      'background:rgba(26,27,38,0.98)!important;border:1px solid var(--dm-glass-border)!important;',
+      'background:#1a1a1f!important;border:1px solid var(--dm-glass-border)!important;',
       'border-radius:20px 20px 0 0!important;padding:22px 20px calc(18px + env(safe-area-inset-bottom, 0px))!important;',
       'box-shadow:0 -16px 48px rgba(0,0,0,0.5)!important;transform:translateY(110%)!important;',
       'transition:transform .28s var(--dm-ease)!important}',
@@ -117,22 +121,21 @@
       '.dm-dl-dialog-btn:active{transform:scale(0.96)}',
       '.dm-dl-dialog-btn.cancel{background:rgba(255,255,255,0.08);color:var(--dm-text)}',
       '.dm-dl-dialog-btn.cancel:hover{background:rgba(255,255,255,0.14)}',
-      '.dm-dl-dialog-btn.confirm{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;box-shadow:0 4px 14px rgba(99,102,241,0.35)}',
+      '.dm-dl-dialog-btn.confirm{background:#3b82f6;color:#fff;box-shadow:0 4px 14px rgba(59,130,246,0.28)}',
       '.dm-dl-dialog-btn.confirm:hover{filter:brightness(1.08)}',
       '.dm-dl-dialog-btn.danger{background:linear-gradient(135deg,#ef4444,#dc2626);color:#fff;box-shadow:0 4px 14px rgba(239,68,68,0.35)}',
       '.dm-dl-dialog-btn.danger:hover{filter:brightness(1.08)}',
 
       /* ===== 书库面板（底部抽屉，PC+手机统一） ===== */
       '#dm-dl-sheet-mask{position:fixed!important;inset:0!important;top:0!important;left:0!important;right:0!important;bottom:0!important;',
-      'background:rgba(0,0,0,0.42)!important;',
-      'backdrop-filter:blur(8px)!important;-webkit-backdrop-filter:blur(8px)!important;z-index:2147483646!important;',
+      'background:rgba(0,0,0,0.48)!important;z-index:2147483646!important;',
       'display:flex!important;align-items:flex-end!important;justify-content:center!important;overflow:hidden!important;',
       'opacity:0!important;visibility:hidden!important;pointer-events:none!important;will-change:opacity!important;',
       'transition:opacity .25s var(--dm-ease),visibility 0s linear .25s!important}',
       '#dm-dl-sheet-mask.open{opacity:1!important;visibility:visible!important;pointer-events:auto!important;',
       'transition:opacity .25s var(--dm-ease),visibility 0s linear 0s!important}',
       '#dm-dl-sheet{width:100%!important;max-width:460px!important;margin:0 auto!important;',
-      'height:min(78vh, 620px)!important;background:rgba(20,21,29,0.98)!important;',
+      'height:min(78vh, 620px)!important;background:#1a1a1f!important;',
       'border:1px solid var(--dm-glass-border)!important;border-radius:20px 20px 0 0!important;',
       'display:flex!important;flex-direction:column!important;overflow:hidden!important;',
       'box-shadow:0 -16px 48px rgba(0,0,0,0.5)!important;transform:translateY(110%)!important;',
@@ -160,6 +163,7 @@
 
       '.dm-dl-hd{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 12px;border-bottom:1px solid rgba(255,255,255,0.06)}',
       '.dm-dl-hd h3{margin:0;font-size:15px;font-weight:700;color:#fff;display:flex;align-items:center;gap:6px}',
+      '.dm-dl-hd-acts{display:flex;align-items:center;gap:6px}',
       '.dm-dl-hd-close{width:34px;height:34px;border-radius:var(--dm-r-sm);background:rgba(255,255,255,0.06);color:var(--dm-text-dim);display:flex;align-items:center;justify-content:center;font-size:15px;transition:background .15s,transform .12s}',
       '.dm-dl-hd-close:hover{background:rgba(255,255,255,0.12);color:#fff}',
       '.dm-dl-hd-close:active{transform:scale(0.92)}',
@@ -194,15 +198,15 @@
       '.dm-dl-empty{text-align:center;padding:50px 0;color:var(--dm-text-mute);font-size:13px}',
 
       /* 标签选择抽屉（替代站点 dx-middle-popup） */
-      '#dm-dl-tag-mask{position:fixed!important;inset:0!important;background:rgba(0,0,0,0.42)!important;',
-      'backdrop-filter:blur(8px)!important;-webkit-backdrop-filter:blur(8px)!important;z-index:2147483646!important;',
+      '#dm-dl-tag-mask{position:fixed!important;inset:0!important;background:rgba(0,0,0,0.48)!important;',
+      'z-index:2147483646!important;',
       'display:flex!important;align-items:flex-end!important;justify-content:center!important;overflow:hidden!important;',
       'opacity:0!important;visibility:hidden!important;pointer-events:none!important;',
       'transition:opacity .25s var(--dm-ease),visibility 0s linear .25s!important}',
       '#dm-dl-tag-mask.open{opacity:1!important;visibility:visible!important;pointer-events:auto!important;',
       'transition:opacity .25s var(--dm-ease),visibility 0s linear 0s!important}',
       '#dm-dl-tag-sheet{width:100%!important;max-width:460px!important;margin:0 auto!important;',
-      'height:min(84vh, 720px)!important;height:min(84dvh, 720px)!important;background:rgba(20,21,29,0.98)!important;',
+      'height:min(84vh, 720px)!important;height:min(84dvh, 720px)!important;background:#1a1a1f!important;',
       'border:1px solid var(--dm-glass-border)!important;border-radius:20px 20px 0 0!important;',
       'display:flex!important;flex-direction:column!important;overflow:hidden!important;',
       'box-shadow:0 -16px 48px rgba(0,0,0,0.5)!important;transform:translateY(110%)!important;',
@@ -221,7 +225,7 @@
       '.dm-dl-tag-grid{display:flex;flex-wrap:wrap;gap:6px}',
       '#dm-dl-tag-body{-webkit-overflow-scrolling:touch;overscroll-behavior:contain}',
       '#dm-dl-tag-count{font-size:12px;color:var(--dm-text-dim);display:flex;align-items:center;flex:0 0 auto;padding-right:6px}',
-      '#dm-dl-tag-submit{background:linear-gradient(135deg,#ef4444,#f97316)!important;color:#fff!important;min-height:42px!important}',
+      '#dm-dl-tag-submit{background:#f43f5e!important;color:#fff!important;min-height:42px!important}',
       '#dm-dl-tag-clear{flex:0 0 auto!important;padding:9px 12px!important;min-height:42px!important}',
       '.dx-middle-popup,.dx-shield-tag-box{visibility:hidden!important;pointer-events:none!important;',
       'transform:translate(250%,-50%)!important}',
@@ -229,7 +233,7 @@
       /* Dock */
       '#dm-dl-dock-wrap{position:fixed!important;z-index:2147483645!important;display:flex!important;flex-direction:column!important;align-items:flex-end!important;touch-action:none!important}',
       '#dm-dl-latest-tip{margin-bottom:8px!important;padding:8px 12px!important;border-radius:var(--dm-r-md)!important;cursor:pointer!important;',
-      'background:var(--dm-glass)!important;border:1px solid var(--dm-glass-border)!important;backdrop-filter:blur(20px)!important;-webkit-backdrop-filter:blur(20px)!important;',
+      'background:var(--dm-glass)!important;border:1px solid var(--dm-glass-border)!important;',
       'box-shadow:0 8px 24px rgba(0,0,0,0.4)!important;font-size:12.5px!important;color:var(--dm-text)!important;border-left:3.5px solid var(--dm-accent)!important;',
       'display:none;align-items:center;gap:6px;max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:transform .15s}',
       '#dm-dl-latest-tip.show{display:flex!important}',
@@ -237,7 +241,7 @@
       '#dm-dl-latest-tip:active{transform:scale(0.98)}',
 
       '#dm-dl-dock{display:flex!important;align-items:center!important;gap:4px!important;height:48px!important;padding:5px!important;border-radius:var(--dm-r-lg)!important;',
-      'background:var(--dm-glass)!important;backdrop-filter:blur(22px) saturate(160%)!important;-webkit-backdrop-filter:blur(22px) saturate(160%)!important;',
+      'background:var(--dm-glass)!important;',
       'border:1px solid var(--dm-glass-border)!important;box-shadow:0 12px 38px rgba(0,0,0,0.5)!important;user-select:none!important;-webkit-user-select:none!important;',
       'cursor:grab;transition:width .25s var(--dm-ease),height .25s var(--dm-ease),border-radius .25s var(--dm-ease),box-shadow .2s!important}',
       '#dm-dl-dock:active{cursor:grabbing}',
@@ -254,6 +258,15 @@
       '@keyframes dm-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.3);opacity:0.7}}',
       '@keyframes dm-spin{to{transform:rotate(360deg)}}',
       '@keyframes dm-heart{0%,100%{transform:scale(1)}40%{transform:scale(1.25)}70%{transform:scale(0.95)}}',
+      '@keyframes dm-glitch{0%,100%{clip-path:inset(0 0 0 0);transform:translate(0)}',
+      '12%{clip-path:inset(12% 0 55% 0);transform:translate(-2px,1px)}',
+      '24%{clip-path:inset(60% 0 10% 0);transform:translate(2px,-1px)}',
+      '36%{clip-path:inset(28% 0 40% 0);transform:translate(-1px,0)}',
+      '48%{clip-path:inset(0 0 0 0);transform:translate(0)}}',
+      '.dm-dl-glitch{position:relative;animation:dm-glitch .42s steps(2,end)}',
+      '.dm-dl-glitch::before,.dm-dl-glitch::after{content:attr(data-text);position:absolute;left:0;top:0;width:100%;pointer-events:none}',
+      '.dm-dl-glitch::before{color:#67e8f9;transform:translate(1px,0);mix-blend-mode:screen}',
+      '.dm-dl-glitch::after{color:#fb7185;transform:translate(-1px,0);mix-blend-mode:screen}',
 
       '.dm-dl-dock-btn{width:38px!important;height:38px!important;min-width:38px!important;border-radius:var(--dm-r-md)!important;color:var(--dm-text-dim)!important;',
       'display:inline-flex!important;align-items:center!important;justify-content:center!important;transition:all .15s!important;flex-shrink:0!important}',
@@ -262,6 +275,8 @@
       '.dm-dl-dock-btn.fav-on{color:var(--dm-fav)!important}',
       '.dm-dl-dock-btn.fav-on:hover{background:rgba(251,113,133,0.15)!important}',
       '.dm-dl-dock-btn.fav-pulse{animation:dm-heart 0.4s ease}',
+      '.dm-dl-dock-btn.ban-on{color:var(--dm-ban)!important}',
+      '.dm-dl-dock-btn.ban-on:hover{background:rgba(161,161,170,0.18)!important}',
       '.dm-dl-dock-btn.fold{color:var(--dm-text-mute)!important}',
       '.dm-dl-dock-btn svg{display:block;pointer-events:none}',
 
@@ -269,15 +284,15 @@
       '#dm-dl-main-btn{position:relative!important;flex:1 1 auto!important;min-width:128px!important;max-width:210px!important;',
       'height:38px!important;padding:0 12px!important;border-radius:var(--dm-r-md)!important;display:inline-flex!important;',
       'align-items:center!important;justify-content:center!important;font-size:13px!important;font-weight:650!important;',
-      'color:#fff!important;background:linear-gradient(135deg,#ff5f6d 0%,#ff9a44 100%)!important;',
-      'box-shadow:0 3px 12px rgba(255,95,109,0.4)!important;white-space:nowrap!important;overflow:hidden!important;',
+      'color:#fff!important;background:#f43f5e!important;',
+      'box-shadow:0 3px 10px rgba(244,63,94,0.28)!important;white-space:nowrap!important;overflow:hidden!important;',
       'transition:transform .12s,box-shadow .2s,filter .15s!important;flex-shrink:1!important}',
-      '#dm-dl-main-btn:hover{filter:brightness(1.06);box-shadow:0 5px 16px rgba(255,95,109,0.5)!important}',
+      '#dm-dl-main-btn:hover{filter:brightness(1.06);box-shadow:0 5px 14px rgba(244,63,94,0.38)!important}',
       '#dm-dl-main-btn:active{transform:scale(0.97)!important}',
-      '#dm-dl-main-btn.done{background:linear-gradient(135deg,#0f9b8e 0%,#34d399 100%)!important;box-shadow:0 3px 12px rgba(15,155,142,0.4)!important}',
-      '#dm-dl-main-btn.done:hover{box-shadow:0 5px 16px rgba(15,155,142,0.5)!important}',
-      '#dm-dl-main-btn.update{background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%)!important;box-shadow:0 3px 12px rgba(99,102,241,0.45)!important}',
-      '#dm-dl-main-btn.update:hover{box-shadow:0 5px 16px rgba(99,102,241,0.55)!important}',
+      '#dm-dl-main-btn.done{background:#059669!important;box-shadow:0 3px 10px rgba(5,150,105,0.32)!important}',
+      '#dm-dl-main-btn.done:hover{box-shadow:0 5px 14px rgba(5,150,105,0.42)!important}',
+      '#dm-dl-main-btn.update{background:#3b82f6!important;box-shadow:0 3px 10px rgba(59,130,246,0.35)!important}',
+      '#dm-dl-main-btn.update:hover{box-shadow:0 5px 14px rgba(59,130,246,0.45)!important}',
       '#dm-dl-main-btn.loading{background:rgba(40,42,54,0.95)!important;cursor:wait!important;box-shadow:none!important}',
       '#dm-dl-main-btn.loading:hover{filter:none;box-shadow:none!important}',
       '#dm-dl-main-btn .dm-dl-prog{position:absolute!important;left:0;bottom:0;height:3px;width:0;background:linear-gradient(90deg,#ff5f6d,#ff9a44);z-index:0;transition:width .25s ease;border-radius:0 0 var(--dm-r-md) var(--dm-r-md)}',
@@ -287,15 +302,18 @@
       '#dm-dl-main-btn .dm-dl-spinner{width:14px;height:14px;border:2px solid rgba(255,255,255,0.25);border-top-color:#fff;border-radius:50%;animation:dm-spin .7s linear infinite;flex-shrink:0}',
 
       /* 徽章 */
-      '#dm-dl-title-badge,#dm-dl-fav-badge,#dm-dl-update-badge{display:inline-flex!important;align-items:center!important;gap:3px!important;',
+      '#dm-dl-title-badge,#dm-dl-fav-badge,#dm-dl-update-badge,#dm-dl-ban-badge{display:inline-flex!important;align-items:center!important;gap:3px!important;',
       'margin-left:6px!important;padding:2px 8px!important;border-radius:var(--dm-r-pill)!important;font-size:11.5px!important;font-weight:600!important;vertical-align:middle!important}',
       '#dm-dl-title-badge{background:rgba(52,211,153,0.15)!important;color:#2dd4a8!important;border:1px solid rgba(52,211,153,0.35)!important}',
       '#dm-dl-fav-badge{background:rgba(251,113,133,0.15)!important;color:var(--dm-fav)!important;border:1px solid rgba(251,113,133,0.35)!important}',
       '#dm-dl-update-badge{background:rgba(129,140,248,0.18)!important;color:#a5b4fc!important;border:1px solid rgba(129,140,248,0.4)!important}',
+      '#dm-dl-ban-badge{background:rgba(161,161,170,0.18)!important;color:var(--dm-ban)!important;border:1px solid rgba(161,161,170,0.4)!important}',
       '.dm-dl-card-badge{display:inline-flex!important;margin-left:6px!important;padding:1px 6px!important;border-radius:4px!important;font-size:10px!important;font-weight:600!important;vertical-align:middle!important;color:#fff!important}',
-      '.dm-dl-card-badge.dl{background:linear-gradient(135deg,#11998e,#34d399)!important}',
-      '.dm-dl-card-badge.fav{background:linear-gradient(135deg,#fb7185,#ff8c69)!important}',
-      '.dm-dl-card-badge.both{background:linear-gradient(135deg,#6366f1,#8b5cf6)!important}',
+      '.dm-dl-card-badge.dl{background:#059669!important}',
+      '.dm-dl-card-badge.fav{background:#e11d48!important}',
+      '.dm-dl-card-badge.both{background:#3b82f6!important}',
+      '.dm-dl-card-badge.ban{background:#52525b!important}',
+      '.dm-dl-tag.ban{background:rgba(161,161,170,0.18);color:var(--dm-ban)}',
 
       /* 移动端 */
       '@media screen and (max-width: 640px){',
@@ -337,10 +355,11 @@
     sheetMask.id = 'dm-dl-sheet-mask';
     sheetMask.innerHTML =
       '<div id="dm-dl-sheet">' +
-      '<div class="dm-dl-hd"><h3>我的书库</h3><button type="button" class="dm-dl-hd-close" id="dm-dl-sheet-close">✕</button></div>' +
+      '<div class="dm-dl-hd"><h3>我的书库</h3><div class="dm-dl-hd-acts"><button type="button" class="dm-dl-hd-close" id="dm-dl-webdav-btn" title="云同步"></button><button type="button" class="dm-dl-hd-close" id="dm-dl-sheet-close">✕</button></div></div>' +
       '<div class="dm-dl-tabs">' +
       '<button type="button" class="dm-dl-tab on" data-tab="dl">已下载</button>' +
       '<button type="button" class="dm-dl-tab" data-tab="fav">已收藏</button>' +
+      '<button type="button" class="dm-dl-tab" data-tab="ban">已拉黑</button>' +
       '</div>' +
       '<div class="dm-dl-body" id="dm-dl-sheet-body"></div>' +
       '<div class="dm-dl-ft">' +
@@ -414,6 +433,14 @@
 
     var closeBtn = document.getElementById('dm-dl-sheet-close');
     if (closeBtn) closeBtn.onclick = closeSheet;
+    var webdavBtn = document.getElementById('dm-dl-webdav-btn');
+    if (webdavBtn) {
+      webdavBtn.innerHTML = ICONS.cloud;
+      webdavBtn.onclick = function (e) {
+        e.stopPropagation();
+        openWebdavPanel();
+      };
+    }
     var tagClose = document.getElementById('dm-dl-tag-close');
     if (tagClose) tagClose.onclick = closeTagSheet;
 
@@ -432,7 +459,11 @@
     if (!box) return;
 
     clearTimeout(toastTimer);
-    titleEl.innerHTML = opts.title || '提示';
+    titleEl.textContent = opts.title || '提示';
+    titleEl.setAttribute('data-text', titleEl.textContent);
+    titleEl.classList.remove('dm-dl-glitch');
+    void titleEl.offsetWidth;
+    titleEl.classList.add('dm-dl-glitch');
     msgEl.textContent = opts.msg || '';
     actsEl.innerHTML = '';
 
@@ -632,7 +663,96 @@
   function saveHistory(map) { saveJSON(STORE_KEY, map); }
   function loadFavs() { return loadJSON(FAV_KEY); }
   function saveFavs(map) { saveJSON(FAV_KEY, map); }
+  function loadBans() { return loadJSON(BAN_KEY); }
+  function saveBans(map) { saveJSON(BAN_KEY, map); }
   function loadContentCache() { return loadJSON(CONTENT_KEY); }
+
+  function mapToItems(map) {
+    var items = [];
+    var src = map && typeof map === 'object' ? map : {};
+    Object.keys(src).forEach(function (k) {
+      var it = src[k];
+      if (it && typeof it === 'object') items.push(it);
+    });
+    return items;
+  }
+
+  function normalizeRecord(it, fallbackUrl) {
+    if (!it || typeof it !== 'object') return null;
+    var id = String(it.id || '').trim();
+    if (!id) return null;
+    var t = it.time || Date.now();
+    return {
+      id: id,
+      title: it.title || ('小说 ' + id),
+      url: it.url || (typeof fallbackUrl === 'function' ? fallbackUrl(id) : ''),
+      time: t,
+      timeText: it.timeText || new Date(t).toLocaleString()
+    };
+  }
+
+  function mergeItems(local, items, fallbackUrl) {
+    var map = Object.assign({}, local && typeof local === 'object' ? local : {});
+    var list = Array.isArray(items) ? items : [];
+    var count = 0;
+    list.forEach(function (it) {
+      var rec = normalizeRecord(it, fallbackUrl);
+      if (!rec) return;
+      map[rec.id] = rec;
+      count++;
+    });
+    return { map: map, count: count };
+  }
+
+  function stripFavsByBan(favs, bans) {
+    var next = Object.assign({}, favs && typeof favs === 'object' ? favs : {});
+    var src = bans && typeof bans === 'object' ? bans : {};
+    Object.keys(src).forEach(function (id) { delete next[id]; });
+    return next;
+  }
+
+  function exportLibraryPayload(favs, bans, exportedAt) {
+    return JSON.stringify({
+      app: '18mh',
+      kind: 'favorites',
+      v: 2,
+      exportedAt: exportedAt || new Date().toISOString(),
+      items: mapToItems(favs),
+      blacklist: mapToItems(bans)
+    }, null, 2);
+  }
+
+  function mergeLibraryFromPackData(pack, localFavs, localBans, fallbackUrl) {
+    var data = pack && pack.data && typeof pack.data === 'object' ? pack.data : {};
+    var favMerge = mergeItems(localFavs, data.items, fallbackUrl);
+    var hasBan = Array.isArray(data.blacklist);
+    var banMerge = hasBan
+      ? mergeItems(localBans, data.blacklist, fallbackUrl)
+      : { map: Object.assign({}, localBans && typeof localBans === 'object' ? localBans : {}), count: 0 };
+    return {
+      favs: stripFavsByBan(favMerge.map, banMerge.map),
+      bans: banMerge.map,
+      favCount: favMerge.count,
+      banCount: banMerge.count
+    };
+  }
+
+  function toggleBanState(favs, bans, id, rec) {
+    var key = String(id || '').trim();
+    var nextFavs = Object.assign({}, favs && typeof favs === 'object' ? favs : {});
+    var nextBans = Object.assign({}, bans && typeof bans === 'object' ? bans : {});
+    if (!key) return { on: false, favs: nextFavs, bans: nextBans };
+    if (nextBans[key]) {
+      delete nextBans[key];
+      return { on: false, favs: nextFavs, bans: nextBans };
+    }
+    var row = normalizeRecord(rec || { id: key }, function (nid) {
+      return absUrl('/novel/detail/' + nid);
+    }) || { id: key, title: '小说 ' + key, url: '', time: Date.now(), timeText: new Date().toLocaleString() };
+    nextBans[key] = row;
+    delete nextFavs[key];
+    return { on: true, favs: nextFavs, bans: nextBans };
+  }
 
   function getNovelIdFromUrl(url) {
     url = url || location.href;
@@ -642,6 +762,7 @@
 
   function isDownloaded(id) { return !id ? false : !!loadHistory()[String(id)]; }
   function isFav(id) { return !id ? false : !!loadFavs()[String(id)]; }
+  function isBan(id) { return !id ? false : !!loadBans()[String(id)]; }
   function getRecord(id) { return loadHistory()[String(id)] || null; }
 
   function getNewChapters(chapters, rec) {
@@ -733,6 +854,129 @@
     saveFavs(f);
   }
 
+  function toggleBan(id, title, url) {
+    var result = toggleBanState(loadFavs(), loadBans(), id, {
+      id: String(id || ''),
+      title: title,
+      url: url || absUrl('/novel/detail/' + id),
+      time: Date.now(),
+      timeText: new Date().toLocaleString()
+    });
+    saveFavs(result.favs);
+    saveBans(result.bans);
+    return result.on;
+  }
+
+  function removeBan(id) {
+    if (!id) return;
+    var b = loadBans();
+    delete b[String(id)];
+    saveBans(b);
+  }
+
+  function exportFavPayload() {
+    return exportLibraryPayload(loadFavs(), loadBans());
+  }
+
+  function mergeFavsFromPack(pack) {
+    var result = mergeLibraryFromPackData(pack, loadFavs(), loadBans(), function (id) {
+      return absUrl('/novel/detail/' + id);
+    });
+    saveFavs(result.favs);
+    saveBans(result.bans);
+    return result;
+  }
+
+  function webdevRequest(o) {
+    var gm = (typeof GM_xmlhttpRequest === 'function' && GM_xmlhttpRequest)
+      || (typeof GM !== 'undefined' && GM && typeof GM.xmlHttpRequest === 'function' && GM.xmlHttpRequest)
+      || null;
+    if (!gm) return Promise.reject(new Error('当前环境不支持跨域请求'));
+    return new Promise(function (resolve, reject) {
+      var done = false;
+      function finish(fn, arg) {
+        if (done) return;
+        done = true;
+        fn(arg);
+      }
+      try {
+        var req = {
+          method: o.method || 'GET',
+          url: o.url,
+          timeout: o.timeout || 20000,
+          headers: o.headers || {},
+          onload: function (res) {
+            var st = res && typeof res.status === 'number' ? res.status : 0;
+            var okList = Array.isArray(o.acceptStatuses) ? o.acceptStatuses : null;
+            var ok = okList
+              ? (st === 0 || okList.indexOf(st) >= 0)
+              : (st === 0 || (st >= 200 && st < 300));
+            if (ok) finish(resolve, res);
+            else finish(reject, new Error('HTTP ' + st + (res && res.statusText ? ' ' + res.statusText : '')));
+          },
+          onerror: function () { finish(reject, new Error('网络请求失败')); },
+          ontimeout: function () { finish(reject, new Error('请求超时')); },
+          onabort: function () { finish(reject, new Error('请求已中止')); }
+        };
+        if (o.data != null) req.data = o.data;
+        gm(req);
+      } catch (e) {
+        finish(reject, e instanceof Error ? e : new Error('请求失败'));
+      }
+    });
+  }
+
+  var WEBDAV = null;
+  function initWebdav() {
+    if (WEBDAV) return WEBDAV;
+    var WebdevComp = (typeof WebdevComponent !== 'undefined' && WebdevComponent) || null;
+    if (!WebdevComp || typeof WebdevComp.createWebdev !== 'function') {
+      console.error('18mh: webdev-component 未就绪');
+      return null;
+    }
+    WEBDAV = WebdevComp.createWebdev({
+      key: 'dm_dl_webdav_v1',
+      defaultFile: '18mh-favorites.json',
+      encMark: '18mh-aes-gcm-v1',
+      menu: false,
+      storage: {
+        get: function (k, d) {
+          try { return typeof GM_getValue === 'function' ? GM_getValue(k, d) : d; } catch (e) { return d; }
+        },
+        set: function (k, v) {
+          try { if (typeof GM_setValue === 'function') GM_setValue(k, v); } catch (e) {}
+        }
+      },
+      request: webdevRequest,
+      exportPayload: exportFavPayload
+    });
+    return WEBDAV;
+  }
+
+  function openWebdavPanel() {
+    var api = initWebdav();
+    if (!api) {
+      showToast({ title: '云同步不可用', msg: 'webdev-component 未加载' });
+      return;
+    }
+    api.openPanel({
+      description: '同步收藏和黑名单，不含下载记录。',
+      onDownloaded: function (pack) {
+        var n = mergeFavsFromPack(pack);
+        renderSheetBody();
+        injectTitleBadges(getNovelIdFromUrl());
+        markListCards();
+        showToast({
+          title: '书库已同步',
+          msg: '收藏 +' + n.favCount + ' · 黑名单 +' + n.banCount
+        });
+      },
+      onUploaded: function (r) {
+        showToast({ title: r.encrypted ? '已加密上传' : '书库已上传', msg: (r.bytes || 0) + ' 字节' });
+      }
+    });
+  }
+
   function absUrl(href) {
     try { return new URL(href, location.href).href; } catch (e) { return href; }
   }
@@ -749,7 +993,7 @@
 
     var winW = window.innerWidth;
     var winH = window.innerHeight;
-    var dockW = dock.offsetWidth || (collapsed ? 44 : 240);
+    var dockW = dock.offsetWidth || (collapsed ? 44 : 278);
     var dockH = dock.offsetHeight || 48;
 
     var padX = 12, padY = 12;
@@ -787,7 +1031,7 @@
     setTimeout(function () {
       var winW = window.innerWidth;
       var winH = window.innerHeight;
-      var initX = saved.x != null ? saved.x : (winW - (initCollapsed ? 44 : 240) - 14);
+      var initX = saved.x != null ? saved.x : (winW - (initCollapsed ? 44 : 278) - 14);
       var initY = saved.y != null ? saved.y : (winH - 80);
       applyDockPos(initX, initY, initCollapsed, false);
     }, 40);
@@ -900,7 +1144,7 @@
       var wrap = document.getElementById('dm-dl-dock-wrap');
       var rect = wrap.getBoundingClientRect();
       var winW = window.innerWidth;
-      var dockW = isCollapsed ? 44 : 240;
+      var dockW = isCollapsed ? 44 : 278;
       var targetX = (rect.left + dockW / 2) < (winW / 2) ? 12 : (winW - dockW - 12);
       applyDockPos(targetX, rect.top, isCollapsed, true);
       saveJSON(DOCK_POS_KEY, { x: targetX, y: rect.top, collapsed: isCollapsed });
@@ -928,6 +1172,33 @@
         showToast({ title: on ? '收藏成功' : '已取消收藏', msg: '「' + title + '」' });
       };
       dock.appendChild(favBtn);
+
+      var banned = isBan(novelId);
+      var banBtn = document.createElement('button');
+      banBtn.type = 'button';
+      banBtn.className = 'dm-dl-dock-btn' + (banned ? ' ban-on' : '');
+      banBtn.id = 'dm-dl-ban-btn';
+      banBtn.title = banned ? '取消拉黑' : '拉黑本书';
+      banBtn.innerHTML = ICONS.ban;
+      banBtn.onclick = function (e) {
+        e.stopPropagation();
+        var title = getNovelTitle();
+        var url = absUrl('/novel/detail/' + novelId);
+        var on = toggleBan(novelId, title, url);
+        banBtn.className = 'dm-dl-dock-btn' + (on ? ' ban-on' : '');
+        banBtn.title = on ? '取消拉黑' : '拉黑本书';
+        var fb = document.getElementById('dm-dl-fav-btn');
+        if (fb) {
+          var favNow = isFav(novelId);
+          fb.innerHTML = favNow ? ICONS.heartFill : ICONS.heart;
+          fb.className = 'dm-dl-dock-btn' + (favNow ? ' fav-on' : '');
+          fb.title = favNow ? '取消收藏' : '收藏本书';
+        }
+        injectTitleBadges(novelId);
+        markListCards();
+        showToast({ title: on ? '已拉黑' : '已取消拉黑', msg: '「' + title + '」' });
+      };
+      dock.appendChild(banBtn);
     }
 
     // 主按钮
@@ -1022,7 +1293,7 @@
     var exportBtn = document.getElementById('dm-dl-export');
     if (exportBtn) {
       exportBtn.onclick = function () {
-        var map = currentSheetTab === 'fav' ? loadFavs() : loadHistory();
+        var map = currentSheetTab === 'fav' ? loadFavs() : (currentSheetTab === 'ban' ? loadBans() : loadHistory());
         var list = sortByTime(map);
         if (!list.length) {
           showToast({ title: '导出失败', msg: '当前列表暂无数据' });
@@ -1031,14 +1302,14 @@
         var lines = list.map(function (item, idx) {
           return (idx + 1) + '. ' + (item.title || item.id) + '\n   ' + (item.url || absUrl('/novel/detail/' + item.id));
         });
-        downloadTxt((currentSheetTab === 'fav' ? '我的收藏' : '已下载列表'), lines.join('\n\n'));
+        downloadTxt(currentSheetTab === 'fav' ? '我的收藏' : (currentSheetTab === 'ban' ? '我的黑名单' : '已下载列表'), lines.join('\n\n'));
       };
     }
 
     var clearBtn = document.getElementById('dm-dl-clear-tab');
     if (clearBtn) {
       clearBtn.onclick = function () {
-        var name = currentSheetTab === 'fav' ? '收藏' : '已下载';
+        var name = currentSheetTab === 'fav' ? '收藏' : (currentSheetTab === 'ban' ? '拉黑' : '已下载');
         showConfirm({
           title: '清空' + name,
           content: '确定要清空所有的「' + name + '」记录吗？此操作不可恢复。',
@@ -1047,6 +1318,7 @@
         }).then(function (ok) {
           if (!ok) return;
           if (currentSheetTab === 'fav') saveFavs({});
+          else if (currentSheetTab === 'ban') saveBans({});
           else saveHistory({});
           renderSheetBody();
           injectTitleBadges(getNovelIdFromUrl());
@@ -1077,16 +1349,17 @@
   function renderSheetBody() {
     var body = document.getElementById('dm-dl-sheet-body');
     if (!body) return;
-    var map = currentSheetTab === 'fav' ? loadFavs() : loadHistory();
+    var map = currentSheetTab === 'fav' ? loadFavs() : (currentSheetTab === 'ban' ? loadBans() : loadHistory());
     var list = sortByTime(map);
     var hist = loadHistory();
     var favs = loadFavs();
+    var bans = loadBans();
 
     body.innerHTML = '';
     var search = document.createElement('input');
     search.type = 'search';
     search.className = 'dm-dl-search';
-    search.placeholder = currentSheetTab === 'fav' ? '搜索收藏书目…' : '搜索已下载书目…';
+    search.placeholder = currentSheetTab === 'fav' ? '搜索收藏书目…' : (currentSheetTab === 'ban' ? '搜索拉黑书目…' : '搜索已下载书目…');
     body.appendChild(search);
 
     var listWrap = document.createElement('div');
@@ -1113,6 +1386,7 @@
         var tags = '';
         if (hist[id]) tags += '<span class="dm-dl-tag dl">已下载</span>';
         if (favs[id]) tags += '<span class="dm-dl-tag fav">已收藏</span>';
+        if (bans[id]) tags += '<span class="dm-dl-tag ban">已拉黑</span>';
 
         row.innerHTML =
           '<div class="dm-dl-item-main">' +
@@ -1141,6 +1415,7 @@
           }).then(function (ok) {
             if (!ok) return;
             if (currentSheetTab === 'fav') removeFavorite(id);
+            else if (currentSheetTab === 'ban') removeBan(id);
             else unmarkDownloaded(id);
             renderSheetBody();
             injectTitleBadges(getNovelIdFromUrl());
@@ -1167,9 +1442,11 @@
     var old1 = document.getElementById('dm-dl-title-badge');
     var old2 = document.getElementById('dm-dl-fav-badge');
     var old3 = document.getElementById('dm-dl-update-badge');
+    var old4 = document.getElementById('dm-dl-ban-badge');
     if (old1) old1.remove();
     if (old2) old2.remove();
     if (old3) old3.remove();
+    if (old4) old4.remove();
     if (!h1 || !novelId) return;
 
     var rec = getRecord(novelId);
@@ -1195,11 +1472,19 @@
       fb.textContent = '♥ 已收藏';
       h1.appendChild(fb);
     }
+
+    if (isBan(novelId)) {
+      var bb = document.createElement('span');
+      bb.id = 'dm-dl-ban-badge';
+      bb.textContent = '已拉黑';
+      h1.appendChild(bb);
+    }
   }
 
   function markListCards() {
     var hist = loadHistory();
     var favs = loadFavs();
+    var bans = loadBans();
 
     // 列表卡片通常含 3 个 /novel/detail/ 链接（封面、标题、时间），
     // 旧逻辑对每个 <a> 各插一枚徽章，二次 boot / 列表重绘还会叠加。
@@ -1224,20 +1509,36 @@
 
       var hasDl = !!hist[id];
       var hasFav = !!favs[id];
-      if (!hasDl && !hasFav) continue;
+      var hasBan = !!bans[id];
+      if (!hasDl && !hasFav && !hasBan) continue;
 
-      var badge = document.createElement('span');
-      badge.className = 'dm-dl-card-badge ' + (hasDl && hasFav ? 'both' : hasDl ? 'dl' : 'fav');
-      badge.textContent = hasDl && hasFav ? '藏·下' : hasDl ? '已下载' : '已收藏';
-
+      var host;
       var titleEl = card.querySelector('h2, h3');
-      if (titleEl && titleEl.parentNode) {
-        titleEl.parentNode.insertBefore(badge, titleEl.nextSibling);
-      } else {
+      if (titleEl && titleEl.parentNode) host = titleEl.parentNode;
+      else {
         var titleLink = card.querySelector('a[href*="/novel/detail/"] h2, a[href*="/novel/detail/"] h3');
-        var host = titleLink ? titleLink.parentNode : a;
-        host.appendChild(badge);
+        host = titleLink ? titleLink.parentNode : a;
       }
+
+      function addCardBadge(cls, text, afterEl) {
+        var badge = document.createElement('span');
+        badge.className = 'dm-dl-card-badge ' + cls;
+        badge.textContent = text;
+        if (afterEl && afterEl.parentNode === host) host.insertBefore(badge, afterEl.nextSibling);
+        else if (titleEl && titleEl.parentNode === host) host.insertBefore(badge, titleEl.nextSibling);
+        else host.appendChild(badge);
+        return badge;
+      }
+
+      var last = titleEl;
+      if (hasDl || hasFav) {
+        last = addCardBadge(
+          hasDl && hasFav ? 'both' : hasDl ? 'dl' : 'fav',
+          hasDl && hasFav ? '藏·下' : hasDl ? '已下载' : '已收藏',
+          last
+        );
+      }
+      if (hasBan) addCardBadge('ban', '已拉黑', last);
     }
   }
 
@@ -1292,9 +1593,11 @@
       var b1 = clone.querySelector('#dm-dl-title-badge');
       var b2 = clone.querySelector('#dm-dl-fav-badge');
       var b3 = clone.querySelector('#dm-dl-update-badge');
+      var b4 = clone.querySelector('#dm-dl-ban-badge');
       if (b1) b1.remove();
       if (b2) b2.remove();
       if (b3) b3.remove();
+      if (b4) b4.remove();
       var t = (clone.textContent || '').trim();
       if (t) return t;
     }
@@ -1972,6 +2275,7 @@
     bindTagPicker();
   }
 
+  initWebdav();
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot);
   } else {
