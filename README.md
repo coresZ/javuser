@@ -20,7 +20,7 @@
 
 | 目录 | 内容 |
 |---|---|
-| `18mh/` | `18mh.user.js`（v4.3.0）：18dm/18mh 小说一键下载为 TXT，章节缓存/增量更新，书目状态（连载/完结+更新时间），收藏与黑名单 WebDAV 云同步（接入 `WebdevComponent`），适配移动端 |
+| `18mh/` | `18mh.user.js`（v4.4.0）：18dm/18mh 小说一键下载为 TXT，章节缓存/增量更新，书目状态（连载/完结+更新时间），果核阅读器直连，收藏与黑名单 WebDAV 云同步（接入 `WebdevComponent`），适配移动端 |
 | `websiteTool/` | `网页对象工具库.user.js`（v0.4.3，Greasy Fork [590111](https://greasyfork.org/scripts/590111)）：取选任意网页元素、识别类型、绑定动作，支持远程规则订阅；`config/cores-ppk-rules-all.json` 为规则导出 |
 | `tools/` | 开发辅助：`sync-webdev.js`（组件库同步嵌入 EMH）、`test-extension.js`（JCS 契约 v1 测试扩展）、`jable-live-preview.extension.js`（mounts 型实例扩展） |
 | `html/` | 用户向静态页：`manual.html`（7 章交互式使用手册）、`changelog.html`（用户视角更新日志） |

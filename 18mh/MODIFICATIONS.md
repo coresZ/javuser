@@ -51,3 +51,17 @@
 **涉及文件与位置**：
 - `18mh/18mh.user.js`：`STATUS_KEY` / `recordStatus` / `readCardStatus` / `readDetailStatus` / `refreshLibraryStatus` / `markListCards` / `renderSheetBody` / `boot`
 - `docs/superpowers/specs/2026-09-22-18mh-book-status-design.md`
+
+## 2026-09-22 · 果核阅读器直连
+
+**功能**：书库与站点书页跳转果核阅读器 `fixreader.vercel.app`。
+
+**修改内容**：
+- `@version` 4.3.0 → 4.4.0。
+- 书库「已收藏/已下载」条目新增「阅读」按钮 → `?novel=<id>`（已拉黑不加）。
+- 站点 Dock 新增书本按钮 → 有 id 用 `?novel=<id>`，否则 `?q=<书名>`。
+- 新增 `READER_BASE` / `readerUrlById` / `readerUrlByQuery` / `openReader`、`ICONS.book`。
+
+**涉及文件与位置**：
+- `18mh/18mh.user.js`：`READER_BASE` 段 / `ICONS.book` / `buildDockUI` / `renderSheetBody`
+- `docs/superpowers/specs/2026-09-22-18mh-reader-link-design.md`

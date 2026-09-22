@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         18dm小说下载器
 // @namespace    http://tampermonkey.net/
-// @version      4.3.0
-// @description  一键下载18dm/18mh小说为TXT · UI v2（Lobe 实色层 / Lucide 图标 / PowerGlitch 成功态）· 章节缓存 · 增量更新 · 书目状态（连载/完结+更新时间）· 标签抽屉 · 悬浮条拖拽磁吸 · 收藏/黑名单 WebDAV 同步
+// @version      4.4.0
+// @description  一键下载18dm/18mh小说为TXT · UI v2（Lobe 实色层 / Lucide 图标 / PowerGlitch 成功态）· 章节缓存 · 增量更新 · 书目状态（连载/完结+更新时间）· 果核阅读器直连 · 标签抽屉 · 悬浮条拖拽磁吸 · 收藏/黑名单 WebDAV 同步
 // @author       you
 // @match        *://18dm.net/*
 // @match        *://*.18dm.net/*
@@ -54,7 +54,8 @@
     check: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
     arrow: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>',
     cloud: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>',
-    ban: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>'
+    ban: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>',
+    book: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>'
   };
 
   function isIOS() {
@@ -194,6 +195,7 @@
       '.dm-dl-mini:hover{background:rgba(255,255,255,0.12)!important;color:#fff!important}',
       '.dm-dl-mini:active{transform:scale(0.94)!important}',
       '.dm-dl-mini.danger:hover{background:rgba(239,68,68,0.22)!important;color:#fca5a5!important}',
+      '.dm-dl-mini.read:hover{background:rgba(59,130,246,0.22)!important;color:#93c5fd!important}',
       '.dm-dl-ft{padding:10px 14px;border-top:1px solid rgba(255,255,255,0.06);display:flex;gap:8px}',
       '.dm-dl-ft button{flex:1;padding:9px 0;border-radius:var(--dm-r-sm);background:rgba(255,255,255,0.06);color:var(--dm-text-dim);font-size:12.5px;font-weight:500;transition:background .15s,color .15s,transform .12s}',
       '.dm-dl-ft button:hover{background:rgba(255,255,255,0.12);color:#fff}',
@@ -837,6 +839,26 @@
     });
   }
 
+  // ========== 果核阅读器 ==========
+  var READER_BASE = 'https://fixreader.vercel.app/';
+  function readerUrlById(id) {
+    var key = String(id || '').trim();
+    return key ? READER_BASE + '?novel=' + encodeURIComponent(key) : '';
+  }
+  function readerUrlByQuery(q) {
+    var kw = String(q || '').trim();
+    return kw ? READER_BASE + '?q=' + encodeURIComponent(kw) : '';
+  }
+  function openReader(url) {
+    if (!url) return;
+    try {
+      var w = window.open(url, '_blank', 'noopener');
+      if (!w) location.href = url;
+    } catch (e) {
+      location.href = url;
+    }
+  }
+
   function mapToItems(map) {
     var items = [];
     var src = map && typeof map === 'object' ? map : {};
@@ -1371,6 +1393,26 @@
       dock.appendChild(banBtn);
     }
 
+    // 阅读器（详情/阅读页；有 id 用 ?novel=，否则回退 ?q=书名）
+    if (mode !== 'list') {
+      var readerBtn = document.createElement('button');
+      readerBtn.type = 'button';
+      readerBtn.className = 'dm-dl-dock-btn';
+      readerBtn.id = 'dm-dl-reader-btn';
+      readerBtn.title = '在果核阅读器打开';
+      readerBtn.innerHTML = ICONS.book;
+      readerBtn.onclick = function (e) {
+        e.stopPropagation();
+        var u = novelId ? readerUrlById(novelId) : readerUrlByQuery(getNovelTitle());
+        if (!u) {
+          showToast({ title: '无法打开阅读器', msg: '缺少书籍 ID 与书名' });
+          return;
+        }
+        openReader(u);
+      };
+      dock.appendChild(readerBtn);
+    }
+
     // 主按钮
     var mainBtn = document.createElement('button');
     mainBtn.type = 'button';
@@ -1563,6 +1605,8 @@
         if (stTxt) tags += '<span class="dm-dl-tag ' + (stTxt === '已完结' ? 'fin' : 'ser') + '">' + stTxt + '</span>';
         var upd = updateLabel(st);
 
+        var canRead = currentSheetTab === 'fav' || currentSheetTab === 'dl';
+
         row.innerHTML =
           '<div class="dm-dl-item-main">' +
           '<div class="dm-dl-item-title">' + esc(item.title || '未知标题') + '</div>' +
@@ -1572,6 +1616,7 @@
           '</div>' +
           '<div class="dm-dl-item-acts">' +
           '<button type="button" class="dm-dl-mini go">打开</button>' +
+          (canRead ? '<button type="button" class="dm-dl-mini read">阅读</button>' : '') +
           '<button type="button" class="dm-dl-mini danger rm">删除</button>' +
           '</div>';
 
@@ -1582,6 +1627,13 @@
           e.stopPropagation();
           location.href = item.url || absUrl('/novel/detail/' + id);
         };
+        var readBtn = row.querySelector('.read');
+        if (readBtn) {
+          readBtn.onclick = function (e) {
+            e.stopPropagation();
+            openReader(readerUrlById(id));
+          };
+        }
         row.querySelector('.rm').onclick = function (e) {
           e.stopPropagation();
           showConfirm({
