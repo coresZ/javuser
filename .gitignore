@@ -30,6 +30,9 @@ Desktop.ini
 # ===== Local backups =====
 backups/
 
+# ===== Brainstorm visual companion =====
+.superpowers/
+
 # ===== Node / build caches =====
 node_modules/
 dist/

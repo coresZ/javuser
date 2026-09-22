@@ -12,7 +12,7 @@
 |---|---|---|
 | `jav-code-scanner.user.js` | v1.5.88 | **主项目 JCS**：通用番号扫描、多源搜索与页内预览、操作条、六 tab 配置面板、全站配置 WebDAV 备份（可加密）、`window.JavCodeKit` 开放 API、**扩展宿主**（第三方油猴库经 `JavCodeKit.extensions.register()` 接入 actions/styles/mounts） |
 | `Enhanced_Media_Helper.js` | v3.7.3 | **EMH**：番号库管理面板（Preact + htm）+ 磁力/AVWikiDB 截图预览（三级自动重试）+ `EMH_API` 跨脚本桥 + WebDAV 备份 |
-| `webdev-library.user.js` | v1.0.0 | `WebdevComponent`：WebDAV 云端备份共享组件库（AES-256-GCM，自 EMH 抽出，Greasy Fork 库 [593538](https://greasyfork.org/scripts/593538)）；真源即本文件，经 `tools/sync-webdev.js` 嵌入 EMH 兜底 |
+| `webdev-library.user.js` | v1.3.2 | `WebdevComponent`：WebDAV 云端备份共享组件库（AES-256-GCM，自 EMH 抽出，Greasy Fork 库 [593538](https://greasyfork.org/scripts/593538)）；iOS crypto 兼容 + 移动端响应式面板；真源即本文件，经 `tools/sync-webdev.js` 嵌入 EMH 兜底 |
 | `whostv.user.js` | v3.4 | whos.tv 收藏/加专题扩展：列表页卡片注入 + JCS `pickButtons` 二级按钮组 |
 | `U3C3 & 1cili Magnet Buttons.js` | v0.8 | u3c3 / 1cili 等站磁力复制按钮 + whatslink.info 截图预览 |
 
@@ -20,8 +20,8 @@
 
 | 目录 | 内容 |
 |---|---|
-| `18mh/` | `18mh.user.js`（v3.9.4）：18dm/18mh 小说一键下载为 TXT，章节缓存/增量更新，适配移动端 |
-| `websiteTool/` | `网页对象工具库.user.js`（v0.4.2，Greasy Fork [590111](https://greasyfork.org/scripts/590111)）：取选任意网页元素、识别类型、绑定动作，支持远程规则订阅；`config/cores-ppk-rules-all.json` 为规则导出 |
+| `18mh/` | `18mh.user.js`（v4.3.0）：18dm/18mh 小说一键下载为 TXT，章节缓存/增量更新，书目状态（连载/完结+更新时间），收藏与黑名单 WebDAV 云同步（接入 `WebdevComponent`），适配移动端 |
+| `websiteTool/` | `网页对象工具库.user.js`（v0.4.3，Greasy Fork [590111](https://greasyfork.org/scripts/590111)）：取选任意网页元素、识别类型、绑定动作，支持远程规则订阅；`config/cores-ppk-rules-all.json` 为规则导出 |
 | `tools/` | 开发辅助：`sync-webdev.js`（组件库同步嵌入 EMH）、`test-extension.js`（JCS 契约 v1 测试扩展）、`jable-live-preview.extension.js`（mounts 型实例扩展） |
 | `html/` | 用户向静态页：`manual.html`（7 章交互式使用手册）、`changelog.html`（用户视角更新日志） |
 | `docs/` | 按项目分域的文档（见文档地图） |
@@ -43,7 +43,8 @@
 | `docs/enhanced-media-helper/architecture-enhanced-media-helper.md` | EMH 架构梳理 |
 | `docs/enhanced-media-helper/standalone-mode.md` | EMH standalone 新标签页双栏模式 |
 | `docs/integration/integration-emh-scanner.md` | 跨脚本桥集成指南（EMH_API 参考/时序/降级） |
-| `docs/*/MODIFICATIONS.md` | 各域修改协议与回填记录（**改该域文件前必读，改完必回填**） |
+| `docs/superpowers/specs/` | 功能设计 spec（如 18mh 黑名单设计） |
+| `docs/*/MODIFICATIONS.md`、`<脚本目录>/MODIFICATIONS.md` | 各域修改协议与回填记录（**改该域文件前必读，改完必回填**） |
 
 ## 开发工作流
 

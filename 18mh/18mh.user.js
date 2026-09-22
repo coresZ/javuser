@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         18dm小说下载器
 // @namespace    http://tampermonkey.net/
-// @version      4.2.0
-// @description  一键下载18dm/18mh小说为TXT · UI v2（Lobe 实色层 / Lucide 图标 / PowerGlitch 成功态）· 章节缓存 · 增量更新 · 标签抽屉 · 悬浮条拖拽磁吸 · 收藏/黑名单 WebDAV 同步
+// @version      4.3.0
+// @description  一键下载18dm/18mh小说为TXT · UI v2（Lobe 实色层 / Lucide 图标 / PowerGlitch 成功态）· 章节缓存 · 增量更新 · 书目状态（连载/完结+更新时间）· 标签抽屉 · 悬浮条拖拽磁吸 · 收藏/黑名单 WebDAV 同步
 // @author       you
 // @match        *://18dm.net/*
 // @match        *://*.18dm.net/*
@@ -31,6 +31,7 @@
   var STORE_KEY = 'dm_dl_history_v2';
   var FAV_KEY = 'dm_dl_favorites_v1';
   var BAN_KEY = 'dm_dl_blacklist_v1';
+  var STATUS_KEY = 'dm_dl_status_v1';
   var CONTENT_KEY = 'dm_dl_content_v1';
   var DOCK_POS_KEY = 'dm_dl_dock_pos_v3';
   var downloading = false;
@@ -167,6 +168,8 @@
       '.dm-dl-hd-close{width:34px;height:34px;border-radius:var(--dm-r-sm);background:rgba(255,255,255,0.06);color:var(--dm-text-dim);display:flex;align-items:center;justify-content:center;font-size:15px;transition:background .15s,transform .12s}',
       '.dm-dl-hd-close:hover{background:rgba(255,255,255,0.12);color:#fff}',
       '.dm-dl-hd-close:active{transform:scale(0.92)}',
+      '#dm-dl-status-refresh.busy{opacity:.65;cursor:wait}',
+      '#dm-dl-status-refresh.busy svg{animation:dm-spin .8s linear infinite}',
       '.dm-dl-tabs{display:flex;gap:6px;padding:10px 14px 0}',
       '.dm-dl-tab{flex:1;padding:9px 0;border-radius:var(--dm-r-sm);color:var(--dm-text-dim);font-size:13px;font-weight:600;text-align:center;transition:all .15s}',
       '.dm-dl-tab:hover{color:#fff;background:rgba(255,255,255,0.06)}',
@@ -314,6 +317,10 @@
       '.dm-dl-card-badge.both{background:#3b82f6!important}',
       '.dm-dl-card-badge.ban{background:#52525b!important}',
       '.dm-dl-tag.ban{background:rgba(161,161,170,0.18);color:var(--dm-ban)}',
+      '.dm-dl-card-badge.ser{background:#3b82f6!important}',
+      '.dm-dl-card-badge.fin{background:#52525b!important}',
+      '.dm-dl-tag.ser{background:rgba(59,130,246,0.18);color:#93c5fd}',
+      '.dm-dl-tag.fin{background:rgba(161,161,170,0.18);color:var(--dm-ban)}',
 
       /* 移动端 */
       '@media screen and (max-width: 640px){',
@@ -355,7 +362,7 @@
     sheetMask.id = 'dm-dl-sheet-mask';
     sheetMask.innerHTML =
       '<div id="dm-dl-sheet">' +
-      '<div class="dm-dl-hd"><h3>我的书库</h3><div class="dm-dl-hd-acts"><button type="button" class="dm-dl-hd-close" id="dm-dl-webdav-btn" title="云同步"></button><button type="button" class="dm-dl-hd-close" id="dm-dl-sheet-close">✕</button></div></div>' +
+      '<div class="dm-dl-hd"><h3>我的书库</h3><div class="dm-dl-hd-acts"><button type="button" class="dm-dl-hd-close" id="dm-dl-status-refresh" title="刷新状态"></button><button type="button" class="dm-dl-hd-close" id="dm-dl-webdav-btn" title="云同步"></button><button type="button" class="dm-dl-hd-close" id="dm-dl-sheet-close">✕</button></div></div>' +
       '<div class="dm-dl-tabs">' +
       '<button type="button" class="dm-dl-tab on" data-tab="dl">已下载</button>' +
       '<button type="button" class="dm-dl-tab" data-tab="fav">已收藏</button>' +
@@ -439,6 +446,15 @@
       webdavBtn.onclick = function (e) {
         e.stopPropagation();
         openWebdavPanel();
+      };
+    }
+    var refreshBtn = document.getElementById('dm-dl-status-refresh');
+    if (refreshBtn) {
+      refreshBtn.innerHTML = ICONS.refresh;
+      refreshBtn.setAttribute('data-title', '刷新状态');
+      refreshBtn.onclick = function (e) {
+        e.stopPropagation();
+        refreshLibraryStatus(refreshBtn);
       };
     }
     var tagClose = document.getElementById('dm-dl-tag-close');
@@ -665,7 +681,161 @@
   function saveFavs(map) { saveJSON(FAV_KEY, map); }
   function loadBans() { return loadJSON(BAN_KEY); }
   function saveBans(map) { saveJSON(BAN_KEY, map); }
+  function loadStatus() { return loadJSON(STATUS_KEY); }
+  function saveStatus(map) { saveJSON(STATUS_KEY, map); }
+  function getStatus(id) { return id ? (loadStatus()[String(id)] || null) : null; }
   function loadContentCache() { return loadJSON(CONTENT_KEY); }
+
+  // ========== 书目状态（连载/完结 + 更新时间） ==========
+  function statusFromRaw(raw) {
+    var s = String(raw || '').trim();
+    if (!s) return '';
+    if (s.indexOf('完结') >= 0) return '已完结';
+    if (s.indexOf('连载') >= 0) return '连载中';
+    return '';
+  }
+
+  function statusLabel(rec) {
+    if (!rec) return '';
+    if (rec.statusText) return rec.statusText;
+    var st = String(rec.status || '').toLowerCase();
+    if (st === 'finished' || st === 'completed' || st === 'end') return '已完结';
+    if (st === 'serializing' || st === 'serial' || st === 'ongoing') return '连载中';
+    return '';
+  }
+
+  function updateLabel(rec) {
+    if (!rec || !rec.updateText) return '';
+    var t = String(rec.updateText).trim();
+    if (!t) return '';
+    return t.indexOf('更新') >= 0 ? t : t + '更新';
+  }
+
+  function recordStatus(id, patch) {
+    if (!id || !patch) return;
+    var statusText = patch.statusText ? statusFromRaw(patch.statusText) : '';
+    var status = patch.status ? String(patch.status) : '';
+    var updateText = patch.updateText ? String(patch.updateText).trim() : '';
+    if (!statusText && !status && !updateText) return;
+    var map = loadStatus();
+    var key = String(id);
+    var prev = map[key];
+    if (prev && prev.statusText === statusText && prev.status === status && prev.updateText === updateText) return;
+    var cur = prev || {};
+    if (statusText) cur.statusText = statusText;
+    if (status) cur.status = status;
+    if (updateText) cur.updateText = updateText;
+    cur.checkedAt = Date.now();
+    map[key] = cur;
+    saveStatus(map);
+  }
+
+  function readCardStatus(card) {
+    var out = {};
+    if (!card || !card.querySelector) return out;
+    try {
+      var chip = card.querySelector('.poster .dx-bg-linear') || card.querySelector('.dx-bg-linear');
+      if (chip) out.statusText = statusFromRaw(chip.textContent);
+      var timeEl = card.querySelector('span.mr-auto');
+      if (timeEl) out.updateText = (timeEl.textContent || '').trim();
+    } catch (e) {}
+    return out;
+  }
+
+  function readDetailStatus(doc) {
+    var out = {};
+    if (!doc || !doc.querySelector) return out;
+    try {
+      var main = doc.querySelector('main[data-novel-info]');
+      if (main) {
+        var info = JSON.parse(main.getAttribute('data-novel-info') || '{}');
+        if (info && info.content_status) out.status = String(info.content_status);
+      }
+    } catch (e) {}
+    try {
+      var badge = doc.querySelector('.detail-page__cover-corner-badge');
+      if (badge) out.statusText = statusFromRaw(badge.textContent);
+    } catch (e) {}
+    try {
+      var spans = doc.querySelectorAll('.detail-page__meta-row span');
+      for (var i = 0; i < spans.length; i++) {
+        var t = (spans[i].textContent || '').trim();
+        if (!out.statusText && statusFromRaw(t)) out.statusText = statusFromRaw(t);
+        if (!out.updateText && /更新$/.test(t)) out.updateText = t.replace(/\s*更新$/, '');
+      }
+    } catch (e) {}
+    return out;
+  }
+
+  function fetchOneStatus(id) {
+    return requestText(absUrl('/novel/detail/' + id)).then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      var info = readDetailStatus(doc);
+      if (!info.status && !info.statusText && !info.updateText) return false;
+      recordStatus(id, info);
+      return true;
+    });
+  }
+
+  function fetchStatusForIds(ids, onProgress) {
+    var CONC = 4;
+    var list = ids || [];
+    return new Promise(function (resolve) {
+      if (!list.length) { resolve({ ok: 0, fail: 0 }); return; }
+      var idx = 0;
+      var done = 0;
+      var ok = 0;
+      var fail = 0;
+      var active = 0;
+      function next() {
+        while (active < CONC && idx < list.length) {
+          (function (id) {
+            active++;
+            fetchOneStatus(id).then(function (good) {
+              if (good) ok++; else fail++;
+            }).catch(function () {
+              fail++;
+            }).then(function () {
+              active--;
+              done++;
+              if (typeof onProgress === 'function') onProgress(done, list.length);
+              if (done >= list.length) resolve({ ok: ok, fail: fail });
+              else next();
+            });
+          })(list[idx++]);
+        }
+      }
+      next();
+    });
+  }
+
+  function refreshLibraryStatus(btn) {
+    if (btn && btn.classList.contains('busy')) return;
+    var hist = loadHistory();
+    var favs = loadFavs();
+    var bans = loadBans();
+    var seen = {};
+    var ids = [];
+    Object.keys(hist).concat(Object.keys(favs)).forEach(function (id) {
+      if (!id || seen[id] || bans[id]) return;
+      seen[id] = true;
+      ids.push(id);
+    });
+    if (!ids.length) {
+      showToast({ title: '无可刷新书目', msg: '书库中没有需要刷新的书' });
+      return;
+    }
+    var baseTitle = btn ? (btn.getAttribute('data-title') || '刷新状态') : '';
+    if (btn) { btn.classList.add('busy'); btn.disabled = true; btn.title = '刷新中 0/' + ids.length; }
+    fetchStatusForIds(ids, function (done, total) {
+      if (btn) btn.title = '刷新中 ' + done + '/' + total;
+    }).then(function (r) {
+      if (btn) { btn.classList.remove('busy'); btn.disabled = false; btn.title = baseTitle; }
+      renderSheetBody();
+      markListCards();
+      showToast({ title: '状态已刷新', msg: '成功 ' + r.ok + ' · 失败 ' + r.fail });
+    });
+  }
 
   function mapToItems(map) {
     var items = [];
@@ -1388,10 +1558,17 @@
         if (favs[id]) tags += '<span class="dm-dl-tag fav">已收藏</span>';
         if (bans[id]) tags += '<span class="dm-dl-tag ban">已拉黑</span>';
 
+        var st = getStatus(id);
+        var stTxt = statusLabel(st);
+        if (stTxt) tags += '<span class="dm-dl-tag ' + (stTxt === '已完结' ? 'fin' : 'ser') + '">' + stTxt + '</span>';
+        var upd = updateLabel(st);
+
         row.innerHTML =
           '<div class="dm-dl-item-main">' +
           '<div class="dm-dl-item-title">' + esc(item.title || '未知标题') + '</div>' +
-          '<div class="dm-dl-item-meta">' + tags + '<span>' + (item.timeText || '') + '</span></div>' +
+          '<div class="dm-dl-item-meta">' + tags +
+          (upd ? '<span>' + esc(upd) + '</span>' : '') +
+          '<span>' + (item.timeText || '') + '</span></div>' +
           '</div>' +
           '<div class="dm-dl-item-acts">' +
           '<button type="button" class="dm-dl-mini go">打开</button>' +
@@ -1530,6 +1707,11 @@
         return badge;
       }
 
+      if (hasDl || hasFav) {
+        var cardStatus = readCardStatus(card);
+        if (cardStatus.statusText || cardStatus.updateText) recordStatus(id, cardStatus);
+      }
+
       var last = titleEl;
       if (hasDl || hasFav) {
         last = addCardBadge(
@@ -1538,7 +1720,10 @@
           last
         );
       }
-      if (hasBan) addCardBadge('ban', '已拉黑', last);
+      if (hasBan) last = addCardBadge('ban', '已拉黑', last);
+
+      var stText = statusLabel(getStatus(id));
+      if (stText) addCardBadge(stText === '已完结' ? 'fin' : 'ser', stText, last);
     }
   }
 
@@ -2259,6 +2444,10 @@
     var novelId = getNovelIdFromUrl();
 
     if (/\/novel\/detail\//.test(path)) {
+      var detailStatus = readDetailStatus(document);
+      if (detailStatus.status || detailStatus.statusText || detailStatus.updateText) {
+        recordStatus(novelId, detailStatus);
+      }
       var chs = parseChapters();
       injectTitleBadges(novelId);
       buildDockUI({ mode: 'detail', novelId: novelId, chaptersCount: chs.length });

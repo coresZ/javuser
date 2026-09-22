@@ -12,3 +12,9 @@
 **功能**：记录 18mh 黑名单标记设计。
 
 **涉及文件**：`docs/superpowers/specs/2026-09-20-18mh-book-blacklist-design.md`
+
+## 2026-09-22 · 18mh 书目状态 spec
+
+**功能**：记录 18mh 书目状态（连载/完结 + 更新时间）设计。
+
+**涉及文件**：`docs/superpowers/specs/2026-09-22-18mh-book-status-design.md`
