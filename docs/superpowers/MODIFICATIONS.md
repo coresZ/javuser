@@ -24,3 +24,21 @@
 **功能**：记录 18mh 果核阅读器直连设计。
 
 **涉及文件**：`docs/superpowers/specs/2026-09-22-18mh-reader-link-design.md`
+
+## 2026-09-22 · 18mh Dock 动作菜单 spec
+
+**功能**：记录 18mh Dock ⋯ 动作菜单设计。
+
+**涉及文件**：`docs/superpowers/specs/2026-09-22-18mh-dock-action-menu-design.md`
+
+## 2026-09-22 · 18mh 列表卡阅读器入口 spec
+
+**功能**：记录 18mh 站点列表卡「📖 阅读」入口设计。
+
+**涉及文件**：`docs/superpowers/specs/2026-09-22-18mh-list-reader-entry-design.md`
+
+## 2026-09-22 · 18mh 收藏更新提醒 spec
+
+**功能**：记录 18mh 收藏更新提醒设计。
+
+**涉及文件**：`docs/superpowers/specs/2026-09-22-18mh-fav-update-alert-design.md`
