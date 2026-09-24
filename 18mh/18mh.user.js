@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         18dm小说下载器
 // @namespace    http://tampermonkey.net/
-// @version      4.3.0
-// @description  一键下载18dm/18mh小说为TXT · UI v2（Lobe 实色层 / Lucide 图标 / PowerGlitch 成功态）· 章节缓存 · 增量更新 · 书目状态（连载/完结+更新时间）· 标签抽屉 · 悬浮条拖拽磁吸 · 收藏/黑名单 WebDAV 同步
+// @version      4.7.3
+// @description  一键下载18dm/18mh小说为TXT · UI v2（Lobe 实色层 / Lucide 图标 / PowerGlitch 成功态）· 章节缓存 · 增量更新 · 收藏更新提醒 · 书目状态（连载/完结+更新时间）· 果核阅读器直连（书库/悬浮条/列表卡）· Dock 动作菜单 · 标签抽屉 · 悬浮条拖拽磁吸 · 收藏/黑名单 WebDAV 同步
 // @author       you
 // @match        *://18dm.net/*
 // @match        *://*.18dm.net/*
@@ -32,6 +32,7 @@
   var FAV_KEY = 'dm_dl_favorites_v1';
   var BAN_KEY = 'dm_dl_blacklist_v1';
   var STATUS_KEY = 'dm_dl_status_v1';
+  var UPD_KEY = 'dm_dl_updates_v1';
   var CONTENT_KEY = 'dm_dl_content_v1';
   var DOCK_POS_KEY = 'dm_dl_dock_pos_v3';
   var downloading = false;
@@ -54,7 +55,11 @@
     check: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
     arrow: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>',
     cloud: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>',
-    ban: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>'
+    ban: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>',
+    book: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>',
+    more: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>',
+    bell: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>',
+    share: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>'
   };
 
   function isIOS() {
@@ -168,8 +173,8 @@
       '.dm-dl-hd-close{width:34px;height:34px;border-radius:var(--dm-r-sm);background:rgba(255,255,255,0.06);color:var(--dm-text-dim);display:flex;align-items:center;justify-content:center;font-size:15px;transition:background .15s,transform .12s}',
       '.dm-dl-hd-close:hover{background:rgba(255,255,255,0.12);color:#fff}',
       '.dm-dl-hd-close:active{transform:scale(0.92)}',
-      '#dm-dl-status-refresh.busy{opacity:.65;cursor:wait}',
-      '#dm-dl-status-refresh.busy svg{animation:dm-spin .8s linear infinite}',
+      '#dm-dl-status-refresh.busy,#dm-dl-updates-btn.busy{opacity:.65;cursor:wait}',
+      '#dm-dl-status-refresh.busy svg,#dm-dl-updates-btn.busy svg{animation:dm-spin .8s linear infinite}',
       '.dm-dl-tabs{display:flex;gap:6px;padding:10px 14px 0}',
       '.dm-dl-tab{flex:1;padding:9px 0;border-radius:var(--dm-r-sm);color:var(--dm-text-dim);font-size:13px;font-weight:600;text-align:center;transition:all .15s}',
       '.dm-dl-tab:hover{color:#fff;background:rgba(255,255,255,0.06)}',
@@ -194,6 +199,7 @@
       '.dm-dl-mini:hover{background:rgba(255,255,255,0.12)!important;color:#fff!important}',
       '.dm-dl-mini:active{transform:scale(0.94)!important}',
       '.dm-dl-mini.danger:hover{background:rgba(239,68,68,0.22)!important;color:#fca5a5!important}',
+      '.dm-dl-mini.read:hover{background:rgba(59,130,246,0.22)!important;color:#93c5fd!important}',
       '.dm-dl-ft{padding:10px 14px;border-top:1px solid rgba(255,255,255,0.06);display:flex;gap:8px}',
       '.dm-dl-ft button{flex:1;padding:9px 0;border-radius:var(--dm-r-sm);background:rgba(255,255,255,0.06);color:var(--dm-text-dim);font-size:12.5px;font-weight:500;transition:background .15s,color .15s,transform .12s}',
       '.dm-dl-ft button:hover{background:rgba(255,255,255,0.12);color:#fff}',
@@ -283,6 +289,21 @@
       '.dm-dl-dock-btn.fold{color:var(--dm-text-mute)!important}',
       '.dm-dl-dock-btn svg{display:block;pointer-events:none}',
 
+      /* Dock 动作气泡（⋯） */
+      '#dm-dl-menu{position:fixed!important;z-index:2147483646!important;width:78px!important;padding:4px!important;border-radius:10px!important;',
+      'background:var(--dm-glass)!important;border:1px solid var(--dm-glass-border)!important;box-shadow:0 10px 24px rgba(0,0,0,0.5)!important;',
+      'color:var(--dm-text)!important}',
+      '.dm-dl-menu-row{display:flex!important;align-items:center!important;gap:6px!important;padding:6px 5px!important;border-radius:6px!important;',
+      'font-size:12px!important;color:var(--dm-text)!important;cursor:pointer!important;transition:background .12s!important}',
+      '.dm-dl-menu-row:hover{background:rgba(255,255,255,0.1)!important}',
+      '.dm-dl-menu-row svg{flex-shrink:0;color:var(--dm-text-dim)!important}',
+      '.dm-dl-menu-row.is-fav svg{color:var(--dm-fav)!important}',
+      '.dm-dl-menu-row.is-ban svg{color:var(--dm-ban)!important}',
+      '#dm-dl-menu-btn.is-fav{color:var(--dm-fav)!important;background:rgba(251,113,133,0.16)!important}',
+      '#dm-dl-menu-btn.is-ban{color:var(--dm-ban)!important;background:rgba(161,161,170,0.18)!important}',
+      '#dm-dl-menu-btn.dot,#dm-dl-panel-btn.dot,#dm-dl-main-btn.dot{position:relative!important}',
+      '#dm-dl-menu-btn.dot::after,#dm-dl-panel-btn.dot::after,#dm-dl-main-btn.dot::after{content:"";position:absolute;top:4px;right:4px;width:7px;height:7px;border-radius:50%;background:var(--dm-fav);box-shadow:0 0 0 2px rgba(22,23,32,0.9)}',
+
       /* 主按钮 */
       '#dm-dl-main-btn{position:relative!important;flex:1 1 auto!important;min-width:128px!important;max-width:210px!important;',
       'height:38px!important;padding:0 12px!important;border-radius:var(--dm-r-md)!important;display:inline-flex!important;',
@@ -319,13 +340,28 @@
       '.dm-dl-tag.ban{background:rgba(161,161,170,0.18);color:var(--dm-ban)}',
       '.dm-dl-card-badge.ser{background:#3b82f6!important}',
       '.dm-dl-card-badge.fin{background:#52525b!important}',
+      '.dm-dl-reader-bar{position:absolute!important;left:0!important;right:0!important;bottom:0!important;z-index:3!important;',
+      'display:flex!important;align-items:center!important;justify-content:center!important;gap:4px!important;padding:5px 0!important;',
+      'background:rgba(17,17,20,0.74)!important;color:#fff!important;font-size:11px!important;font-weight:600!important;',
+      'cursor:pointer!important;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,"PingFang SC","Microsoft YaHei",sans-serif!important;',
+      'transition:opacity .15s,transform .15s,background .15s!important}',
+      '.dm-dl-reader-bar:hover{background:rgba(17,17,20,0.9)!important}',
+      '.dm-dl-reader-bar svg{width:13px!important;height:13px!important;flex-shrink:0}',
+      // 默认常显（移动端/触屏）；仅桌面 hover 设备改为悬停显示
+      '@media (hover:hover) and (pointer:fine){',
+      '.dm-dl-reader-bar{opacity:0!important;transform:translateY(100%)!important;pointer-events:none!important}',
+      '.poster:hover .dm-dl-reader-bar,.dm-dl-reader-bar:hover{opacity:1!important;transform:translateY(0)!important;pointer-events:auto!important}',
+      '}',
       '.dm-dl-tag.ser{background:rgba(59,130,246,0.18);color:#93c5fd}',
       '.dm-dl-tag.fin{background:rgba(161,161,170,0.18);color:var(--dm-ban)}',
+      '.dm-dl-tag.upd{background:rgba(245,158,11,0.18);color:#fbbf24}',
 
       /* 移动端 */
       '@media screen and (max-width: 640px){',
       '#dm-dl-dock{height:44px!important;border-radius:var(--dm-r-md)!important;padding:4px!important;gap:3px!important}',
       '.dm-dl-dock-btn{width:36px!important;height:36px!important;min-width:36px!important}',
+      '#dm-dl-menu{width:96px!important;padding:5px!important}',
+      '.dm-dl-menu-row{padding:9px 7px!important;font-size:13px!important;min-height:40px!important}',
       '#dm-dl-main-btn{min-width:96px!important;max-width:160px!important;height:36px!important;padding:0 10px!important;font-size:12.5px!important}',
       '#dm-dl-dock.collapsed{width:42px!important;height:42px!important}',
       '#dm-dl-tag-sheet{max-width:100%!important;height:min(90vh, 100%)!important;height:min(90dvh, 100%)!important;',
@@ -362,7 +398,7 @@
     sheetMask.id = 'dm-dl-sheet-mask';
     sheetMask.innerHTML =
       '<div id="dm-dl-sheet">' +
-      '<div class="dm-dl-hd"><h3>我的书库</h3><div class="dm-dl-hd-acts"><button type="button" class="dm-dl-hd-close" id="dm-dl-status-refresh" title="刷新状态"></button><button type="button" class="dm-dl-hd-close" id="dm-dl-webdav-btn" title="云同步"></button><button type="button" class="dm-dl-hd-close" id="dm-dl-sheet-close">✕</button></div></div>' +
+      '<div class="dm-dl-hd"><h3>我的书库</h3><div class="dm-dl-hd-acts"><button type="button" class="dm-dl-hd-close" id="dm-dl-updates-btn" title="检查更新"></button><button type="button" class="dm-dl-hd-close" id="dm-dl-status-refresh" title="刷新状态"></button><button type="button" class="dm-dl-hd-close" id="dm-dl-webdav-btn" title="云同步"></button><button type="button" class="dm-dl-hd-close" id="dm-dl-sheet-close">✕</button></div></div>' +
       '<div class="dm-dl-tabs">' +
       '<button type="button" class="dm-dl-tab on" data-tab="dl">已下载</button>' +
       '<button type="button" class="dm-dl-tab" data-tab="fav">已收藏</button>' +
@@ -457,6 +493,22 @@
         refreshLibraryStatus(refreshBtn);
       };
     }
+    var updatesBtn = document.getElementById('dm-dl-updates-btn');
+    if (updatesBtn) {
+      updatesBtn.innerHTML = ICONS.bell;
+      updatesBtn.onclick = function (e) {
+        e.stopPropagation();
+        if (updatesBtn.classList.contains('busy')) return;
+        updatesBtn.classList.add('busy');
+        showToast({ title: '正在检查更新…', msg: '收藏 ' + Object.keys(loadFavs()).length + ' 本' });
+        checkFavUpdates(true).then(function () {
+          updatesBtn.classList.remove('busy');
+        }).catch(function () {
+          updatesBtn.classList.remove('busy');
+          showToast({ title: '检查失败', msg: '网络异常，请稍后再试' });
+        });
+      };
+    }
     var tagClose = document.getElementById('dm-dl-tag-close');
     if (tagClose) tagClose.onclick = closeTagSheet;
 
@@ -525,20 +577,27 @@
     var r = dock.getBoundingClientRect();
     var W = window.innerWidth || document.documentElement.clientWidth;
     var H = window.innerHeight || document.documentElement.clientHeight;
-    el.style.left = 'auto';
+    var elW = el.offsetWidth || 320;
+    // Dock 在左半屏 → 气泡左缘对齐 Dock 左缘；右半屏 → 右缘对齐 Dock 右缘。
+    // 无论哪侧都再夹取进视口，避免贴边时溢出屏幕外。
+    var onLeftHalf = (r.left + r.width / 2) < W / 2;
+    var left = onLeftHalf ? r.left : (r.right - elW);
+    left = Math.min(Math.max(8, left), Math.max(8, W - elW - 8));
     el.style.top = 'auto';
-    el.style.right = Math.max(8, Math.round(W - r.right)) + 'px';
+    el.style.right = 'auto';
+    el.style.left = Math.round(left) + 'px';
     var elH = el.offsetHeight || 120;
     if (maxH) elH = Math.min(elH, maxH);
+    var originX = onLeftHalf ? '0' : '100%';
     if (r.top >= elH + 30) {
       // 上方空间足够：贴 Dock 顶部向上弹出
       el.style.bottom = Math.round(H - r.top + 10) + 'px';
-      el.style.setProperty('transform-origin', '100% 100%', 'important');
+      el.style.setProperty('transform-origin', originX + ' 100%', 'important');
       if (maxH) el.style.setProperty('max-height', Math.max(160, Math.min(maxH, r.top - 18)) + 'px', 'important');
     } else {
       // 上方不够：翻转到 Dock 下方弹出
       el.style.bottom = Math.round(H - r.bottom - 10) + 'px';
-      el.style.setProperty('transform-origin', '100% 0', 'important');
+      el.style.setProperty('transform-origin', originX + ' 0', 'important');
       if (maxH) el.style.setProperty('max-height', Math.max(160, Math.min(maxH, H - r.bottom - 18)) + 'px', 'important');
     }
   }
@@ -639,7 +698,10 @@
       else clearPopoverAnchor(sheet);
       void mask.offsetWidth;
       mask.classList.add('open');
+      // 先渲染（保住本轮的「有更新 +N」），再清标记与红点
       renderSheetBody();
+      clearUpdateMarks();
+      setPanelDot(false);
     }
   }
 
@@ -835,6 +897,283 @@
       markListCards();
       showToast({ title: '状态已刷新', msg: '成功 ' + r.ok + ' · 失败 ' + r.fail });
     });
+  }
+
+  // ========== 收藏更新检查 ==========
+  var UPDATE_CHECK_MS = 6 * 60 * 60 * 1000;
+
+  function loadUpdates() { return loadJSON(UPD_KEY); }
+  function saveUpdates(map) { saveJSON(UPD_KEY, map); }
+
+  function getUpdateAdd(id) {
+    if (!id) return 0;
+    var u = loadUpdates();
+    var it = u.items && u.items[String(id)];
+    return it && it.add ? it.add : 0;
+  }
+
+  function hasPendingUpdates() {
+    var u = loadUpdates();
+    var items = u.items && typeof u.items === 'object' ? u.items : {};
+    return Object.keys(items).some(function (k) { return items[k] && items[k].add > 0; });
+  }
+
+  function setPanelDot(on) {
+    var b = document.getElementById('dm-dl-panel-btn') || document.getElementById('dm-dl-main-btn');
+    if (b) b.classList.toggle('dot', !!on);
+  }
+
+  function clearUpdateMarks() {
+    var u = loadUpdates();
+    var items = u.items && typeof u.items === 'object' ? u.items : {};
+    var changed = false;
+    Object.keys(items).forEach(function (k) {
+      if (items[k] && items[k].add) { items[k].add = 0; changed = true; }
+    });
+    if (changed) { u.items = items; saveUpdates(u); }
+  }
+
+  function countNewChapters(chapters, maxId) {
+    var n = 0;
+    for (var i = 0; i < chapters.length; i++) {
+      if (chapters[i].id > maxId) n++;
+    }
+    return n;
+  }
+
+  function fetchChapterLists(ids) {
+    var CONC = 4;
+    var list = ids || [];
+    var out = [];
+    return new Promise(function (resolve) {
+      if (!list.length) { resolve(out); return; }
+      var idx = 0;
+      var done = 0;
+      var active = 0;
+      function next() {
+        while (active < CONC && idx < list.length) {
+          (function (id) {
+            active++;
+            fetchChapterList(id).then(function (chs) {
+              out.push({ id: String(id), list: chs || [] });
+            }).catch(function () {}).then(function () {
+              active--;
+              done++;
+              if (done >= list.length) resolve(out);
+              else next();
+            });
+          })(list[idx++]);
+        }
+      }
+      next();
+    });
+  }
+
+  function notifyUpdates(updated) {
+    var total = updated.length;
+    var lines = updated.slice(0, 3).map(function (u) {
+      return '「' + u.title + '」+' + u.delta + '章';
+    });
+    if (total > 3) lines.push('…共 ' + total + ' 本有更新');
+    showToast({ title: '收藏有更新（' + total + ' 本）', msg: lines.join('\n') });
+    setPanelDot(true);
+  }
+
+  function checkFavUpdates(manual) {
+    var favs = loadFavs();
+    var ids = Object.keys(favs);
+    if (!ids.length) {
+      if (manual) showToast({ title: '暂无收藏', msg: '收藏夹为空，无法检查更新' });
+      return Promise.resolve({ checked: 0, updated: [] });
+    }
+    return fetchChapterLists(ids).then(function (res) {
+      var store = loadUpdates();
+      var items = store.items && typeof store.items === 'object' ? store.items : {};
+      var updated = [];
+      res.forEach(function (r) {
+        if (!r || !r.list || !r.list.length) return;
+        var key = String(r.id);
+        var latestId = r.list[r.list.length - 1].id;
+        var prev = items[key];
+        var title = (favs[key] && favs[key].title) || ('小说 ' + key);
+        if (prev && typeof prev.maxId === 'number' && latestId > prev.maxId) {
+          var delta = countNewChapters(r.list, prev.maxId);
+          var add = (prev.add || 0) + delta;
+          items[key] = { maxId: latestId, title: title, add: add };
+          updated.push({ id: key, title: title, add: add, delta: delta });
+        } else {
+          items[key] = { maxId: latestId, title: title, add: (prev && prev.add) || 0 };
+        }
+      });
+      store.items = items;
+      store.lastCheckAt = Date.now();
+      saveUpdates(store);
+      if (updated.length) {
+        notifyUpdates(updated);
+        renderSheetBody();
+      } else if (manual) {
+        showToast({ title: '已是最新', msg: '收藏的 ' + ids.length + ' 本书暂无更新' });
+      }
+      return { checked: ids.length, updated: updated };
+    });
+  }
+
+  var autoCheckRan = false;
+  function maybeAutoCheckUpdates() {
+    if (autoCheckRan) return;
+    autoCheckRan = true;
+    var u = loadUpdates();
+    if (u.lastCheckAt && (Date.now() - u.lastCheckAt) < UPDATE_CHECK_MS) return;
+    if (!Object.keys(loadFavs()).length) return;
+    checkFavUpdates(false).catch(function () {});
+  }
+
+  // ========== 果核阅读器 ==========
+  var READER_BASE = 'https://fixreader.vercel.app/';
+  function readerUrlById(id) {
+    var key = String(id || '').trim();
+    return key ? READER_BASE + '?novel=' + encodeURIComponent(key) : '';
+  }
+  function readerUrlByQuery(q) {
+    var kw = String(q || '').trim();
+    return kw ? READER_BASE + '?q=' + encodeURIComponent(kw) : '';
+  }
+  function openReader(url) {
+    if (!url) return;
+    try {
+      var w = window.open(url, '_blank', 'noopener');
+      if (!w) location.href = url;
+    } catch (e) {
+      location.href = url;
+    }
+  }
+
+  // ========== Dock 动作菜单（⋯） ==========
+  var dockMenu = null;
+
+  function copyText(text) {
+    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+        resolve();
+      } catch (e) { reject(e); }
+    });
+  }
+
+  function shareNovel(title, url) {
+    var shareUrl = url || '';
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        return navigator.share({ title: title || '小说', text: title || '', url: shareUrl }).catch(function () {});
+      } catch (e) { /* fallthrough to copy */ }
+    }
+    return copyText(shareUrl).then(function () {
+      showToast({ title: '链接已复制', msg: shareUrl });
+    }).catch(function () {
+      showToast({ title: '分享失败', msg: '当前环境不支持分享' });
+    });
+  }
+
+  function syncMenuBtnState(novelId) {
+    var b = document.getElementById('dm-dl-menu-btn');
+    if (!b) return;
+    var fav = isFav(novelId);
+    var ban = isBan(novelId);
+    var cls = 'dm-dl-dock-btn';
+    if (fav) cls += ' dot is-fav';
+    else if (ban) cls += ' dot is-ban';
+    b.className = cls;
+  }
+
+  function buildDockMenuRows(menu, ctx) {
+    menu.innerHTML = '';
+    function row(iconSvg, label, onClick, stateClass) {
+      var el = document.createElement('div');
+      el.className = 'dm-dl-menu-row' + (stateClass ? ' ' + stateClass : '');
+      el.innerHTML = iconSvg + '<span>' + esc(label) + '</span>';
+      el.onclick = function (e) {
+        e.stopPropagation();
+        onClick();
+      };
+      menu.appendChild(el);
+    }
+    function afterToggle() {
+      injectTitleBadges(ctx.novelId);
+      markListCards();
+      buildDockMenuRows(menu, ctx);
+      syncMenuBtnState(ctx.novelId);
+    }
+    var favNow = isFav(ctx.novelId);
+    var banNow = isBan(ctx.novelId);
+    row(favNow ? ICONS.heartFill : ICONS.heart, favNow ? '已收藏' : '收藏', function () {
+      var on = toggleFavorite(ctx.novelId, ctx.title, ctx.url);
+      showToast({ title: on ? '收藏成功' : '已取消收藏', msg: '「' + ctx.title + '」' });
+      afterToggle();
+    }, favNow ? 'is-fav' : '');
+    row(ICONS.ban, banNow ? '已拉黑' : '拉黑', function () {
+      var on = toggleBan(ctx.novelId, ctx.title, ctx.url);
+      showToast({ title: on ? '已拉黑' : '已取消拉黑', msg: '「' + ctx.title + '」' });
+      afterToggle();
+    }, banNow ? 'is-ban' : '');
+    row(ICONS.book, '阅读', function () {
+      closeDockMenu();
+      openReader(readerUrlById(ctx.novelId) || readerUrlByQuery(ctx.title));
+    });
+    row(ICONS.share, '分享', function () {
+      closeDockMenu();
+      shareNovel(ctx.title, ctx.url);
+    });
+  }
+
+  function dockMenuDocClick(e) {
+    if (!dockMenu) return;
+    if (dockMenu.contains(e.target)) return;
+    var mb = document.getElementById('dm-dl-menu-btn');
+    if (mb && (e.target === mb || mb.contains(e.target))) return;
+    closeDockMenu();
+  }
+
+  function dockMenuKey(e) {
+    if (e.key === 'Escape') closeDockMenu();
+  }
+
+  function closeDockMenu() {
+    if (dockMenu && dockMenu.parentNode) dockMenu.parentNode.removeChild(dockMenu);
+    dockMenu = null;
+    document.removeEventListener('click', dockMenuDocClick, true);
+    document.removeEventListener('keydown', dockMenuKey, true);
+    window.removeEventListener('resize', closeDockMenu, true);
+    window.removeEventListener('scroll', closeDockMenu, true);
+  }
+
+  function openDockMenu(anchorBtn, ctx) {
+    closeDockMenu();
+    var menu = document.createElement('div');
+    menu.id = 'dm-dl-menu';
+    buildDockMenuRows(menu, ctx);
+    document.body.appendChild(menu);
+    var r = anchorBtn.getBoundingClientRect();
+    var w = menu.offsetWidth || 78;
+    var h = menu.offsetHeight || 120;
+    var left = Math.min(Math.max(8, r.right - w), Math.max(8, window.innerWidth - w - 8));
+    var top = r.bottom + 6;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+    dockMenu = menu;
+    document.addEventListener('click', dockMenuDocClick, true);
+    document.addEventListener('keydown', dockMenuKey, true);
+    window.addEventListener('resize', closeDockMenu, true);
+    window.addEventListener('scroll', closeDockMenu, true);
   }
 
   function mapToItems(map) {
@@ -1109,12 +1448,39 @@
       defaultFile: '18mh-favorites.json',
       encMark: '18mh-aes-gcm-v1',
       menu: false,
+      // GM + localStorage 双写：iOS Userscripts 上同步 GM_setValue 不可靠，
+      // 只走 GM 会导致账号密码刷新即丢（脚本其余存储同样是双写）。
       storage: {
+        // 读取时遍历所有后端，优先返回「确实含账号信息」的那份，
+        // 避免 GM 里的旧空值/空对象盖掉 localStorage 里的好值。
         get: function (k, d) {
-          try { return typeof GM_getValue === 'function' ? GM_getValue(k, d) : d; } catch (e) { return d; }
+          var cands = [];
+          try { if (typeof GM_getValue === 'function') cands.push(GM_getValue(k, null)); } catch (e) {}
+          try { cands.push(localStorage.getItem(k)); } catch (e) {}
+          var fallback = null;
+          for (var i = 0; i < cands.length; i++) {
+            var c = cands[i];
+            if (c == null || c === '') continue;
+            var obj = c;
+            if (typeof c === 'string') {
+              try { obj = JSON.parse(c); } catch (e) { continue; }
+            }
+            if (!obj || typeof obj !== 'object') continue;
+            if (fallback == null) fallback = obj;
+            if (obj.url || obj.user || obj.pass) return obj;
+          }
+          return fallback || d;
         },
         set: function (k, v) {
-          try { if (typeof GM_setValue === 'function') GM_setValue(k, v); } catch (e) {}
+          var raw = JSON.stringify(v);
+          try { if (typeof GM_setValue === 'function') GM_setValue(k, raw); } catch (e) {}
+          try {
+            if (typeof GM !== 'undefined' && GM && typeof GM.setValue === 'function') {
+              var p = GM.setValue(k, raw);
+              if (p && typeof p.catch === 'function') p.catch(function () {});
+            }
+          } catch (e) {}
+          try { localStorage.setItem(k, raw); } catch (e) {}
         }
       },
       request: webdevRequest,
@@ -1131,6 +1497,10 @@
     }
     api.openPanel({
       description: '同步收藏和黑名单，不含下载记录。',
+      // 双保险：面板保存时同步落一份到 18mh 自己的存储（与收藏同路径）
+      onSave: function (s) {
+        try { saveJSON('dm_dl_webdav_v1', s); } catch (e) {}
+      },
       onDownloaded: function (pack) {
         var n = mergeFavsFromPack(pack);
         renderSheetBody();
@@ -1163,7 +1533,7 @@
 
     var winW = window.innerWidth;
     var winH = window.innerHeight;
-    var dockW = dock.offsetWidth || (collapsed ? 44 : 278);
+    var dockW = dock.offsetWidth || (collapsed ? 44 : 250);
     var dockH = dock.offsetHeight || 48;
 
     var padX = 12, padY = 12;
@@ -1201,7 +1571,7 @@
     setTimeout(function () {
       var winW = window.innerWidth;
       var winH = window.innerHeight;
-      var initX = saved.x != null ? saved.x : (winW - (initCollapsed ? 44 : 278) - 14);
+      var initX = saved.x != null ? saved.x : (winW - (initCollapsed ? 44 : 250) - 14);
       var initY = saved.y != null ? saved.y : (winH - 80);
       applyDockPos(initX, initY, initCollapsed, false);
     }, 40);
@@ -1277,12 +1647,12 @@
   // ========== 构建 Dock ==========
   function buildDockUI(opts) {
     ensureDOM();
+    closeDockMenu();
     opts = opts || {};
     var dock = document.getElementById('dm-dl-dock');
-    var novelId = opts.novelId || getNovelIdFromUrl();
+    var novelId = opts.novelId || getNovelIdFromUrl() || readNovelIdFromPage();
     var chaptersCount = opts.chaptersCount || 0;
     var rec = novelId ? getRecord(novelId) : null;
-    var fav = novelId ? isFav(novelId) : false;
     var mode = opts.mode || 'detail';
 
     // 非阅读页不保留「最新章提示」：清理从阅读页残留的提示内容
@@ -1314,61 +1684,30 @@
       var wrap = document.getElementById('dm-dl-dock-wrap');
       var rect = wrap.getBoundingClientRect();
       var winW = window.innerWidth;
-      var dockW = isCollapsed ? 44 : 278;
+      var dockW = isCollapsed ? 44 : 250;
       var targetX = (rect.left + dockW / 2) < (winW / 2) ? 12 : (winW - dockW - 12);
       applyDockPos(targetX, rect.top, isCollapsed, true);
       saveJSON(DOCK_POS_KEY, { x: targetX, y: rect.top, collapsed: isCollapsed });
     }
 
-    // 收藏
+    // 更多操作（收藏 / 拉黑 / 阅读 / 分享）
     if (mode !== 'list' && novelId) {
-      var favBtn = document.createElement('button');
-      favBtn.type = 'button';
-      favBtn.className = 'dm-dl-dock-btn' + (fav ? ' fav-on' : '');
-      favBtn.id = 'dm-dl-fav-btn';
-      favBtn.title = fav ? '取消收藏' : '收藏本书';
-      favBtn.innerHTML = fav ? ICONS.heartFill : ICONS.heart;
-      favBtn.onclick = function (e) {
+      var menuBtn = document.createElement('button');
+      menuBtn.type = 'button';
+      menuBtn.id = 'dm-dl-menu-btn';
+      menuBtn.title = '更多操作';
+      menuBtn.innerHTML = ICONS.more;
+      syncMenuBtnState(novelId);
+      menuBtn.onclick = function (e) {
         e.stopPropagation();
-        var title = getNovelTitle();
-        var url = absUrl('/novel/detail/' + novelId);
-        var on = toggleFavorite(novelId, title, url);
-        favBtn.innerHTML = on ? ICONS.heartFill : ICONS.heart;
-        favBtn.className = 'dm-dl-dock-btn' + (on ? ' fav-on fav-pulse' : '');
-        favBtn.title = on ? '取消收藏' : '收藏本书';
-        if (on) setTimeout(function () { favBtn.classList.remove('fav-pulse'); }, 450);
-        injectTitleBadges(novelId);
-        markListCards();
-        showToast({ title: on ? '收藏成功' : '已取消收藏', msg: '「' + title + '」' });
+        if (dockMenu) { closeDockMenu(); return; }
+        openDockMenu(menuBtn, {
+          novelId: novelId,
+          title: getNovelTitle(),
+          url: absUrl('/novel/detail/' + novelId)
+        });
       };
-      dock.appendChild(favBtn);
-
-      var banned = isBan(novelId);
-      var banBtn = document.createElement('button');
-      banBtn.type = 'button';
-      banBtn.className = 'dm-dl-dock-btn' + (banned ? ' ban-on' : '');
-      banBtn.id = 'dm-dl-ban-btn';
-      banBtn.title = banned ? '取消拉黑' : '拉黑本书';
-      banBtn.innerHTML = ICONS.ban;
-      banBtn.onclick = function (e) {
-        e.stopPropagation();
-        var title = getNovelTitle();
-        var url = absUrl('/novel/detail/' + novelId);
-        var on = toggleBan(novelId, title, url);
-        banBtn.className = 'dm-dl-dock-btn' + (on ? ' ban-on' : '');
-        banBtn.title = on ? '取消拉黑' : '拉黑本书';
-        var fb = document.getElementById('dm-dl-fav-btn');
-        if (fb) {
-          var favNow = isFav(novelId);
-          fb.innerHTML = favNow ? ICONS.heartFill : ICONS.heart;
-          fb.className = 'dm-dl-dock-btn' + (favNow ? ' fav-on' : '');
-          fb.title = favNow ? '取消收藏' : '收藏本书';
-        }
-        injectTitleBadges(novelId);
-        markListCards();
-        showToast({ title: on ? '已拉黑' : '已取消拉黑', msg: '「' + title + '」' });
-      };
-      dock.appendChild(banBtn);
+      dock.appendChild(menuBtn);
     }
 
     // 主按钮
@@ -1419,6 +1758,7 @@
       var panelBtn = document.createElement('button');
       panelBtn.type = 'button';
       panelBtn.className = 'dm-dl-dock-btn';
+      panelBtn.id = 'dm-dl-panel-btn';
       panelBtn.title = '书库管理';
       panelBtn.innerHTML = ICONS.menu;
       panelBtn.onclick = function (e) {
@@ -1439,6 +1779,11 @@
       setCollapseState(true);
     };
     dock.appendChild(foldBtn);
+
+    if (hasPendingUpdates()) {
+      var dotTarget = document.getElementById('dm-dl-panel-btn') || document.getElementById('dm-dl-main-btn');
+      if (dotTarget) dotTarget.classList.add('dot');
+    }
 
     if (!dockDragBound) {
       dockDragBound = true;
@@ -1561,7 +1906,11 @@
         var st = getStatus(id);
         var stTxt = statusLabel(st);
         if (stTxt) tags += '<span class="dm-dl-tag ' + (stTxt === '已完结' ? 'fin' : 'ser') + '">' + stTxt + '</span>';
+        var updAdd = getUpdateAdd(id);
+        if (updAdd > 0) tags += '<span class="dm-dl-tag upd">有更新 +' + updAdd + '</span>';
         var upd = updateLabel(st);
+
+        var canRead = currentSheetTab === 'fav' || currentSheetTab === 'dl';
 
         row.innerHTML =
           '<div class="dm-dl-item-main">' +
@@ -1572,6 +1921,7 @@
           '</div>' +
           '<div class="dm-dl-item-acts">' +
           '<button type="button" class="dm-dl-mini go">打开</button>' +
+          (canRead ? '<button type="button" class="dm-dl-mini read">阅读</button>' : '') +
           '<button type="button" class="dm-dl-mini danger rm">删除</button>' +
           '</div>';
 
@@ -1582,6 +1932,13 @@
           e.stopPropagation();
           location.href = item.url || absUrl('/novel/detail/' + id);
         };
+        var readBtn = row.querySelector('.read');
+        if (readBtn) {
+          readBtn.onclick = function (e) {
+            e.stopPropagation();
+            openReader(readerUrlById(id));
+          };
+        }
         row.querySelector('.rm').onclick = function (e) {
           e.stopPropagation();
           showConfirm({
@@ -1665,7 +2022,7 @@
 
     // 列表卡片通常含 3 个 /novel/detail/ 链接（封面、标题、时间），
     // 旧逻辑对每个 <a> 各插一枚徽章，二次 boot / 列表重绘还会叠加。
-    var leftovers = document.querySelectorAll('.dm-dl-card-badge');
+    var leftovers = document.querySelectorAll('.dm-dl-card-badge, .dm-dl-reader-bar');
     for (var i = 0; i < leftovers.length; i++) leftovers[i].remove();
 
     var links = document.querySelectorAll('a[href*="/novel/detail/"]');
@@ -1687,6 +2044,10 @@
       var hasDl = !!hist[id];
       var hasFav = !!favs[id];
       var hasBan = !!bans[id];
+
+      // 封面底部「阅读」条：所有卡片都能一键进阅读器
+      addReaderBar(card, id);
+
       if (!hasDl && !hasFav && !hasBan) continue;
 
       var host;
@@ -1725,6 +2086,30 @@
       var stText = statusLabel(getStatus(id));
       if (stText) addCardBadge(stText === '已完结' ? 'fin' : 'ser', stText, last);
     }
+  }
+
+  function addReaderBar(card, id) {
+    if (!card || !id) return;
+    var host = card.querySelector('.poster');
+    if (!host) {
+      var img = card.querySelector('img');
+      if (img) host = img.parentElement;
+    }
+    if (!host) return;
+    try {
+      if (window.getComputedStyle(host).position === 'static') host.style.position = 'relative';
+    } catch (e) {
+      host.style.position = 'relative';
+    }
+    var bar = document.createElement('div');
+    bar.className = 'dm-dl-reader-bar';
+    bar.innerHTML = ICONS.book + '<span>阅读</span>';
+    bar.onclick = function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      openReader(readerUrlById(id));
+    };
+    host.appendChild(bar);
   }
 
   // ========== 解析下载核心 ==========
@@ -1771,7 +2156,40 @@
 
   function parseChapters() { return parseChaptersIn(document); }
 
+  function readNovelTitleFromPage() {
+    try {
+      var main = document.querySelector('main[data-novel-info]');
+      if (main) {
+        var info = JSON.parse(main.getAttribute('data-novel-info') || '{}');
+        if (info && info.novel_title) return String(info.novel_title).trim();
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  // URL 解析不到书籍 id 时的兜底：页面内嵌数据 / 面包屑链接
+  function readNovelIdFromPage() {
+    try {
+      var main = document.querySelector('main[data-novel-info]');
+      if (main) {
+        var info = JSON.parse(main.getAttribute('data-novel-info') || '{}');
+        if (info && info.novel_id) return String(info.novel_id).trim();
+      }
+    } catch (e) {}
+    try {
+      var crumb = document.querySelector('a[href*="/novel/detail/"]');
+      if (crumb) {
+        var m = (crumb.getAttribute('href') || '').match(/\/novel\/detail\/(\d+)/);
+        if (m) return m[1];
+      }
+    } catch (e) {}
+    return '';
+  }
+
   function getNovelTitle() {
+    // 章节页的 h1 是章节名，书名以 main[data-novel-info].novel_title 为准
+    var fromInfo = readNovelTitleFromPage();
+    if (fromInfo) return fromInfo;
     var el = document.querySelector('h1.detail-page__title, h1.dx-title, .detail-page__title, h1');
     if (el) {
       var clone = el.cloneNode(true);
@@ -2441,7 +2859,7 @@
       return;
     }
     var path = location.pathname;
-    var novelId = getNovelIdFromUrl();
+    var novelId = getNovelIdFromUrl() || readNovelIdFromPage();
 
     if (/\/novel\/detail\//.test(path)) {
       var detailStatus = readDetailStatus(document);
@@ -2465,6 +2883,7 @@
   }
 
   initWebdav();
+  setTimeout(maybeAutoCheckUpdates, 3000);
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot);
   } else {
