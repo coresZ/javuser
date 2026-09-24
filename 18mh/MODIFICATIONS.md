@@ -157,3 +157,28 @@
 
 **涉及文件与位置**：
 - `18mh/18mh.user.js`：列表卡 CSS / `readNovelIdFromPage` / `buildDockUI` / `boot`
+
+## 2026-09-22 · 修复：iOS 刷新后 WebDAV 账号丢失
+
+**功能**：修 bug。
+
+**修改内容**：
+- `@version` 4.7.1 → 4.7.2。
+- WebDAV `storage` 适配器由「仅 GM」改为 **GM + localStorage 双写**，读取优先 GM、回退 localStorage（JSON 串），与脚本其余存储（`saveJSON`/`loadJSON`）一致。
+- 兼容旧数据：GM 里存的旧对象原样返回；同时 fire-and-forget 调用现代 `GM.setValue`。
+- 原因：iOS Userscripts 上同步 `GM_setValue` 不可靠，只走 GM 导致设置刷新即丢。
+
+**涉及文件与位置**：
+- `18mh/18mh.user.js`：`initWebdav` 的 `storage` 适配器
+
+## 2026-09-22 · 加固：WebDAV 设置读取与双保险落盘
+
+**功能**：修 iOS 上仍丢账号的问题。
+
+**修改内容**：
+- `@version` 4.7.2 → 4.7.3。
+- `storage.get` 改为遍历 GM/localStorage 全部候选，**优先返回确实含 url/user/pass 的那份**，避免旧空值盖掉好值。
+- `openWebdavPanel` 增加 `onSave`：面板保存时同步 `saveJSON('dm_dl_webdav_v1', s)`（与收藏同一条存储路径，iOS 已验证可用）。
+
+**涉及文件与位置**：
+- `18mh/18mh.user.js`：`initWebdav` 的 `storage.get` / `openWebdavPanel`

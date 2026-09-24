@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         18dm小说下载器
 // @namespace    http://tampermonkey.net/
-// @version      4.7.1
+// @version      4.7.3
 // @description  一键下载18dm/18mh小说为TXT · UI v2（Lobe 实色层 / Lucide 图标 / PowerGlitch 成功态）· 章节缓存 · 增量更新 · 收藏更新提醒 · 书目状态（连载/完结+更新时间）· 果核阅读器直连（书库/悬浮条/列表卡）· Dock 动作菜单 · 标签抽屉 · 悬浮条拖拽磁吸 · 收藏/黑名单 WebDAV 同步
 // @author       you
 // @match        *://18dm.net/*
@@ -1448,12 +1448,39 @@
       defaultFile: '18mh-favorites.json',
       encMark: '18mh-aes-gcm-v1',
       menu: false,
+      // GM + localStorage 双写：iOS Userscripts 上同步 GM_setValue 不可靠，
+      // 只走 GM 会导致账号密码刷新即丢（脚本其余存储同样是双写）。
       storage: {
+        // 读取时遍历所有后端，优先返回「确实含账号信息」的那份，
+        // 避免 GM 里的旧空值/空对象盖掉 localStorage 里的好值。
         get: function (k, d) {
-          try { return typeof GM_getValue === 'function' ? GM_getValue(k, d) : d; } catch (e) { return d; }
+          var cands = [];
+          try { if (typeof GM_getValue === 'function') cands.push(GM_getValue(k, null)); } catch (e) {}
+          try { cands.push(localStorage.getItem(k)); } catch (e) {}
+          var fallback = null;
+          for (var i = 0; i < cands.length; i++) {
+            var c = cands[i];
+            if (c == null || c === '') continue;
+            var obj = c;
+            if (typeof c === 'string') {
+              try { obj = JSON.parse(c); } catch (e) { continue; }
+            }
+            if (!obj || typeof obj !== 'object') continue;
+            if (fallback == null) fallback = obj;
+            if (obj.url || obj.user || obj.pass) return obj;
+          }
+          return fallback || d;
         },
         set: function (k, v) {
-          try { if (typeof GM_setValue === 'function') GM_setValue(k, v); } catch (e) {}
+          var raw = JSON.stringify(v);
+          try { if (typeof GM_setValue === 'function') GM_setValue(k, raw); } catch (e) {}
+          try {
+            if (typeof GM !== 'undefined' && GM && typeof GM.setValue === 'function') {
+              var p = GM.setValue(k, raw);
+              if (p && typeof p.catch === 'function') p.catch(function () {});
+            }
+          } catch (e) {}
+          try { localStorage.setItem(k, raw); } catch (e) {}
         }
       },
       request: webdevRequest,
@@ -1470,6 +1497,10 @@
     }
     api.openPanel({
       description: '同步收藏和黑名单，不含下载记录。',
+      // 双保险：面板保存时同步落一份到 18mh 自己的存储（与收藏同路径）
+      onSave: function (s) {
+        try { saveJSON('dm_dl_webdav_v1', s); } catch (e) {}
+      },
       onDownloaded: function (pack) {
         var n = mergeFavsFromPack(pack);
         renderSheetBody();
