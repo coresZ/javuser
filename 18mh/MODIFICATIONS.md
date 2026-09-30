@@ -182,3 +182,41 @@
 
 **涉及文件与位置**：
 - `18mh/18mh.user.js`：`initWebdav` 的 `storage.get` / `openWebdavPanel`
+
+## 2026-09-24 · 修复：点「阅读」当前页也被跳走
+
+**功能**：修 bug。
+
+**修改内容**：
+- `@version` 4.7.3 → 4.7.4。
+- `openReader`：`window.open(url, '_blank', 'noopener')` 按规范恒返回 `null`，原逻辑把「返回 null」误判为被拦截 → 又执行了 `location.href = url`，导致新窗口与当前页同时打开。
+- 改为不带 `noopener` 打开、成功后手动 `w.opener = null`；仅当确实返回 null（真被拦截）才回退当前页。
+
+**涉及文件与位置**：
+- `18mh/18mh.user.js`：`openReader`
+
+## 2026-09-24 · 修复：下载进度整条闪烁 + Dock 转圈卡顿
+
+**功能**：修两个下载期 UI bug。
+
+**修改内容**：
+- `@version` 4.7.4 → 4.7.5。
+- `showToast`：glitch 撕裂动画改为仅在「由隐藏→显示」时播一次（`wasShown` 判断），进度类高频更新不重放。
+- 下载进度不再每 tick `innerHTML` 重建：
+  - 新增 `ensureMainProgress` / `setMainProgress`，`.dm-dl-prog`、`.dm-dl-spinner`、`.dm-dl-pct` 只建一次，之后只改 `style.width` 与文本 → spinner 动画不再重启、进度条过渡生效。
+  - 新增 `setDotProgress`，折叠球百分比原地更新（原逻辑第二个 tick 起因查不到 svg 而冻结，顺带修掉）。
+  - loading 开始时先 `setMainProgress(btn, 0)`，立即出现 spinner。
+
+**涉及文件与位置**：
+- `18mh/18mh.user.js`：`showToast` / `ensureMainProgress` / `setMainProgress` / `setDotProgress` / `startDownload`
+
+## 2026-09-24 · 修复：提示标题残留 glitch 重影
+
+**功能**：修 bug。
+
+**修改内容**：
+- `@version` 4.7.5 → 4.7.6。
+- glitch 的 `::before/::after` 是青/红错位副本；动画（.42s）结束后未摘类会留下重影。现在 `showToast` 播完后用 `glitchTimer` 在 460ms 移除 `.dm-dl-glitch`。
+
+**涉及文件与位置**：
+- `18mh/18mh.user.js`：`showToast`

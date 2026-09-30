@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         18dm小说下载器
 // @namespace    http://tampermonkey.net/
-// @version      4.7.3
+// @version      4.7.6
 // @description  一键下载18dm/18mh小说为TXT · UI v2（Lobe 实色层 / Lucide 图标 / PowerGlitch 成功态）· 章节缓存 · 增量更新 · 收藏更新提醒 · 书目状态（连载/完结+更新时间）· 果核阅读器直连（书库/悬浮条/列表卡）· Dock 动作菜单 · 标签抽屉 · 悬浮条拖拽磁吸 · 收藏/黑名单 WebDAV 同步
 // @author       you
 // @match        *://18dm.net/*
@@ -518,6 +518,7 @@
 
   // Toast
   var toastTimer = null;
+  var glitchTimer = null;
   function showToast(opts) {
     ensureDOM();
     var box = document.getElementById('dm-dl-toast-box');
@@ -526,12 +527,20 @@
     var actsEl = document.getElementById('dm-dl-toast-acts');
     if (!box) return;
 
+    // glitch 只在「由隐藏→显示」时播一次；进度类高频更新不重放动画，
+    // 否则整条提示会随进度 tick 持续抖动闪烁。
+    var wasShown = box.classList.contains('show');
     clearTimeout(toastTimer);
     titleEl.textContent = opts.title || '提示';
-    titleEl.setAttribute('data-text', titleEl.textContent);
-    titleEl.classList.remove('dm-dl-glitch');
-    void titleEl.offsetWidth;
-    titleEl.classList.add('dm-dl-glitch');
+    if (!wasShown || opts.glitch === true) {
+      titleEl.setAttribute('data-text', titleEl.textContent);
+      titleEl.classList.remove('dm-dl-glitch');
+      void titleEl.offsetWidth;
+      titleEl.classList.add('dm-dl-glitch');
+      // glitch 的 ::before/::after 是错位副本，动画结束必须摘掉类，否则留下重影
+      clearTimeout(glitchTimer);
+      glitchTimer = setTimeout(function () { titleEl.classList.remove('dm-dl-glitch'); }, 460);
+    }
     msgEl.textContent = opts.msg || '';
     actsEl.innerHTML = '';
 
@@ -1040,12 +1049,15 @@
   }
   function openReader(url) {
     if (!url) return;
-    try {
-      var w = window.open(url, '_blank', 'noopener');
-      if (!w) location.href = url;
-    } catch (e) {
-      location.href = url;
+    // 注意：window.open 带 'noopener' 时按规范恒返回 null，
+    // 不能据此判定被拦截，否则会连带把当前页也跳走。改为手动断开 opener。
+    var w = null;
+    try { w = window.open(url, '_blank'); } catch (e) { w = null; }
+    if (w) {
+      try { w.opener = null; } catch (e) {}
+      return;
     }
+    location.href = url;
   }
 
   // ========== Dock 动作菜单（⋯） ==========
@@ -2365,6 +2377,41 @@
     });
   }
 
+  // 下载进度：DOM 只建一次，之后只改值，避免 spinner 动画重启 / 进度条跳变
+  function ensureMainProgress(btn) {
+    if (!btn) return null;
+    var prog = btn.querySelector('.dm-dl-prog');
+    var pctEl = btn.querySelector('.dm-dl-pct');
+    if (!prog || !pctEl || !btn.querySelector('.dm-dl-spinner')) {
+      btn.innerHTML =
+        '<span class="dm-dl-prog" style="width:0%"></span>' +
+        '<span class="dm-dl-btn-txt"><span class="dm-dl-spinner"></span><span class="dm-dl-pct">0%</span></span>';
+      prog = btn.querySelector('.dm-dl-prog');
+      pctEl = btn.querySelector('.dm-dl-pct');
+    }
+    return { prog: prog, pctEl: pctEl };
+  }
+
+  function setMainProgress(btn, pct) {
+    var ui = ensureMainProgress(btn);
+    if (!ui) return;
+    ui.prog.style.width = pct + '%';
+    ui.pctEl.textContent = pct + '%';
+  }
+
+  function setDotProgress(pct) {
+    var parent = document.getElementById('dm-dl-dot-btn');
+    if (!parent) return;
+    var label = parent.querySelector('.dm-dl-dot-pct');
+    if (!label) {
+      parent.innerHTML =
+        '<span class="dm-dl-dot-pct" style="font-size:12px;font-weight:700">0%</span>' +
+        '<span id="dm-dl-dot-badge"></span>';
+      label = parent.querySelector('.dm-dl-dot-pct');
+    }
+    if (label) label.textContent = pct + '%';
+  }
+
   function startDownload(btn) {
     var chapters = parseChapters();
     if (!chapters.length) {
@@ -2384,6 +2431,7 @@
         btn.disabled = true;
         btn.classList.add('loading');
         btn.classList.remove('done', 'update');
+        setMainProgress(btn, 0);
       }
 
       var title = getNovelTitle();
@@ -2410,17 +2458,8 @@
           var sec = ((Date.now() - t0) / 1000).toFixed(1);
           var speed = done > 0 ? (done / ((Date.now() - t0) / 1000)).toFixed(1) : '0';
 
-          if (btn) {
-            btn.innerHTML =
-              '<span class="dm-dl-prog" style="width:' + pct + '%"></span>' +
-              '<span class="dm-dl-btn-txt"><span class="dm-dl-spinner"></span> ' + pct + '%</span>';
-          }
-          var dotIcon = document.querySelector('#dm-dl-dot-btn svg');
-          if (dotIcon) {
-            // 折叠状态下显示进度数字更实用
-            var parent = document.getElementById('dm-dl-dot-btn');
-            if (parent) parent.innerHTML = '<span style="font-size:12px;font-weight:700">' + pct + '%</span><span id="dm-dl-dot-badge" class="' + (document.getElementById('dm-dl-dot-badge') && document.getElementById('dm-dl-dot-badge').classList.contains('show') ? 'show' : '') + '"></span>';
-          }
+          setMainProgress(btn, pct);
+          setDotProgress(pct);
 
           showToast({
             title: '正在下载 (' + pct + '%)',
