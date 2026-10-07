@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           Enhanced_Media_Helper
-// @version        3.7.3
+// @version        3.7.4
 // @description    Code Manager Panel with javgg site support (Preact + htm) + magnet screenshot preview + Linear UI
 // @author         cores
 // @match          https://javgg.net/tag/to-be-release/*
@@ -2185,8 +2185,8 @@
             .emh-code-manager-toggle:active { transform: scale(0.96); }
             .emh-code-manager-toggle:focus-visible { outline: 2px solid var(--emh-on-primary); outline-offset: 2px; }
             .emh-javgg-controls {
-                margin-top: 6px; display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center;
-                margin-left: 10px; vertical-align: middle; padding: 4px 6px;
+                margin: 6px 0 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+                clear: both; width: 100%; box-sizing: border-box; padding: 4px 6px;
                 background-color: var(--emh-btn-bg); border-radius: var(--emh-radius-sm);
             }
             .emh-javgg-controls a {

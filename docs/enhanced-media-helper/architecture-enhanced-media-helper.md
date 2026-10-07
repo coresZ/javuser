@@ -1,6 +1,6 @@
 # Enhanced_Media_Helper.js · 架构梳理
 
-> 架构文档（2026-08 新建）。对应脚本 `Enhanced_Media_Helper.js` **v3.7.2（约 4640 行）**。
+> 架构文档（2026-08 新建）。对应脚本 `Enhanced_Media_Helper.js` **v3.7.4（约 4746 行）**。
 > 所有行号锚点以该版本为准；脚本升级会平移行号。
 
 ## 概述
@@ -21,7 +21,7 @@
 
 - `@match` 7 条 javgg.net 路径 + `@include` 30+ 域名（与 scanner 高度重合）；`@require` preact@10.19.6 / hooks / htm（jsdelivr，DEPS 另有 cdnjs fallback）+ **Greasy Fork 库 `webdev-component.js`（ID 593538，v3.7.2+：`https://update.greasyfork.org/scripts/593538/1916639/webdev-component.js`；真源 = 仓库 `webdev-library.user.js`）**
 - 授权：`GM_setValue/GM_getValue/GM_addValueChangeListener/GM_xmlhttpRequest/GM_openInTab/unsafeWindow`；`@connect 1cili.com / whatslink.info / avwikidb.com / *`（`*` 为 v3.7.0 起，WebDAV 任意主机需放行一次）
-- 版本策略：3.6.1 起每个桥/灯箱能力变更递增（3.6.4 加 `previewAvwiki` 回调，3.6.5 灯箱 z-index 置顶，3.7.0 加 WebDAV 备份 + 导出/导入桥，3.7.1 WebDAV 内核抽为共享组件 + jav 凭据导入 + 设置卡 UX 改版，3.7.2 组件上 Greasy Fork 库 + @require + 幂等 UMD/解析回退）
+- 版本策略：3.6.1 起每个桥/灯箱能力变更递增（3.6.4 加 `previewAvwiki` 回调，3.6.5 灯箱 z-index 置顶，3.7.0 加 WebDAV 备份 + 导出/导入桥，3.7.1 WebDAV 内核抽为共享组件 + jav 凭据导入 + 设置卡 UX 改版，3.7.2 组件上 Greasy Fork 库 + @require + 幂等 UMD/解析回退，3.7.4 修复 javgg 列表 `emh-javgg-controls` 溢出被相邻卡片覆盖不可点击）
 
 ## 分区地图
 
