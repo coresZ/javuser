@@ -22,3 +22,14 @@
 **涉及文件与位置**：
 - `docs/enhanced-media-helper/architecture-enhanced-media-helper.md`（迁移 + 引用修复 :187-189 区域）
 - `docs/enhanced-media-helper/standalone-mode.md`（纯迁移）
+
+## 2026-10-07 · 修复 javgg featured 列表链接不可点击（同步架构文档版本）
+
+**功能**：修 bug 后同步文档版本锚点。
+
+**修改内容**：
+- `architecture-enhanced-media-helper.md` 头部版本锚点 `v3.7.2（约 4640 行）` → `v3.7.4（约 4746 行）`；版本策略补记 3.7.4 修复 `emh-javgg-controls` 溢出被相邻卡片覆盖不可点击。
+
+**涉及文件与位置**：
+- `docs/enhanced-media-helper/architecture-enhanced-media-helper.md`（:3 版本锚点、:24 版本策略）
+- 对应脚本改动见根目录 `Enhanced_Media_Helper.js`（该目录无 MODIFICATIONS.md）
