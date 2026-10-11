@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           Enhanced_Media_Helper
-// @version        3.7.4
+// @version        3.7.5
 // @description    Code Manager Panel with javgg site support (Preact + htm) + magnet screenshot preview + Linear UI
 // @author         cores
 // @match          https://javgg.net/tag/to-be-release/*
@@ -195,6 +195,13 @@
         getWatched: function() {
             if (!this.initialized) this.init();
             return this.data.items.filter(item => item.status === 'watched');
+        },
+
+        // 未标记：状态既非关注也非已看。口径与 StatusTag/STATUS_TEXT 的兜底显示一致，
+        // 因此旧数据或外部导入中缺失 status 的条目也会归入未标记，不会出现"哪一栏都查不到"。
+        getUnmarked: function() {
+            if (!this.initialized) this.init();
+            return this.data.items.filter(item => item.status !== 'favorite' && item.status !== 'watched');
         },
 
         getTrash: function() {
@@ -2454,6 +2461,7 @@
             library: html`<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>`,
             favorite: html`<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`,
             watched: html`<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`,
+            unmarked: html`<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>`,
             trash: html`<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
             time: html`<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
             has: html`<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`,
@@ -3735,10 +3743,12 @@
             const all = CODE_LIBRARY.getAll();
             const favList = CODE_LIBRARY.getFavorites();
             const watchedList = CODE_LIBRARY.getWatched();
+            const unmarkedList = CODE_LIBRARY.getUnmarked();
             const trashList = CODE_LIBRARY.getTrash();
 
             let items = st.currentFilter === 'favorite' ? favList
                 : st.currentFilter === 'watched' ? watchedList
+                : st.currentFilter === 'unmarked' ? unmarkedList
                 : st.currentFilter === 'trash' ? trashList : all;
 
             if (st.timeFilter) {
@@ -3787,6 +3797,7 @@
             let emptyIcon = 'library';
             if (st.currentFilter === 'favorite') { emptyMsg = '暂无关注番号'; emptyIcon = 'favorite'; }
             else if (st.currentFilter === 'watched') { emptyMsg = '暂无已看记录'; emptyIcon = 'watched'; }
+            else if (st.currentFilter === 'unmarked') { emptyMsg = '暂无未标记番号'; emptyIcon = 'unmarked'; }
             else if (st.currentFilter === 'trash') { emptyMsg = '回收站为空'; emptyIcon = 'trash'; }
             if (st.timeFilter) { emptyMsg = st.timeFilter === 'today' ? '今天暂无新增' : '该时间段内无记录'; emptyIcon = 'time'; }
             if (st.magnetFilter === 'has') { emptyMsg = '没有有磁力的番号'; emptyIcon = 'has'; }
@@ -3809,6 +3820,7 @@
                 { f: 'all', label: '全部', n: all.length },
                 { f: 'favorite', label: '关注', n: favList.length },
                 { f: 'watched', label: '已看', n: watchedList.length },
+                { f: 'unmarked', label: '未标记', n: unmarkedList.length },
                 { f: 'trash', label: '回收站', n: trashList.length }
             ];
 
@@ -4070,11 +4082,12 @@
                     .emh-header-count { font-size: 12px; font-weight: 500; color: var(--emh-text-muted); margin-left: 6px; }
                     .emh-tab-count { font-size: 11px; background: var(--emh-btn-bg); color: var(--emh-text-secondary); padding: 1px 7px; border-radius: 999px; margin-left: 5px; font-weight: 600; }
                     .emh-panel-tabs button.active .emh-tab-count { background: var(--emh-primary-soft); color: var(--emh-primary); }
-                    .emh-panel-tabs { display: flex; background: var(--emh-surface); border-bottom: 1px solid var(--emh-border); padding: 0 12px; flex-shrink: 0; }
+                    .emh-panel-tabs { display: flex; background: var(--emh-surface); border-bottom: 1px solid var(--emh-border); padding: 0 12px; flex-shrink: 0; overflow-x: auto; scrollbar-width: none; }
+                    .emh-panel-tabs::-webkit-scrollbar { display: none; }
                     .emh-panel-tabs button {
                         background: none; border: none; padding: 11px 14px; font-size: 13px; font-weight: 500;
                         cursor: pointer; color: var(--emh-text-secondary); position: relative; transition: color 0.15s, background-color 0.15s;
-                        letter-spacing: 0.1px; border-radius: 8px;
+                        letter-spacing: 0.1px; border-radius: 8px; flex-shrink: 0; white-space: nowrap;
                     }
                     .emh-panel-tabs button:hover { color: var(--emh-primary); background: var(--emh-primary-softer); }
                     .emh-panel-tabs button:focus-visible { outline: 2px solid var(--emh-primary); outline-offset: -2px; }
@@ -4622,7 +4635,7 @@
         const api = {
             __ready: true,
             name: 'Enhanced_Media_Helper',
-            version: '3.7.3',
+            version: '3.7.5',
             // 添加番号；已存在时返回 { ok:false, exists:true }（不触发内部重复提示）
             addCode: (code, title, remarks) => {
                 const c = String(code == null ? '' : code).trim().toUpperCase();

@@ -33,3 +33,25 @@
 **涉及文件与位置**：
 - `docs/enhanced-media-helper/architecture-enhanced-media-helper.md`（:3 版本锚点、:24 版本策略）
 - 对应脚本改动见根目录 `Enhanced_Media_Helper.js`（该目录无 MODIFICATIONS.md）
+
+## 2026-10-07 · 面板新增「未标记」筛选 tab（EMH v3.7.5）
+
+**功能**：番号库面板的筛选 tab 由「全部 / 关注 / 已看 / 回收站」扩展为含「未标记」，补齐此前只能逐个看状态标签、无法集中处理未标记番号的缺口。
+
+**修改内容**：
+- 脚本 `Enhanced_Media_Helper.js`（根目录，无独立 MODIFICATIONS.md）：
+  - 数据层新增 `CODE_LIBRARY.getUnmarked()`，口径为 `status !== 'favorite' && status !== 'watched'`——与 `STATUS_TEXT`/`StatusTag` 对缺失或未知 `status` 兜底显示「未标记」一致，避免旧数据/外部导入条目在关注、已看、未标记三栏都查不到；
+  - 面板接线：`unmarkedList` 数据源 + `currentFilter === 'unmarked'` 列表路由、空态文案「暂无未标记番号」、`EMPTY_ICONS.unmarked` 标签形图标、`tabDefs` 新增 `{f:'unmarked', label:'未标记'}`（置于「已看」与「回收站」之间）；
+  - 样式：`.emh-panel-tabs` 增 `overflow-x: auto` + 隐藏滚动条，tab 按钮增 `flex-shrink: 0; white-space: nowrap`，防止第五个 tab 在窄面板/移动端挤压换行；
+  - 版本：`@version` 3.7.4 → 3.7.5，`EMH_API.version` '3.7.3' → '3.7.5'（对外 API 表面未变：`exportData(filter)` 白名单本就含 `unmarked`）。
+- 本目录文档：`architecture-enhanced-media-helper.md` 头部版本锚点 → v3.7.5（约 4759 行）、概述第 1 条补「未标记」、版本策略补记 3.7.5。
+
+**验证**：
+- `node --check Enhanced_Media_Helper.js` 通过；
+- 临时接线/谓词校验脚本（提取脚本内真实 `getUnmarked` 实现后执行）：未标记集合 = `unmarked` + 缺失 status + 未知 status 条目，且与关注/已看构成全部条目的无重叠划分；tab 顺序、空态、图标、导出白名单、版本两处同步均通过（脚本用后即删）。
+
+**涉及文件与位置**：
+- `Enhanced_Media_Helper.js`（`:3` 版本、`:200-205` `getUnmarked`、`:2464` `EMPTY_ICONS.unmarked`、`:3746` 列表路由、`:3800` 空态、`:3823` tabDefs、`:4085-4091` tab 栏样式、`:4638` `EMH_API.version`）
+- `docs/enhanced-media-helper/architecture-enhanced-media-helper.md`（`:3`、`:10`、`:24`）
+
+**已知遗留**：`README.md`（:14）与 `PROJECT-STATUS.md`（:11）仍标 EMH v3.7.3，且该文档行号锚点在 3.7.4 起已整体滞后（IIFE 实际 67–4759，文档记 61–4613），需专门一轮锚点校准，本次未扩大改动范围。

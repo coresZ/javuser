@@ -1,13 +1,13 @@
 # Enhanced_Media_Helper.js · 架构梳理
 
-> 架构文档（2026-08 新建）。对应脚本 `Enhanced_Media_Helper.js` **v3.7.4（约 4746 行）**。
+> 架构文档（2026-08 新建）。对应脚本 `Enhanced_Media_Helper.js` **v3.7.5（约 4759 行）**。
 > 所有行号锚点以该版本为准；脚本升级会平移行号。
 
 ## 概述
 
 油猴用户脚本，功能覆盖：
 
-1. **番号库管理器**（Code Manager Panel）：Preact + htm 构建的右侧抽屉面板——收藏/已看/回收站管理、搜索过滤、批量操作、导入导出、键盘导航、主题；
+1. **番号库管理器**（Code Manager Panel）：Preact + htm 构建的右侧抽屉面板——全部/关注/已看/未标记/回收站管理、搜索过滤、批量操作、导入导出、键盘导航、主题；
 2. **磁力截图预览**：whatslink API 抓取磁力预览（灯箱 + 宫格缩略图 + 懒加载），带并发去重与竞态处理；
 3. **AVWikiDB 宫格截图**：按番号抓取作品页截图，独立缓存；
 4. **javgg.net 站点增强**：列表页注入状态圆点与跳转链接；
@@ -21,7 +21,7 @@
 
 - `@match` 7 条 javgg.net 路径 + `@include` 30+ 域名（与 scanner 高度重合）；`@require` preact@10.19.6 / hooks / htm（jsdelivr，DEPS 另有 cdnjs fallback）+ **Greasy Fork 库 `webdev-component.js`（ID 593538，v3.7.2+：`https://update.greasyfork.org/scripts/593538/1916639/webdev-component.js`；真源 = 仓库 `webdev-library.user.js`）**
 - 授权：`GM_setValue/GM_getValue/GM_addValueChangeListener/GM_xmlhttpRequest/GM_openInTab/unsafeWindow`；`@connect 1cili.com / whatslink.info / avwikidb.com / *`（`*` 为 v3.7.0 起，WebDAV 任意主机需放行一次）
-- 版本策略：3.6.1 起每个桥/灯箱能力变更递增（3.6.4 加 `previewAvwiki` 回调，3.6.5 灯箱 z-index 置顶，3.7.0 加 WebDAV 备份 + 导出/导入桥，3.7.1 WebDAV 内核抽为共享组件 + jav 凭据导入 + 设置卡 UX 改版，3.7.2 组件上 Greasy Fork 库 + @require + 幂等 UMD/解析回退，3.7.4 修复 javgg 列表 `emh-javgg-controls` 溢出被相邻卡片覆盖不可点击）
+- 版本策略：3.6.1 起每个桥/灯箱能力变更递增（3.6.4 加 `previewAvwiki` 回调，3.6.5 灯箱 z-index 置顶，3.7.0 加 WebDAV 备份 + 导出/导入桥，3.7.1 WebDAV 内核抽为共享组件 + jav 凭据导入 + 设置卡 UX 改版，3.7.2 组件上 Greasy Fork 库 + @require + 幂等 UMD/解析回退，3.7.4 修复 javgg 列表 `emh-javgg-controls` 溢出被相邻卡片覆盖不可点击，3.7.5 面板新增「未标记」筛选 tab（`CODE_LIBRARY.getUnmarked` + tab 栏横向滚动保护））
 
 ## 分区地图
 
