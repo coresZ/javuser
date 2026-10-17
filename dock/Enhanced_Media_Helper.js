@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           Enhanced_Media_Helper
-// @version        3.7.17
+// @version        3.7.18
 // @description    Code Manager Panel with javgg site support (Preact + htm) + magnet screenshot preview + Linear UI
 // @author         cores
 // @match          https://javgg.net/tag/to-be-release/*
@@ -2447,7 +2447,13 @@
             },
             listeners: new Set(),
             set(patch) {
+                const prev = this.state.visible;
                 this.state = { ...this.state, ...patch, revision: this.state.revision + 1 };
+                if (prev !== this.state.visible) {
+                    const pageRoot = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+                    const dockApi = pageRoot.PageDock || (typeof PageDock !== 'undefined' ? PageDock : null);
+                    if (dockApi && typeof dockApi.setActive === 'function') dockApi.setActive('emh-library', this.state.visible);
+                }
                 this.notify();
             },
             get() { return this.state; },
@@ -4674,7 +4680,7 @@
         const api = {
             __ready: true,
             name: 'Enhanced_Media_Helper',
-            version: '3.7.17',
+            version: '3.7.18',
             // 添加番号；已存在时返回 { ok:false, exists:true }（不触发内部重复提示）
             addCode: (code, title, remarks) => {
                 const c = String(code == null ? '' : code).trim().toUpperCase();

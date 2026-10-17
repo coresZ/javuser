@@ -22,7 +22,15 @@
 | 左边名字 | 打开或关闭该脚本自己的面板。脚本停用时变灰，点了没有反应 |
 | 右边开关 | 启用或停用整个脚本。打开它不会顺便打开面板 |
 
-脚本从自己的面板关闭时，要调用 `setActive(id, false)`，否则左边仍显示为打开。脚本停用时，要调用 `setChecked(id, false)`。
+脚本自己的关闭按钮、Esc、点击空白或其它内部路径关掉面板时，都必须调用 `setActive(id, false)`。只在 `onActive(false)` 里同步是不够的，因为那些路径不会经过悬浮坞。脚本停用时调用 `setChecked(id, false)`。
+
+已接入的同步点：
+
+| 脚本 | 面板状态变化时 |
+|---|---|
+| 字幕 v5.27 | 所有关闭路径集中到 `closePanel()` |
+| 番号库 v3.7.18 | `PanelStore.set` 发现 `visible` 变化时同步 |
+| 扫描 v1.5.95 | 打开、关闭按钮、Esc 和原浮钮切换时同步 |
 
 ## 接入步骤
 
@@ -30,7 +38,8 @@
 2. 检测到 `PageDock` 后调用 `mount()`，再 `register()`。没有悬浮坞时保留原来的按钮。
 3. 有悬浮坞时隐藏自己的悬浮按钮。面板仍由本脚本创建。
 4. 停用状态由接入脚本自己保存。刷新页面后，用保存的状态作为 `enabled` 传给 `register()`。
-5. 接入完成后，把脚本移入 `dock/`，并在根 `README.md` 的 dock 表登记。
+5. 面板每一次打开或关闭都调用 `setActive(id, true/false)`。不要只在悬浮坞回调里更新。
+6. 接入完成后，把脚本移入 `dock/`，并在根 `README.md` 的 dock 表登记。
 
 页面上已有实例时，后加载的副本不会再创建一个图标。各脚本的 `register()` 都进同一个菜单。
 
@@ -63,6 +72,17 @@ dock.register({
 ```
 
 `id` 和 `onClick` 必填。同一 `id` 再次登记会覆盖旧项。`register()` 返回取消登记的函数。
+
+脚本内部关闭面板时：
+
+```javascript
+function closePanel() {
+    panel.hidden = true;
+    dock.setActive('my-tool', false);
+}
+```
+
+打开面板的内部路径同样调用 `dock.setActive('my-tool', true)`。
 
 ## API
 

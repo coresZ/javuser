@@ -54,6 +54,66 @@
 - `dock/docs/enhanced-media-helper/architecture-enhanced-media-helper.md`
 - `dock/docs/integration/integration-emh-scanner.md`
 
+## 2026-10-17 · 全屏时字幕跟着全屏元素
+
+**功能**：视频全屏时字幕不再被挡在全屏层外面。
+
+**修改内容**：
+- `jable & miss.user.js` 5.23 → 5.24。
+- 字幕层平时挂在 `body`，使用 fixed。进入全屏后挂进 `fullscreenElement`，改用 absolute。
+- 监听 `fullscreenchange` 和 `webkitfullscreenchange`。退出全屏后回到 `body`。
+
+**涉及文件与位置**：
+- `dock/jable & miss.user.js`：`Renderer.subtitleHost`、`forceDomSubtitleLayer`
+
+## 2026-10-17 · 全屏字幕按视频画面定位
+
+**功能**：全屏后字幕不再相对整个播放器盒子定位。
+
+**修改内容**：
+- `jable & miss.user.js` 5.24 → 5.25。
+- 用当前视频的可视矩形计算字幕的 `left`、`top` 和宽度。横向、垂直滑杆仍按画面百分比生效。
+- 字幕底部对齐计算出的位置，避免多行字幕向上挤出画面。
+
+**涉及文件与位置**：
+- `dock/jable & miss.user.js`：`Renderer.placeSubtitle`
+
+## 2026-10-17 · 从悬浮坞打开后面板不再漂移
+
+**功能**：点 CC 打开面板后，再点面板内容不会把面板拽走。
+
+**修改内容**：
+- `jable & miss.user.js` 5.25 → 5.26。
+- 打开时改走 `placeDock`，同步内部坐标和元素位置。后续点击或窗口缩放都按这个位置重排。
+
+**涉及文件与位置**：
+- `dock/jable & miss.user.js`：`openPanel`
+
+## 2026-10-17 · 脚本自己关闭面板时同步悬浮坞
+
+**功能**：面板由脚本自己的关闭按钮、点击空白或 Esc 关闭时，悬浮坞左边状态跟着关掉。
+
+**修改内容**：
+- 字幕脚本 5.26 → 5.27。所有关闭字幕面板的路径都走 `closePanel()`，并调用 `setActive`。
+- EMH 3.7.17 → 3.7.18。`PanelStore.set` 发现 `visible` 变化时同步 `emh-library`。
+- JCS 1.5.94 → 1.5.95。关闭按钮、Esc、原浮钮切换和主动打开都同步 `jcs-scanner`。
+
+**涉及文件与位置**：
+- `dock/jable & miss.user.js`：`closePanel`
+- `dock/Enhanced_Media_Helper.js`：`PanelStore.set`
+- `dock/jav-code-scanner.user.js`：面板打开与关闭路径
+
+## 2026-10-17 · 调整 PageDock 接入说明
+
+**功能**：写明脚本自己关闭面板时也要同步左边状态。
+
+**修改内容**：
+- `dock/docs/page-dock.md` 增加强制同步规则、三个已接入脚本的同步点和内部关闭示例。
+- 接入步骤增加「每次打开或关闭都调用 `setActive`」。
+
+**涉及文件与位置**：
+- `dock/docs/page-dock.md`
+
 ## 2026-10-17 · 增加 PageDock 接入说明
 
 **功能**：给后续脚本一份可执行的悬浮坞接入说明。

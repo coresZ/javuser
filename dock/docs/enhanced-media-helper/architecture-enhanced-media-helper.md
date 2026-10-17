@@ -1,6 +1,6 @@
 # Enhanced_Media_Helper.js · 架构梳理
 
-> 架构文档（2026-08 新建）。对应脚本 `dock/Enhanced_Media_Helper.js` **v3.7.17**。
+> 架构文档（2026-08 新建）。对应脚本 `dock/Enhanced_Media_Helper.js` **v3.7.18**。
 > 下文行号是历史锚点，不再作为当前版本的定位依据。排障以函数名为准。
 
 ## 概述

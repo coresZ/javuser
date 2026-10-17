@@ -30,9 +30,9 @@
 | 文件 | 版本 | 定位 |
 |---|---|---|
 | `page-dock.user.js` | v1.3.8 | 悬浮坞库。Greasy Fork [600709](https://update.greasyfork.org/scripts/600709/PageDock.js)，引用不钉版本号 |
-| `jav-code-scanner.user.js` | v1.5.94 | 番号扫描。有悬浮坞时隐藏原浮钮 |
-| `Enhanced_Media_Helper.js` | v3.7.17 | 番号库。有悬浮坞时隐藏右下角入口 |
-| `jable & miss.user.js` | v5.23 | Missav / Jable 字幕。有悬浮坞时隐藏 CC |
+| `jav-code-scanner.user.js` | v1.5.95 | 番号扫描。脚本自己关闭面板时同步悬浮坞左边状态 |
+| `Enhanced_Media_Helper.js` | v3.7.18 | 番号库。脚本自己关闭面板时同步悬浮坞左边状态 |
+| `jable & miss.user.js` | v5.27 | Missav / Jable 字幕。脚本自己关闭面板时同步悬浮坞左边状态 |
 
 悬浮坞每一行有两个控件：左边打开或关闭对应面板，右边启用或停用整个脚本。脚本关闭时左边变灰，点了没有反应。打开右边开关不会顺便打开面板。
 

@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name Missav & Jable自动中文字幕 (交互优化版-ios修复)
+// @name Missav & Jable自动中文字幕 (悬浮)
 // @namespace http://tampermonkey.net/
-// @version 5.23
+// @version 5.27
 // @description 搜索按钮提级至首页，修复 Missav 番号识别，新增下载功能，让字幕列表常驻显示当前选中项，并优化首页设置布局，支持首页滑杆在 0%-100% 范围调整字幕垂直位置与横向位置，控制台与 CC 可拖动并记住位置，界面改为紧凑控制台，修复返回后重新搜索丢失当前选中标记的问题，并将 CC 悬浮图标恢复为低存在感透明样式，修复 Jable 评论区“求中文字幕”导致误判已有内置字幕的问题。
-// @author ron
+// @author cores
 // @match *://missav*.com/*
 // @match *://missav.ws/*
 // @match *://missav.ai/*
@@ -243,7 +243,7 @@
         }
         .msv-toast.show { opacity: 1; }
         .msv-subtitle-overlay {
-            position: fixed !important; transform: translateX(-50%) !important;
+            position: absolute !important; transform: translateX(-50%) !important;
             width: min(92vw, 1100px) !important; text-align: center !important; pointer-events: none !important;
             color: #fff !important; font-weight: 600 !important;
             text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 0 6px #000 !important;
@@ -659,25 +659,44 @@
                 video.playsInline = true;
             });
         },
+        subtitleHost: () => {
+            const fullscreen = document.fullscreenElement || document.webkitFullscreenElement;
+            if (fullscreen && fullscreen.nodeType === 1) return fullscreen;
+            return document.body;
+        },
+        placeSubtitle: (host) => {
+            const video = Renderer.activeVideo;
+            const hostRect = host.getBoundingClientRect();
+            const videoRect = video && video.getBoundingClientRect ? video.getBoundingClientRect() : hostRect;
+            const width = Math.max(1, videoRect.width || hostRect.width);
+            const height = Math.max(1, videoRect.height || hostRect.height);
+            const left = videoRect.left - hostRect.left + width * STATE.x / 100;
+            const top = videoRect.top - hostRect.top + height * (100 - STATE.bottom) / 100;
+            subLayer.style.setProperty('left', left + 'px', 'important');
+            subLayer.style.setProperty('top', top + 'px', 'important');
+            subLayer.style.setProperty('bottom', 'auto', 'important');
+            subLayer.style.setProperty('width', Math.max(160, width * 0.92) + 'px', 'important');
+            subLayer.style.setProperty('max-width', Math.max(160, width * 0.92) + 'px', 'important');
+            subLayer.style.setProperty('transform', 'translate(-50%, -100%)', 'important');
+        },
         forceDomSubtitleLayer: () => {
             Renderer.removeNativeTrack();
             Renderer.forceInlineVideo();
+            const host = Renderer.subtitleHost();
+            if (host !== document.body && getComputedStyle(host).position === 'static') host.style.position = 'relative';
             if (!subLayer) {
                 subLayer = document.querySelector('.msv-subtitle-overlay') || document.createElement('div');
                 subLayer.className = 'msv-subtitle-overlay';
-                if (subLayer.parentNode !== document.body) document.body.appendChild(subLayer);
             }
+            if (subLayer.parentNode !== host) host.appendChild(subLayer);
             subLayer.removeAttribute('hidden');
             subLayer.removeAttribute('data-jp-hidden-by-miss-player');
             subLayer.removeAttribute('data-jp-old-display');
             subLayer.removeAttribute('data-jp-old-visibility');
             subLayer.removeAttribute('data-jp-old-pointer-events');
             subLayer.className = 'msv-subtitle-overlay';
-            subLayer.style.setProperty('position', 'fixed', 'important');
-            subLayer.style.setProperty('left', STATE.x + '%', 'important');
-            subLayer.style.setProperty('transform', 'translate3d(-50%, 0, 0)', 'important');
-            subLayer.style.setProperty('width', '95%', 'important');
-            subLayer.style.setProperty('max-width', '95vw', 'important');
+            subLayer.style.setProperty('position', host === document.body ? 'fixed' : 'absolute', 'important');
+            Renderer.placeSubtitle(host);
             subLayer.style.setProperty('text-align', 'center', 'important');
             subLayer.style.setProperty('pointer-events', 'none', 'important');
             subLayer.style.setProperty('visibility', STATE.visible ? 'visible' : 'hidden', 'important');
@@ -685,7 +704,6 @@
             subLayer.style.setProperty('display', STATE.visible ? 'block' : 'none', 'important');
             subLayer.style.setProperty('z-index', '2147483647', 'important');
             subLayer.style.setProperty('font-size', STATE.fontSize + 'px', 'important');
-            subLayer.style.setProperty('bottom', STATE.bottom + '%', 'important');
             subLayer.style.setProperty('line-height', '1.4', 'important');
             subLayer.style.setProperty('white-space', 'pre-line', 'important');
             subLayer.style.setProperty('color', '#fff', 'important');
@@ -693,9 +711,6 @@
             subLayer.style.setProperty('text-shadow', '0 1px 2px rgba(0,0,0,0.95), 0 0 8px #000, 0 0 16px #000', 'important');
             subLayer.style.setProperty('contain', 'layout style paint', 'important');
             subLayer.style.setProperty('will-change', 'contents, transform', 'important');
-            if (subLayer.parentNode !== document.body || document.body.lastElementChild !== subLayer) {
-                document.body.appendChild(subLayer);
-            }
         },
         getCurrentTime: () => {
             Renderer.activeVideo = Renderer.getActiveVideo();
@@ -745,6 +760,8 @@
             document.addEventListener('visibilitychange', () => Renderer.renderNow('visibility'), { passive: true });
             window.addEventListener('resize', () => Renderer.renderNow('resize'), { passive: true });
             window.addEventListener('orientationchange', () => Renderer.renderNow('orientation'), { passive: true });
+            document.addEventListener('fullscreenchange', () => Renderer.renderNow('fullscreen'));
+            document.addEventListener('webkitfullscreenchange', () => Renderer.renderNow('fullscreen'));
         }
     };
     const UIBuilder = {
@@ -919,24 +936,25 @@
                 const pageDock = document.getElementById('page-dock');
                 if (pageDock && fab.classList.contains('is-docked')) {
                     const rect = pageDock.getBoundingClientRect();
-                    dock.style.left = rect.left + 'px';
-                    dock.style.top = rect.top + 'px';
-                    dock.style.right = 'auto';
-                    dock.style.bottom = 'auto';
+                    placeDock(rect.left, rect.top, false);
                 }
                 if (!STATE.enabled) return;
                 panel.classList.add('show');
                 const dockApi = pageRoot.PageDock || (typeof PageDock !== 'undefined' ? PageDock : null);
                 if (dockApi && typeof dockApi.setActive === 'function') dockApi.setActive('msv-subtitle', true);
             };
+            const syncDockPanel = (active) => {
+                const dockApi = pageRoot.PageDock || (typeof PageDock !== 'undefined' ? PageDock : null);
+                if (dockApi && typeof dockApi.setActive === 'function') dockApi.setActive('msv-subtitle', active);
+            };
+            const closePanel = () => {
+                panel.classList.remove('show');
+                syncDockPanel(false);
+            };
             const setPanelActive = (active) => {
                 if (!STATE.enabled) return;
                 if (active) openPanel();
-                else {
-                    panel.classList.remove('show');
-                    const dockApi = pageRoot.PageDock || (typeof PageDock !== 'undefined' ? PageDock : null);
-                    if (dockApi && typeof dockApi.setActive === 'function') dockApi.setActive('msv-subtitle', false);
-                }
+                else closePanel();
             };
             const joinPageDock = () => {
                 const dockApi = pageRoot.PageDock || (typeof PageDock !== 'undefined' ? PageDock : null);
@@ -969,7 +987,9 @@
                     return;
                 }
                 dock.classList.remove('is-mini');
-                panel.classList.toggle('show');
+                const open = !panel.classList.contains('show');
+                panel.classList.toggle('show', open);
+                syncDockPanel(open);
                 e.stopPropagation();
             };
 
@@ -982,7 +1002,7 @@
             };
             const hideBtn = document.getElementById('msv-hide-fab');
             if (hideBtn) hideBtn.onclick = () => {
-                panel.classList.remove('show');
+                closePanel();
                 dock.classList.add('is-mini');
             };
             const backBtn = document.getElementById('msv-back');
@@ -1037,13 +1057,13 @@
                         UI.toast(msg, 3000);
                         if (fab) fab.classList.add('ok');
                         Renderer.init();
-                        panel.classList.remove('show');
+                        closePanel();
                     });
                 };
                 inp.click();
             };
             document.addEventListener('click', (e) => {
-                if (panel && !dock.contains(e.target)) panel.classList.remove('show');
+                if (panel && !dock.contains(e.target)) closePanel();
             });
             if (STATE.enabled && CONFIG.autoSearch && STATE.code) setTimeout(() => {
                 STATE.hasBuiltInSub = checkBuiltInSub();

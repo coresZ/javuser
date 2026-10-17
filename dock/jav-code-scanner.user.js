@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         通用番号扫描 & 多源搜索
 // @namespace    http://tampermonkey.net/
-// @version      1.5.94
+// @version      1.5.95
 // @description  扫描页面番号，多源搜索与页内预览（iframe/GM 自渲染、拒绝自动降级）、字幕/原名下载、页面高亮自定义、番号库协作（Enhanced_Media_Helper）、扩展宿主（第三方油猴库接入，含选源 picker 按钮组 pickButtons）、全站配置备份（WebDAV 可加密）、window.JavCodeKit 开放 API
 // @author       You
 // @include      *://*jav*/*
@@ -60,8 +60,8 @@
     if (_pageWin.JavCodeKit && _pageWin.JavCodeKit.__ready) return;
 
     const NS = 'jcs';
-    const STYLE_VER = '1.5.94';
-    const SCRIPT_VER = '1.5.94';
+    const STYLE_VER = '1.5.95';
+    const SCRIPT_VER = '1.5.95';
     const IS_CBOX = /(^|\.)cbox\.ws$/i.test(location.hostname || '');
     const CBOX_MSG_SOURCE = 'jcs-cbox';
     const ENC_MARK = 'jcs-aes-gcm-v1';
@@ -2208,6 +2208,10 @@
         const panel = document.getElementById(NS + '-panel');
         if (!panel) return;
         panel.classList.add('show');
+        if (typeof pageDockApi === 'function') {
+            const dockApi = pageDockApi();
+            if (dockApi && typeof dockApi.setActive === 'function') dockApi.setActive('jcs-scanner', true);
+        }
         if (isMobile()) {
             panel.style.left = '';
             panel.style.top = '';
@@ -2310,6 +2314,10 @@
                 if (panel && panel.classList.contains('show')) {
                     e.preventDefault();
                     panel.classList.remove('show');
+                    if (typeof pageDockApi === 'function') {
+                        const dockApi = pageDockApi();
+                        if (dockApi && typeof dockApi.setActive === 'function') dockApi.setActive('jcs-scanner', false);
+                    }
                 }
                 return;
             }
@@ -7438,6 +7446,10 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
          setupFabDrag(fab, () => {
              const open = !panel.classList.contains('show');
              panel.classList.toggle('show', open);
+             if (typeof pageDockApi === 'function') {
+                 const dockApi = pageDockApi();
+                 if (dockApi && typeof dockApi.setActive === 'function') dockApi.setActive('jcs-scanner', open);
+             }
              if (open) {
                  if (isMobile()) {
                      panel.style.left = '';
@@ -7454,7 +7466,13 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
          });
         restoreFabPos(fab);
 
-        panel.querySelector('#' + NS + '-hide').onclick = () => panel.classList.remove('show');
+        panel.querySelector('#' + NS + '-hide').onclick = () => {
+            panel.classList.remove('show');
+            if (typeof pageDockApi === 'function') {
+                const dockApi = pageDockApi();
+                if (dockApi && typeof dockApi.setActive === 'function') dockApi.setActive('jcs-scanner', false);
+            }
+        };
         panel.querySelector('#' + NS + '-rescan').onclick = () => refreshScan(true);
         panel.querySelector('#' + NS + '-ext-mode-btn').onclick = () => togglePreferExternal();
         panel.querySelector('#' + NS + '-theme-btn').onclick = () => toggleTheme();

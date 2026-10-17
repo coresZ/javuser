@@ -5,7 +5,7 @@
 
 ## 1. 这是什么
 
-单文件油猴脚本：`dock/jav-code-scanner.user.js`（严格模式 IIFE，当前 **v1.5.94**）。
+单文件油猴脚本：`dock/jav-code-scanner.user.js`（严格模式 IIFE，当前 **v1.5.95**）。
 
 功能全景：页面番号扫描高亮 → 点击即搜 → 多源切换与页内预览（iframe / GM 自渲染、
 拒绝自动降级）→ 操作条（字幕 / 复制 / 番号库 / 剧照 / 扩展按钮）→ 配置面板六个 tab
@@ -182,7 +182,7 @@ JavCodeKit.extensions.register(MANIFEST)     // 手动注册（调试 manifest �
 
 | 路径 | 说明 |
 |---|---|
-| `dock/jav-code-scanner.user.js` | 唯一产品文件（当前 v1.5.94） |
+| `dock/jav-code-scanner.user.js` | 唯一产品文件（当前 v1.5.95） |
 | `dock/docs/jav-code-scanner/jcs-extension-contract.md` | 扩展契约 v1.1（对外发布物，宿主 ≥ v1.5.81） |
 | `dock/docs/jav-code-scanner/MODIFICATIONS.md` | 修改协议与记录（改前读、改后回填） |
 | `dock/docs/integration/integration-emh-scanner.md` | 与 EMH 的双脚本协作协议 |
