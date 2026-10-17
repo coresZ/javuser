@@ -15,6 +15,7 @@
 | `webdev-library.user.js` | v1.3.2 | `WebdevComponent`：WebDAV 云端备份共享组件库（AES-256-GCM，自 EMH 抽出，Greasy Fork 库 [593538](https://greasyfork.org/scripts/593538)）；iOS crypto 兼容 + 移动端响应式面板；真源即本文件，经 `tools/sync-webdev.js` 嵌入 EMH 兜底 |
 | `whostv.user.js` | v3.4 | whos.tv 收藏/加专题扩展：列表页卡片注入 + JCS `pickButtons` 二级按钮组 |
 | `U3C3 & 1cili Magnet Buttons.js` | v0.8 | u3c3 / 1cili 等站磁力复制按钮 + whatslink.info 截图预览 |
+| `jable & miss.user.js` | v5.8 | Missav / Jable 字幕：CC 无描边、尺寸固定，面板从旁边弹出；可拖动，垂直与横向位置滑杆 |
 
 ### 子目录
 
