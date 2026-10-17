@@ -7,7 +7,8 @@
 - 本目录只放 **jav-code-scanner（JCS）单项目文档**：架构说明、对外契约、设计规范。
 - 跨两脚本协作的协议文档放 `docs/integration/`；EMH 侧文档放 `docs/enhanced-media-helper/`。
 - 文档内引用其它目录文档一律用**相对路径**（如 `../integration/integration-emh-scanner.md`）。
-- 文档头部必须标注对应的脚本版本号（如 v1.5.72+），脚本改动推进时同步更新版本锚点。
+- 文档头部必须标注对应的脚本版本号（如 v1.5.91），脚本改动推进时同步更新版本锚点。
+- 改 `jav-code-scanner.user.js` 时，同一轮必须更新本目录里描述该行为的文档（通常是 `README.md`；契约语义变化时还包括 `jcs-extension-contract.md`），并回填本文件。不得只改代码。仓库级约束见根目录 `AGENTS.md`。
 - 编码统一 UTF-8 **无 BOM**；中文正文，代码示例保留原格式。
 - 契约类文档（如 jcs-extension-contract.md）是对外发布物：改动契约语义时必须同步核对宿主实现章节（§11）与 JCS 源码一致性。
 
@@ -116,3 +117,88 @@
 - `docs/jav-code-scanner/architecture-jav-code-scanner.md`（:175、:269 两行删除）
 
 **状态**：grep 全域无 `trellis` 存活引用（仅剩本文件与 `.opencode/skills/MODIFICATIONS.md` 的历史/卸载记录字样）
+
+## 2026-10-17 · 停自动拉黑 + 新标签直接开窗（v1.5.89）
+
+**功能**：missav / 123av 在「新标签」下点高亮不再只弹出番号提示；预览失败不再自动写入搜索源黑名单。
+
+**修改内容**：
+- `markProviderHostBlacklisted` 改为空操作，只返回域名。iframe 失败、CSP、HEAD 探测、GM 抓取失败、Cloudflare / 登录页仍走当次外链提示，但不再 `saveProviderBlacklist`。内置黑名单、已有用户名单、设置页手动添加/删除不变。
+- `openSearch`：新标签模式且当前源不是强制 iframe 时，普通点击调用 `openExternalProvider`（同一次点击 `window.open` 当前源）。`opts.pick`（Shift+点击）才 `openProviderPicker`。大窗已开、`forceFull`、本页预览路径不变。
+- 页内高亮 `bindCodeMarkClick`、自建链 `bindCodeLinkEl`、侧栏 chip 的 Shift 传 `pick: true`。选源按钮改为捕获阶段监听，避免站点在冒泡前截走 click。
+- 文案：设置黑名单说明、用户黑名单副行、chip / 高亮 title、侧栏脚注、常规 tab 打开方式提示。
+
+**涉及文件与位置**：
+- `jav-code-scanner.user.js`（版本 1.5.88 → 1.5.89；`markProviderHostBlacklisted`；`openSearch`；`bindCodeMarkClick` / `bindCodeLinkEl` / `bindChipCopy`；`openProviderPicker` 源按钮绑定；黑名单与打开方式文案）
+- `README.md`（版本表 v1.5.89）
+- `docs/jav-code-scanner/README.md`（§2.2 点击行为、§2.8 黑名单排查）
+
+## 2026-10-17 · 新标签改走 GM_openInTab（v1.5.90）
+
+**功能**：v1.5.89 在 missav / 123av 仍只出番号提示。页面侧 `window.open` 会被站点更早的 click 处理或 COOP 吃掉。
+
+**修改内容**：
+- 增加 `@grant GM_openInTab`。`openUrlInNewTab` 优先走油猴开标签，失败再回退 `unsafeWindow.open`。
+- `installEarlyCodeOpen` 在 boot 时挂 document 捕获监听，命中高亮后同步开标签，并 `stopImmediatePropagation`，避免站点先截走这次点击。
+- 高亮自身的 shift 提前 return 去掉，Shift+点击仍传 `pick` 给选源面板。
+
+**涉及文件与位置**：
+- `jav-code-scanner.user.js`（版本 1.5.89 → 1.5.90；`@grant GM_openInTab`；`openUrlInNewTab`；`installEarlyCodeOpen`；`bindCodeMarkClick`）
+- `README.md`（版本表 v1.5.90）
+
+## 2026-10-17 · 新标签恢复先选源再打开（v1.5.91）
+
+**功能**：撤回 v1.5.89/v1.5.90 的「一点高亮直接新开当前源」。新标签模式恢复原来的两步：点高亮出选源面板，点源名再打开网页。
+
+**修改内容**：
+- `openSearch` 在新标签模式重新只调用 `openProviderPicker`，不再直接 `openExternalProvider`。
+- 删除 `installEarlyCodeOpen` 及其 boot 调用。高亮 / 自建链 / 侧栏 chip 的 Shift 直开分支和对应文案恢复。
+- 保留 v1.5.89 的「失败不自动写黑名单」，以及 v1.5.90 的 `GM_openInTab`：选源按钮仍用它开标签，避免 missav / 123av 吃掉 `window.open`。
+
+**涉及文件与位置**：
+- `jav-code-scanner.user.js`（版本 1.5.90 → 1.5.91；`openSearch`；删除 `installEarlyCodeOpen`；点击文案）
+- `README.md`（版本表 v1.5.91）
+- `docs/jav-code-scanner/README.md`（§2.2）
+
+## 2026-10-17 · v1.5.92 已撤回，停留在 v1.5.91
+
+**功能**：用户手动把脚本退回 1.5.91。v1.5.92 的面板单击打开、`GM_openInTab(url, false)` 不保留。
+
+**修改内容**：
+- 脚本保持 1.5.91：面板「内」仍是单击复制、双击本页搜索；新标签仍是先选源再打开，`GM_openInTab` 继续传 `{ active: true, insert: true, setParent: true }`。
+- 版本表改回 v1.5.91，避免文档超前于脚本。
+
+**涉及文件与位置**：
+- `jav-code-scanner.user.js`（维持 `@version` / `STYLE_VER` / `SCRIPT_VER` = 1.5.91）
+- `README.md`（版本表 v1.5.91）
+
+## 2026-10-17 · 文档对齐 v1.5.91，删除过时架构文档
+
+**功能**：`docs/jav-code-scanner` 与当前脚本 v1.5.91 对齐，去掉无法再维护的行号架构文档。
+
+**修改内容**：
+- 删除 `architecture-jav-code-scanner.md`（锚点停在 v1.5.71 / 9983 行，未收录扩展宿主、选源面板、打开方式与黑名单变更）。
+- `README.md` 版本锚点改为 v1.5.91；补侧栏「内」模式单击复制、双击搜索；备份示例版本、打开方式与黑名单锚点、文档地图同步。契约仍以 `jcs-extension-contract.md`（v1.1）为准，不改契约正文。
+- 外部引用改指向 `docs/jav-code-scanner/README.md`：仓库 README、PROJECT-STATUS、EMH 架构、集成指南。
+
+**涉及文件与位置**：
+- `docs/jav-code-scanner/architecture-jav-code-scanner.md`（删除）
+- `docs/jav-code-scanner/README.md`（§1 / §2.2 / §3.4 / §3.5 / §4 / §5）
+- `README.md`、`PROJECT-STATUS.md`（文档地图）
+- `docs/integration/integration-emh-scanner.md`、`docs/integration/MODIFICATIONS.md`
+- `docs/enhanced-media-helper/architecture-enhanced-media-helper.md`
+
+## 2026-10-17 · 仓库增加「改代码必须更新文档」约束
+
+**功能**：把「每一次修改代码都要更新文档」写成仓库级约束，避免再出现代码已改、文档仍描述旧行为。
+
+**修改内容**：
+- 新建根目录 `AGENTS.md`：禁止自动提交、递增版本号、改代码必须同步更新对应用户向 / 开发向文档并回填 `MODIFICATIONS.md`。
+- 根 `README.md`、`PROJECT-STATUS.md`、本目录 README 改码流程与本文件约束同步指向该规则。
+
+**涉及文件与位置**：
+- `AGENTS.md`（新建）
+- `README.md`（开发工作流）
+- `PROJECT-STATUS.md`（开发工作流速查）
+- `docs/jav-code-scanner/README.md`（§3.1、§5）
+- `docs/jav-code-scanner/MODIFICATIONS.md`（项目约束）

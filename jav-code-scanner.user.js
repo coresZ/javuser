@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         通用番号扫描 & 多源搜索
 // @namespace    http://tampermonkey.net/
-// @version      1.5.88
+// @version      1.5.91
 // @description  扫描页面番号，多源搜索与页内预览（iframe/GM 自渲染、拒绝自动降级）、字幕/原名下载、页面高亮自定义、番号库协作（Enhanced_Media_Helper）、扩展宿主（第三方油猴库接入，含选源 picker 按钮组 pickButtons）、全站配置备份（WebDAV 可加密）、window.JavCodeKit 开放 API
 // @author       You
 // @include      *://*jav*/*
@@ -45,6 +45,7 @@
 // @grant        GM_deleteValue
 // @grant        GM_listValues
 // @grant        unsafeWindow
+// @grant        GM_openInTab
 // @connect      api-shoulei-ssl.xunlei.com
 // @connect      subtitle.v.geilijiasu.com
 // @connect      *
@@ -58,8 +59,8 @@
     if (_pageWin.JavCodeKit && _pageWin.JavCodeKit.__ready) return;
 
     const NS = 'jcs';
-    const STYLE_VER = '1.5.88';
-    const SCRIPT_VER = '1.5.88';
+    const STYLE_VER = '1.5.91';
+    const SCRIPT_VER = '1.5.91';
     const IS_CBOX = /(^|\.)cbox\.ws$/i.test(location.hostname || '');
     const CBOX_MSG_SOURCE = 'jcs-cbox';
     const ENC_MARK = 'jcs-aes-gcm-v1';
@@ -1455,15 +1456,12 @@
             .some((pattern) => hostMatchesPattern(host, pattern));
     }
 
+    /**
+     * 预览失败不再写入用户黑名单（v1.5.89）。
+     * 保留函数名，避免改动各失败路径；已有名单与手动添加仍由 isProviderHostBlacklisted 生效。
+     */
     function markProviderHostBlacklisted(providerOrUrl) {
-        const host = providerHostname(providerOrUrl);
-        if (!host || isBuiltinProviderBlacklistHost(host)) return host;
-        const list = loadProviderBlacklist();
-        if (list.indexOf(host) >= 0) return host;
-        list.push(host);
-        saveProviderBlacklist(list);
-        try { renderProviderBlacklist(); } catch (e) { /* UI may not be mounted yet */ }
-        return host;
+        return providerHostname(providerOrUrl);
     }
 
     function normalizeProviderBlacklistInput(value) {
@@ -8204,7 +8202,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 <div class="jcs-card-hd">
                   <div>
                     <strong>搜索源域名黑名单</strong>
-                    <p>命中后强制新窗口打开，不会使用 iframe 或 GM 请求。内置域名不可删除；请求失败的搜索源会自动加入用户黑名单。</p>
+                    <p>命中后强制新窗口打开，不会使用 iframe 或 GM 请求。内置域名不可删除。预览失败不再自动加入；已有条目可在此删除，也可手动添加。</p>
                   </div>
                 </div>
                 <div class="jcs-blacklist-form">
@@ -8515,6 +8513,29 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         return normalized;
     }
 
+    /**
+     * 新标签打开。优先 GM_openInTab：
+     * missav 等站会在 document 捕获阶段抢先处理 click；123av 的 COOP 会让 window.open 返回 null。
+     * 两者都会让页面侧 window.open 看起来像「只弹出了番号」。
+     */
+    function openUrlInNewTab(url) {
+        const target = String(url || '');
+        if (!target) return false;
+        try {
+            if (typeof GM_openInTab === 'function') {
+                GM_openInTab(target, { active: true, insert: true, setParent: true });
+                return true;
+            }
+        } catch (e) { /* 回退页面 window.open */ }
+        try {
+            const opener = (_pageWin && typeof _pageWin.open === 'function') ? _pageWin.open : window.open;
+            const w = opener.call(_pageWin || window, target, '_blank', 'noopener,noreferrer');
+            return !!w;
+        } catch (e2) {
+            return false;
+        }
+    }
+
     function openExternalProvider(code, providerId) {
         const c = rememberCode(code, { silent: true });
         if (!c) return;
@@ -8522,8 +8543,8 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         state.provider = id;
         saveProviderId(id);
         const url = buildProviderUrl(c, id);
-        window.open(url, '_blank', 'noopener,noreferrer');
-        showToast((getProvider(id).name || id) + ' · ' + c);
+        const opened = openUrlInNewTab(url);
+        showToast(opened ? ((getProvider(id).name || id) + ' · ' + c) : '浏览器拦截了新标签，请允许弹窗后重试');
         // 延迟刷新列表，避免打断点击反馈
         setTimeout(() => {
             try { renderPanelList(); } catch (e) { /* ignore */ }
@@ -8838,14 +8859,18 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             bindPickRowOverflow(list);
             const bindSrc = (root) => {
                 root.querySelectorAll('.jcs-pick-btn[data-id]').forEach((btn) => {
-                    btn.onclick = (e) => {
+                    if (btn.dataset.jcsSrcBound === '1') return;
+                    btn.dataset.jcsSrcBound = '1';
+                    // 捕获阶段：避免站点（如 Alpine）在冒泡前截走 click，导致只停在番号提示
+                    btn.addEventListener('click', (e) => {
                         e.preventDefault();
                         e.stopPropagation();
+                        if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
                         closePickGroupPop();
                         btn.style.transform = 'scale(.94)';
                         openExternalProvider(c, btn.getAttribute('data-id') || '');
                         closeProviderPicker();
-                    };
+                    }, true);
                 });
             };
             bindSrc(list);
@@ -9042,7 +9067,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             logFrameDiagnostic('iframe load error; browser did not expose a specific cause', {
                 eventType: e && e.type || 'error',
                 sameOrigin: isSameOriginUrl(expectedUrl),
-                action: 'provider-blacklist-and-external'
+                action: 'external-fallback'
             });
             markProviderHostBlacklisted(expectedProvider || expectedUrl);
             showFrameFallback(expectedUrl, '本页预览加载失败。可能是本站或搜索站不允许嵌套显示，请用新标签打开。');
@@ -9085,7 +9110,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 if (deniedText) {
                     logFrameDiagnostic('target page reported iframe embedding rejection', {
                         signal: deniedText[0],
-                        action: 'provider-blacklist-and-external'
+                        action: 'external-fallback'
                     });
                     markProviderHostBlacklisted(expectedProvider || expectedUrl);
                     showFrameFallback(expectedUrl, '搜索站拒绝在页面里显示，请用新标签打开。');
@@ -9122,7 +9147,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 directive: dir,
                 blockedURI: frameLogPolicyUri(blocked),
                 documentURI: frameLogPolicyUri(e && e.documentURI),
-                action: 'provider-blacklist-and-external'
+                action: 'external-fallback'
             });
             markHostFrameBlocked();
             markProviderHostBlacklisted(getProvider(state.provider) || state.frameUrl);
@@ -9166,7 +9191,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         return false;
     }
 
-    /** 对 iframe 型源做一次 HEAD 探测：目标响应头拒绝嵌入 → 加入源黑名单并改用新标签 */
+    /** 对 iframe 型源做一次 HEAD 探测：目标响应头拒绝嵌入 → 当次改用新标签，不写入黑名单 */
     function probeFrameBlock(url, code, provider) {
         if (!provider || isProviderHostBlacklisted(provider) || provider.mode !== 'auto' || frameProbePending[provider.id]) return;
         // 同源：X-Frame-Options SAMEORIGIN 放行，iframe 必然可嵌入，无需探测
@@ -9191,7 +9216,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
                 probe: 'HEAD',
                 status: res && res.status,
                 policyHeaders: policyHeaders || '(header value unavailable)',
-                action: 'provider-blacklist-and-external'
+                action: 'external-fallback'
             });
             markProviderHostBlacklisted(provider);
             if (state.frameUrl === url && state.active === code) {
@@ -9201,7 +9226,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             logFrameDiagnostic('HEAD iframe policy probe failed', {
                 probe: 'HEAD',
                 error: String((e && e.message) || e || 'unknown'),
-                action: 'provider-blacklist-and-external'
+                action: 'external-fallback'
             });
             markProviderHostBlacklisted(provider);
             if (state.frameUrl === url && state.active === code) {
@@ -10803,7 +10828,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         ).join('');
         const user = loadProviderBlacklist().map((host) =>
             '<div class="jcs-blacklist-row" role="listitem">' +
-            '<div class="jcs-blacklist-main"><code>' + escapeHtml(host) + '</code><small>用户黑名单 · 失败自动加入</small></div>' +
+            '<div class="jcs-blacklist-main"><code>' + escapeHtml(host) + '</code><small>用户黑名单 · 手动添加</small></div>' +
             '<span class="jcs-row-ops"><button type="button" data-host="' + escapeHtml(host) + '" title="删除用户黑名单" class="is-danger">删除</button></span></div>'
         ).join('');
         box.innerHTML = (builtins + user) || '<div class="jcs-empty-src">暂无黑名单</div>';
@@ -11457,7 +11482,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             }
             return;
         }
-        // 禁嵌站且未开大窗：番号边上弹出小按钮，点源新窗口打开
+        // 新标签模式：先在番号边上弹出选源面板，点源名再新开标签
         const currentProvider = getProvider(state.provider || loadProviderId());
         const forceIframe = currentProvider && currentProvider.mode === 'iframe'
             && !isProviderHostBlacklisted(currentProvider);

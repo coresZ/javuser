@@ -32,6 +32,16 @@
 
 **涉及文件与位置**：
 - `docs/enhanced-media-helper/architecture-enhanced-media-helper.md`（:3 版本锚点、:24 版本策略）
+
+## 2026-10-17 · JCS 架构引用改到使用指南
+
+**功能**：JCS 行号架构文档已删除，本目录仅改交叉引用，不改 EMH 架构正文。
+
+**修改内容**：
+- `architecture-enhanced-media-helper.md` 参考节的 scanner 链接改为 `../jav-code-scanner/README.md`。
+
+**涉及文件与位置**：
+- `docs/enhanced-media-helper/architecture-enhanced-media-helper.md`（参考节）
 - 对应脚本改动见根目录 `Enhanced_Media_Helper.js`（该目录无 MODIFICATIONS.md）
 
 ## 2026-10-07 · 面板新增「未标记」筛选 tab（EMH v3.7.5）

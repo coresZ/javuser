@@ -32,7 +32,7 @@
 ## 3. 架构与协作要点（速览）
 
 - **单文件 IIFE 双脚本 + 跨脚本桥**：JCS ⇄ EMH 通过 `unsafeWindow.EMH_API`（主 world）通信；GM 存储按脚本隔离，外部必须走桥。
-- **JCS 扩展宿主**（v1.5.73+，对外契约）：第三方油猴库经 `JavCodeKit.extensions.register()` 注册 actions/styles/mounts；契约 v1 + 宿主实现章节见 `docs/jav-code-scanner/jcs-extension-contract.md`。
+- **JCS 扩展宿主**（v1.5.81+，契约 v1.1）：第三方油猴库经 `JavCodeKit.extensions.register()` 注册 actions / pickButtons / styles / mounts；契约见 `docs/jav-code-scanner/jcs-extension-contract.md`。
 - **z-index 约定**：JCS 宿主 `2147483000` < EMH 灯箱 `2147483647`；JCS 截图前先收起 picker。
 - **版本同步纪律**：`@version` / `STYLE_VER` / `SCRIPT_VER` 三处同步；模板/样式变更必须升版本（`data-ver` 重建机制）。
 - **备份格式**：bundle `{global, sites, data}`；`global` 含 providers/hl/codeActions/extensions/sub/theme 等；WebDAV + AES 加密复用同一链路。
@@ -42,8 +42,7 @@
 | 文档 | 路径 | 说明 |
 |---|---|---|
 | JCS 使用指南（源码向） | `docs/jav-code-scanner/README.md` | 安装/操作/扩展宿主开发/文件地图/已知事项 |
-| JCS 架构梳理 | `docs/jav-code-scanner/architecture-jav-code-scanner.md` | ⚠️ 见 §5 待办 |
-| JCS 扩展宿主契约 v1 | `docs/jav-code-scanner/jcs-extension-contract.md` | 对外发布物 |
+| JCS 扩展宿主契约 v1.1 | `docs/jav-code-scanner/jcs-extension-contract.md` | 对外发布物 |
 | EMH 架构梳理 | `docs/enhanced-media-helper/architecture-enhanced-media-helper.md` | ⚠️ 见 §5 待办 |
 | EMH standalone 模式 | `docs/enhanced-media-helper/standalone-mode.md` | 新标签页双栏 |
 | 跨脚本桥集成指南 | `docs/integration/integration-emh-scanner.md` | EMH_API 参考/时序/降级/扩展 5 步 |
@@ -51,10 +50,7 @@
 
 ## 5. 待办与已知事项
 
-- [ ] **架构文档版本锚点滞后**（README 已登记）：
-  - JCS 架构文档 v1.5.71/9983 行 → 实际 v1.5.76/~10.6k 行，**模块地图未收录扩展宿主**（`extensions` 宿主模块、JavCodeKit.extensions、扩展 tab）；
-  - EMH 架构文档 v3.7.2 → 实际 v3.7.3（AVWikiDB 三级重试未入图）；
-  - 集成指南锚点 v1.5.71/3.7.2 → 实际 v1.5.76/3.7.3（`previewAvwiki` 三级重试说明未同步）。
+- [ ] **EMH / 集成文档版本锚点滞后**：EMH 架构与集成指南仍写旧版本，`previewAvwiki` 三级重试说明未同步。JCS 行号架构文档已于 2026-10-17 删除，改以 `docs/jav-code-scanner/README.md` 为准。
 - [ ] 清理未提交删除（`docs/MODIFICATIONS.md`、`hgdj.user.js`）——确认后 `git rm`/commit。
 - [ ] JCS v1.5.76 之后的功能验证与回归（403 重试链路、扩展宿主样例）。
 
@@ -62,4 +58,4 @@
 
 - **提交/推送**：`ego commit "<msg>" --yes`（hooks+暂存+提交）→ `ego push`（Node spawn git，沙箱下需完整权限）
 - **语法校验**：`node --check <脚本>`
-- **写 docs 前**：读目标域 `MODIFICATIONS.md`，完成后回填
+- **改代码必须同步更新文档**（见根目录 `AGENTS.md`）：先读目标域 `MODIFICATIONS.md`，改完回填，并更新对应用户向 / 开发向说明。不得只改代码。

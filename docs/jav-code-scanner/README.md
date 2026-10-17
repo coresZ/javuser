@@ -5,7 +5,7 @@
 
 ## 1. 这是什么
 
-单文件油猴脚本：`jav-code-scanner.user.js`（严格模式 IIFE，v1.5.76 时约 10.6k 行）。
+单文件油猴脚本：`jav-code-scanner.user.js`（严格模式 IIFE，当前 **v1.5.91**）。
 
 功能全景：页面番号扫描高亮 → 点击即搜 → 多源切换与页内预览（iframe / GM 自渲染、
 拒绝自动降级）→ 操作条（字幕 / 复制 / 番号库 / 剧照 / 扩展按钮）→ 配置面板六个 tab
@@ -24,10 +24,11 @@
 ### 2.2 扫描与搜索
 
 1. 页面加载后自动扫描番号并高亮（可手动重扫：浮钮 → 重扫）。
-2. 点任意高亮番号 → 弹出选源小面板；选源后打开搜索大窗，左侧番号历史 / 右侧预览。
+2. 点页面高亮番号：本页预览模式打开搜索大窗；新标签模式先弹出选源面板，再点源名新开标签。
+   侧栏 `#jcs-panel` 在「内」模式不同：单击番号是复制，双击才在本页搜索。
 3. 大窗顶栏可换源（点源名）；`Esc` 关闭、`/` 或 `J` 聚焦搜索框重搜。
-4. 预览打不开时的行为链：**黑名单命中 → 只允许新窗口；iframe 被拒 → 自动降级 GM
-   自渲染或提示新标签打开**，且失败源自动进入黑名单（下次直接新窗口）。
+4. 预览打不开时的行为链：**已有黑名单命中 → 只允许新窗口；iframe 被拒 → 当次降级 GM
+   自渲染或提示新标签打开**。预览失败不再自动写入黑名单；内置域名与手动添加的条目仍生效。
 
 ### 2.3 操作条（当前番号操作）
 
@@ -96,7 +97,7 @@
 | 扩展功能生效但列表只显示主机名 | 脚本未按契约调 `register`（自执行库）；或形态 B 运行在页面 world 拿不到 GM_* |
 | 番号库按钮不出现 | 未安装 Enhanced_Media_Helper，或其版本 <3.6.1 |
 | 剧照提示版本低 | EMH 需 ≥3.6.4（`previewAvwiki`） |
-| 预览一直弹新窗口 | 源已被黑名单（页面拒绝嵌入多次）；到「搜索源 → 搜索源黑名单」删除该域名可重试 |
+| 预览一直弹新窗口 | 源已在黑名单（内置或以前自动加入的）；到「搜索源 → 域名黑名单」删除该域名可重试。v1.5.89 起失败不再自动加入 |
 | 本站全部预览都新窗口 | 该站被记为「本页禁止嵌入」；常规 tab 或 iframe 白名单里放行 |
 
 ## 3. 开发者操作说明（改码 / 扩展开发）
@@ -111,7 +112,8 @@
       node --check jav-code-scanner.user.js
       git diff --check
       here-string 静态断言：@'...js 代码...'@ | node -（参照 MODIFICATIONS.md 各条目写法）
-  → 回填 docs/jav-code-scanner/MODIFICATIONS.md（功能 → 修改内容 → 文件与行号）
+  → 更新本 README 中受影响的行为说明（扩展契约有变再改 jcs-extension-contract.md）
+  → 回填 docs/jav-code-scanner/MODIFICATIONS.md（功能 → 修改内容 → 文件与位置）
 ```
 
 注意 CBox 隔离：`cbox.ws` 域走 `bootCboxLite()` 轻量路径（只有扫描/linkify/精简 API），
@@ -142,7 +144,7 @@ JavCodeKit.extensions.register(MANIFEST)     // 手动注册（调试 manifest �
 ```jsonc
 {
   "app": "jav-code-scanner", "scope": "all-sites",
-  "bundleVersion": 3, "scriptVersion": "1.5.76",
+  "bundleVersion": 3, "scriptVersion": "1.5.91",
   "global": {
     "providers": [...], "providerActive": "...", "providerBlacklist": [...],
     "theme": "...", "hl": {...}, "codeActions": {...},
@@ -170,14 +172,16 @@ JavCodeKit.extensions.register(MANIFEST)     // 手动注册（调试 manifest �
 | 按钮插槽 | `buildCodeActions`（`data-act="ext:{id}:{act}"` 路由 + `flashActDone`） |
 | 配置 UI | `renderExtensionsTab` / `bindExtensionsTab` / `setConfigTab` |
 | 握手 | `dispatchKitReady`（`jcs:kit-ready` 双 dispatch） |
+| 打开方式 | `openSearch`（新标签先 `openProviderPicker`）/ `openExternalProvider` / `openUrlInNewTab` |
+| 黑名单 | `markProviderHostBlacklisted`（v1.5.89 起空操作；内置与手动名单仍由 `isProviderHostBlacklisted` 生效） |
+| 侧栏番号 | `bindChipCopy`（「内」单击复制、双击 `openSearch`；「外」单击出选源） |
 
 ## 4. 文件与文档地图
 
 | 路径 | 说明 |
 |---|---|
-| `jav-code-scanner.user.js` | 唯一产品文件 |
-| `docs/jav-code-scanner/architecture-jav-code-scanner.md` | 架构总览（模块地图/存储/API 全表）——**版本锚点滞后 v1.5.71，更新待办** |
-| `docs/jav-code-scanner/jcs-extension-contract.md` | 扩展契约 v1（对外发布物） |
+| `jav-code-scanner.user.js` | 唯一产品文件（当前 v1.5.91） |
+| `docs/jav-code-scanner/jcs-extension-contract.md` | 扩展契约 v1.1（对外发布物，宿主 ≥ v1.5.81） |
 | `docs/jav-code-scanner/MODIFICATIONS.md` | 修改协议与记录（改前读、改后回填） |
 | `docs/integration/integration-emh-scanner.md` | 与 EMH 的双脚本协作协议 |
 | `tools/test-extension.js` | 全类型扩展样例（脚手架） |
@@ -186,8 +190,8 @@ JavCodeKit.extensions.register(MANIFEST)     // 手动注册（调试 manifest �
 
 ## 5. 已知事项
 
-- 架构文档版本锚点滞后（v1.5.71 / 9983 行；实际 v1.5.76 / ~10.6k 行），模块地图未收录扩展宿主。
+- 行号级架构文档已删除（停在 v1.5.71，与 v1.5.91 对不上）。排障用本文件 §3.5 的函数名，不要依赖旧行号。
 - 扩展会话级开关：关闭后刷新恢复启用；形态 B 注入无运行中撤销（浏览器限制）。
 - `l.userjs.min.js` 类自执行库可注入运行，但不调 `register` 就不受管控。
 - 内置 lib/shot 按钮走 `EMH_API` 直连桥，不经过扩展注册表（迁移见契约 §10 边界）。
-- 仓库根 `AGENTS.md`：禁止自动提交；代码更新先递增版本号。
+- 仓库根 `AGENTS.md`：禁止自动提交；代码更新先递增版本号；每一次改代码必须同步更新文档。

@@ -8,11 +8,11 @@
 // @match        *://*.18dm.net/*
 // @match        *://18mh.net/*
 // @match        *://*.18mh.net/*
-// @require      https://update.greasyfork.org/scripts/593538/1936318/webdev-component.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_notification
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @require https://update.greasyfork.org/scripts/593538/1936318/webdev-component.js
 // @connect      18dm.net
 // @connect      *.18dm.net
 // @connect      18mh.net

@@ -186,4 +186,4 @@ AVWikiDB 同模式（`fetchAndShow`），失败/成功都按 `isLatest()` 门控
 
 - standalone 模式详解见 `standalone-mode.md`
 - 与 jav-code-scanner 的桥协议见 `../integration/integration-emh-scanner.md`
-- scanner 架构见 `../jav-code-scanner/architecture-jav-code-scanner.md`
+- scanner 使用指南见 `../jav-code-scanner/README.md`

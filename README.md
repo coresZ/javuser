@@ -10,7 +10,7 @@
 
 | 文件 | 版本 | 定位 |
 |---|---|---|
-| `jav-code-scanner.user.js` | v1.5.88 | **主项目 JCS**：通用番号扫描、多源搜索与页内预览、操作条、六 tab 配置面板、全站配置 WebDAV 备份（可加密）、`window.JavCodeKit` 开放 API、**扩展宿主**（第三方油猴库经 `JavCodeKit.extensions.register()` 接入 actions/styles/mounts） |
+| `jav-code-scanner.user.js` | v1.5.91 | **主项目 JCS**：通用番号扫描、多源搜索与页内预览、操作条、六 tab 配置面板、全站配置 WebDAV 备份（可加密）、`window.JavCodeKit` 开放 API、**扩展宿主**（第三方油猴库经 `JavCodeKit.extensions.register()` 接入 actions/styles/mounts） |
 | `Enhanced_Media_Helper.js` | v3.7.3 | **EMH**：番号库管理面板（Preact + htm）+ 磁力/AVWikiDB 截图预览（三级自动重试）+ `EMH_API` 跨脚本桥 + WebDAV 备份 |
 | `webdev-library.user.js` | v1.3.2 | `WebdevComponent`：WebDAV 云端备份共享组件库（AES-256-GCM，自 EMH 抽出，Greasy Fork 库 [593538](https://greasyfork.org/scripts/593538)）；iOS crypto 兼容 + 移动端响应式面板；真源即本文件，经 `tools/sync-webdev.js` 嵌入 EMH 兜底 |
 | `whostv.user.js` | v3.4 | whos.tv 收藏/加专题扩展：列表页卡片注入 + JCS `pickButtons` 二级按钮组 |
@@ -38,8 +38,7 @@
 | 文档 | 说明 |
 |---|---|
 | `docs/jav-code-scanner/README.md` | JCS 源码使用指南（安装/操作/扩展开发/文件地图） |
-| `docs/jav-code-scanner/jcs-extension-contract.md` | JCS 扩展宿主契约 v1（对外发布物） |
-| `docs/jav-code-scanner/architecture-jav-code-scanner.md` | JCS 架构梳理 |
+| `docs/jav-code-scanner/jcs-extension-contract.md` | JCS 扩展宿主契约 v1.1（对外发布物） |
 | `docs/enhanced-media-helper/architecture-enhanced-media-helper.md` | EMH 架构梳理 |
 | `docs/enhanced-media-helper/standalone-mode.md` | EMH standalone 新标签页双栏模式 |
 | `docs/integration/integration-emh-scanner.md` | 跨脚本桥集成指南（EMH_API 参考/时序/降级） |
@@ -51,6 +50,7 @@
 - 语法校验：`node --check <脚本>`
 - 提交/推送：`ego commit "<msg>" --yes` → `ego push`（多身份工作流）
 - 版本号：代码改动须递增版本（纯文档/配置改动除外）
+- **改代码必须同步更新文档**（见根目录 `AGENTS.md`）：行为说明与代码一致，并回填受影响目录的 `MODIFICATIONS.md`。只改代码、留下过时文档，视为未完成。
 
 ---
 
