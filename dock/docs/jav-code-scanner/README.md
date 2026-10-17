@@ -5,25 +5,27 @@
 
 ## 1. 这是什么
 
-单文件油猴脚本：`jav-code-scanner.user.js`（严格模式 IIFE，当前 **v1.5.91**）。
+单文件油猴脚本：`dock/jav-code-scanner.user.js`（严格模式 IIFE，当前 **v1.5.94**）。
 
 功能全景：页面番号扫描高亮 → 点击即搜 → 多源切换与页内预览（iframe / GM 自渲染、
 拒绝自动降级）→ 操作条（字幕 / 复制 / 番号库 / 剧照 / 扩展按钮）→ 配置面板六个 tab
 （常规 / 高亮 / 操作 / 搜索源 / 扩展 / 备份）→ 全站配置 WebDAV 备份 →
 `window.JavCodeKit` 对外 API → 扩展宿主（第三方油猴库接入）。
+有 `PageDock` 时，原红色浮钮隐藏，入口收进悬浮坞的「扫描」。
 
 ## 2. 使用者操作说明（测试 / 日常使用照此执行）
 
 ### 2.1 安装
 
 1. Tampermonkey → 仪表盘 → 实用工具 → 导入文件，或「+ 新建脚本」全量粘贴
-   `jav-code-scanner.user.js` → 保存。
+   `dock/jav-code-scanner.user.js` → 保存。
 2. 打开任意匹配站点（域名含 `jav`/`av`/`fc2` 的站、missav、jable、dmm 等 30+ 站，
-   完整清单见脚本头 `@include`）。右下角出现 JCS 浮钮即安装成功。
+   完整清单见脚本头 `@include`）。同时安装 `dock/page-dock.user.js` 后，只在悬浮坞菜单里看到「扫描」；没有悬浮坞时，右下角出现原来的红色浮钮。
+3. 悬浮坞左边点「扫描」打开或关闭扫描面板。右边开关停用整个扫描脚本；停用后左边变灰，点了没有反应，扫描和高亮不再继续。打开右边开关只恢复脚本，不会顺便打开面板。
 
 ### 2.2 扫描与搜索
 
-1. 页面加载后自动扫描番号并高亮（可手动重扫：浮钮 → 重扫）。
+1. 脚本启用时，页面加载后自动扫描番号并高亮。手动重扫从扫描面板里的重扫按钮进入。
 2. 点页面高亮番号：本页预览模式打开搜索大窗；新标签模式先弹出选源面板，再点源名新开标签。
    侧栏 `#jcs-panel` 在「内」模式不同：单击番号是复制，双击才在本页搜索。
 3. 大窗顶栏可换源（点源名）；`Esc` 关闭、`/` 或 `J` 聚焦搜索框重搜。
@@ -106,14 +108,14 @@
 
 ```text
 读 MODIFICATIONS.md（协议+既有记录）
-  → 改 jav-code-scanner.user.js
+  → 改 dock/jav-code-scanner.user.js
   → 版本号三处同步：@version(:4) / STYLE_VER(:60) / SCRIPT_VER(:61)
   → 验证三件套：
-      node --check jav-code-scanner.user.js
+      node --check dock/jav-code-scanner.user.js
       git diff --check
       here-string 静态断言：@'...js 代码...'@ | node -（参照 MODIFICATIONS.md 各条目写法）
   → 更新本 README 中受影响的行为说明（扩展契约有变再改 jcs-extension-contract.md）
-  → 回填 docs/jav-code-scanner/MODIFICATIONS.md（功能 → 修改内容 → 文件与位置）
+  → 回填 dock/docs/jav-code-scanner/MODIFICATIONS.md（功能 → 修改内容 → 文件与位置）
 ```
 
 注意 CBox 隔离：`cbox.ws` 域走 `bootCboxLite()` 轻量路径（只有扫描/linkify/精简 API），
@@ -180,10 +182,10 @@ JavCodeKit.extensions.register(MANIFEST)     // 手动注册（调试 manifest �
 
 | 路径 | 说明 |
 |---|---|
-| `jav-code-scanner.user.js` | 唯一产品文件（当前 v1.5.91） |
-| `docs/jav-code-scanner/jcs-extension-contract.md` | 扩展契约 v1.1（对外发布物，宿主 ≥ v1.5.81） |
-| `docs/jav-code-scanner/MODIFICATIONS.md` | 修改协议与记录（改前读、改后回填） |
-| `docs/integration/integration-emh-scanner.md` | 与 EMH 的双脚本协作协议 |
+| `dock/jav-code-scanner.user.js` | 唯一产品文件（当前 v1.5.94） |
+| `dock/docs/jav-code-scanner/jcs-extension-contract.md` | 扩展契约 v1.1（对外发布物，宿主 ≥ v1.5.81） |
+| `dock/docs/jav-code-scanner/MODIFICATIONS.md` | 修改协议与记录（改前读、改后回填） |
+| `dock/docs/integration/integration-emh-scanner.md` | 与 EMH 的双脚本协作协议 |
 | `tools/test-extension.js` | 全类型扩展样例（脚手架） |
 | `tools/jable-live-preview.extension.js` | 真实脚本改造参考（mounts 型，含完整 cleanup） |
 | `.opencode/skills/jcs-build/` | 「写 JCS 扩展」skill |

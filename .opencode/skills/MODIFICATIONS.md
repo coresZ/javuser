@@ -6,7 +6,7 @@
 
 - 本目录是**项目级 skills**（opencode 平台加载，frontmatter `name` + `description`）；新增业务 skill 不得覆盖/修改其他 skill 目录。
 - skill 命名 kebab-case；SKILL.md 正文为可执行工作流（模板/清单/常见坑），不留占位符。
-- 引用项目内文档一律相对仓库根写明路径（如 `docs/jav-code-scanner/jcs-extension-contract.md`）。
+- 引用项目内文档一律相对仓库根写明路径（如 `dock/docs/jav-code-scanner/jcs-extension-contract.md`）。
 
 ## 2026-09-07 · jcs-build skill（新增，原名 jcs-extension-dev 后更名）
 
@@ -31,7 +31,7 @@
 
 **状态**：`node --check` + 契约断言（前缀/onCleanup 全量/握手）通过；未提交。
 
-**关联**：规范源 `docs/jav-code-scanner/jcs-extension-contract.md`（契约 v1）；宿主实现 JCS v1.5.73。
+**关联**：规范源 `dock/docs/jav-code-scanner/jcs-extension-contract.md`（契约 v1）；宿主实现 JCS v1.5.73。
 
 ## 2026-09-10 · Trellis 卸载（移除 trellis-* skills）
 

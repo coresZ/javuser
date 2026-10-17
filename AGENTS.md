@@ -16,10 +16,11 @@
 
 | 改动 | 必须更新 |
 |---|---|
-| `jav-code-scanner.user.js` 的用户可见行为 | `docs/jav-code-scanner/README.md`；扩展契约有变时再改 `docs/jav-code-scanner/jcs-extension-contract.md` |
-| `Enhanced_Media_Helper.js` / `webdev-library.user.js` | `docs/enhanced-media-helper/` 中描述该行为的文档 |
-| JCS ⇄ EMH 桥、`EMH_API`、`JavCodeKit` 跨脚本面 | `docs/integration/integration-emh-scanner.md` |
-| 根目录版本表、安装入口、工作流 | 仓库根 `README.md`；接手状态有变时再改 `PROJECT-STATUS.md` |
+| `dock/jav-code-scanner.user.js` 的用户可见行为 | `dock/docs/jav-code-scanner/README.md`；扩展契约有变时再改 `dock/docs/jav-code-scanner/jcs-extension-contract.md` |
+| `dock/Enhanced_Media_Helper.js` / `webdev-library.user.js` | `dock/docs/enhanced-media-helper/` 中描述该行为的文档 |
+| `dock/` 内悬浮坞脚本的目录或接入行为 | `dock/docs/page-dock.md`、`dock/MODIFICATIONS.md`，并同步仓库根 `README.md` |
+| JCS ⇄ EMH 桥、`EMH_API`、`JavCodeKit` 跨脚本面 | `dock/docs/integration/integration-emh-scanner.md` |
+| 根目录版本表、安装入口、工作流 | 仓库根 `README.md` |
 | 其它脚本目录（如 `18mh/`） | 该目录自己的说明与 `MODIFICATIONS.md` |
 
 行号会随改动漂移。文档写函数名和行为，不把行号当长期锚点。

@@ -5,11 +5,11 @@ description: "为 jav-code-scanner（JCS）扩展宿主编写第三方扩展。�
 
 # JCS 扩展开发（Extension Contract v1.1）
 
-为 jav-code-scanner 宿主编写扩展。**权威规范**：`docs/jav-code-scanner/jcs-extension-contract.md`（v1.1，宿主 JCS ≥ v1.5.81）——本 skill 是实操摘要，两者冲突时以契约为准。v1 扩展在 v1.1 宿主上**完全兼容**（新增字段均为增量）。
+为 jav-code-scanner 宿主编写扩展。**权威规范**：`dock/docs/jav-code-scanner/jcs-extension-contract.md`（v1.1，宿主 JCS ≥ v1.5.81）——本 skill 是实操摘要，两者冲突时以契约为准。v1 扩展在 v1.1 宿主上**完全兼容**（新增字段均为增量）。
 
 ## 宿主环境事实（写之前先知道）
 
-- 宿主脚本：`jav-code-scanner.user.js`，暴露 `window.JavCodeKit`（页面 world 与沙箱双挂载，`_pageWin` 双写）。
+- 宿主脚本：`dock/jav-code-scanner.user.js`，暴露 `window.JavCodeKit`（页面 world 与沙箱双挂载，`_pageWin` 双写）。
 - 注册入口：`JavCodeKit.extensions.register(manifest[, source])`；另有 `unregister(id)` / `list()`（含 actions/pickButtons/styles/mounts 各项计数）/ `isEnabled(id)` / `setEnabled(id, on)`。
 - 握手事件：`jcs:kit-ready`（宿主 kit 挂载后双 dispatch）。
 - 扩展运行环境：
@@ -129,7 +129,7 @@ const t = setInterval(() => { if (tryRegister() || ++n > 120) clearInterval(t); 
 8. 控制台无 `[JCS ext]` 开头的报错。
 9. （形态 B）列表显示 `@name` 预取名而非裸 URL，注册后回填真实 ID/名称；「复制」按钮能复制链接。
 
-## 宿主侧对应实现位置（排障用，均在本仓库 `jav-code-scanner.user.js`）
+## 宿主侧对应实现位置（排障用，均在本仓库 `dock/jav-code-scanner.user.js`）
 
 - 宿主模块：搜 `JCS_EXT_KEY` / `EXT_LIMITS` / `registerExtension` / `validateExtensionManifest` / `bindExtSpaHook` / `injectExtensionScripts`。
 - pickButtons：搜 `collectPickButtons`（收集+排序+限流）/ `EXT_PICK_GLOBAL_MAX` / `resolveExtPickDef`（`ext:{id}:{btnId}[:{itemId}]` 路由）/ `runExtPickButtonClick`（返回值处理）/ `renderPanelPickButtons`（大窗同步渲染）/ `listExtPickSlots`（「操作」tab 开关清单）。

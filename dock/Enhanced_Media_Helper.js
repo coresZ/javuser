@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           Enhanced_Media_Helper
-// @version        3.7.5
+// @version        3.7.17
 // @description    Code Manager Panel with javgg site support (Preact + htm) + magnet screenshot preview + Linear UI
 // @author         cores
 // @match          https://javgg.net/tag/to-be-release/*
@@ -41,7 +41,8 @@
 // @require        https://cdn.jsdelivr.net/npm/preact@10.19.6/dist/preact.umd.js
 // @require        https://cdn.jsdelivr.net/npm/preact@10.19.6/hooks/dist/hooks.umd.js
 // @require        https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.umd.js
-// @require        https://update.greasyfork.org/scripts/593538/1916639/webdev-component.js
+// @require        https://update.greasyfork.org/scripts/593538/webdev-component.js
+// @require        https://update.greasyfork.org/scripts/600709/PageDock.js
 // @icon           data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==
 // @grant          GM_setValue
 // @grant          GM_getValue
@@ -2245,6 +2246,11 @@
                 display: inline-block; vertical-align: middle;
             }
             .emh-code-status-indicator:hover { transform: scale(1.2); box-shadow: var(--emh-shadow-sm); }
+            html.emh-script-off .emh-code-status-indicator,
+            html.emh-script-off .emh-javgg-controls,
+            html.emh-script-off #emh-code-manager-toggle,
+            html.emh-script-off #emh-code-manager-panel,
+            html.emh-script-off .emh-panel-backdrop { display: none !important; }
             #custom-toast-container { position: fixed; top: 70px; right: 20px; z-index: 10060; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; pointer-events: none; }
             .custom-toast {
                 padding: 10px 16px; border-radius: 12px; color: var(--emh-on-solid);
@@ -3980,6 +3986,29 @@
             createToggleButton: function() {
                 const existing = document.getElementById('emh-code-manager-toggle');
                 if (existing) existing.remove();
+                const pageRoot = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+                const dockApi = pageRoot.PageDock || (typeof PageDock !== 'undefined' ? PageDock : null);
+                if (dockApi && typeof dockApi.mount === 'function') dockApi.mount();
+                if (!window.__EMH_STANDALONE && dockApi && typeof dockApi.register === 'function') {
+                    dockApi.register({
+                        id: 'emh-library',
+                        label: '番号库',
+                        title: '打开或关闭番号库面板',
+                        enabled: scriptEnabled,
+                        active: PanelStore.state.visible,
+                        onActive: (active) => {
+                            if (!scriptEnabled) return;
+                            if (active) this.showPanel();
+                            else this.hidePanel();
+                        },
+                        onToggle: (checked) => setScriptEnabled(checked),
+                        onClick: () => {
+                            if (!scriptEnabled) return;
+                            this.showPanel();
+                        }
+                    });
+                    return;
+                }
                 const btn = document.createElement('button');
                 btn.id = 'emh-code-manager-toggle';
                 btn.className = 'emh-code-manager-toggle';
@@ -4546,7 +4575,17 @@
         return CodeManagerPanel;
     }
 
+    const ENABLED_KEY = 'emh_script_enabled';
+    let scriptEnabled = true;
+    function readScriptEnabled() {
+        try { return GM_getValue(ENABLED_KEY, true) !== false; } catch { return true; }
+    }
+    function setPageFeatures(enabled) {
+        document.documentElement.classList.toggle('emh-script-off', !enabled);
+        if (!enabled && window.CodeManagerPanel && window.CodeManagerPanel.hidePanel) window.CodeManagerPanel.hidePanel();
+    }
     function main() {
+        if (!scriptEnabled) return;
         for (const [name, handler] of Object.entries(SITE_HANDLERS)) {
             if (handler.isMatch()) {
                 if (handler.targetSelector) {
@@ -4635,7 +4674,7 @@
         const api = {
             __ready: true,
             name: 'Enhanced_Media_Helper',
-            version: '3.7.5',
+            version: '3.7.17',
             // 添加番号；已存在时返回 { ok:false, exists:true }（不触发内部重复提示）
             addCode: (code, title, remarks) => {
                 const c = String(code == null ? '' : code).trim().toUpperCase();
@@ -4735,7 +4774,21 @@
         window.__EMH_API__ = api;
     }
 
+    function setScriptEnabled(enabled) {
+        scriptEnabled = Boolean(enabled);
+        try { GM_setValue(ENABLED_KEY, scriptEnabled); } catch {}
+        setPageFeatures(scriptEnabled);
+        if (!scriptEnabled && window.CodeManagerPanel && window.CodeManagerPanel.hidePanel) window.CodeManagerPanel.hidePanel();
+        const pageRoot = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+        const dockApi = pageRoot.PageDock || (typeof PageDock !== 'undefined' ? PageDock : null);
+        if (dockApi && typeof dockApi.setChecked === 'function') dockApi.setChecked('emh-library', scriptEnabled);
+        if (scriptEnabled) main();
+        if (typeof UTILS !== 'undefined' && UTILS.showToast) UTILS.showToast(scriptEnabled ? '番号库脚本已开启' : '番号库脚本已关闭', 'info');
+    }
+
     function initialize() {
+        scriptEnabled = readScriptEnabled();
+        setPageFeatures(scriptEnabled);
         // standalone 独立页：同源真实网址 + #emh-standalone 标记 → 原生 GM 能力，无需父页桥
         if (location.hash.indexOf('emh-standalone') >= 0 || location.search.indexOf('emh-standalone') >= 0) {
             window.__EMH_STANDALONE = true;

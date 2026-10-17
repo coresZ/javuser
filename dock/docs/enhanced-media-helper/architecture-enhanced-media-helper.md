@@ -1,7 +1,7 @@
 # Enhanced_Media_Helper.js · 架构梳理
 
-> 架构文档（2026-08 新建）。对应脚本 `Enhanced_Media_Helper.js` **v3.7.5（约 4759 行）**。
-> 所有行号锚点以该版本为准；脚本升级会平移行号。
+> 架构文档（2026-08 新建）。对应脚本 `dock/Enhanced_Media_Helper.js` **v3.7.17**。
+> 下文行号是历史锚点，不再作为当前版本的定位依据。排障以函数名为准。
 
 ## 概述
 
@@ -14,6 +14,7 @@
 5. **standalone 独立页**：同源真实网址 + `#emh-standalone` 全屏双栏；
 6. **WebDAV 云端备份**（v3.7.0+，v3.7.1 组件化，v3.7.2 上 Greasy Fork 库）：番号库上传/下载到坚果云、Nextcloud、群晖等，AES-256-GCM 可选加密；内核为**Greasy Fork 库 `webdev-component.js` v1.0.0（ID 593538，真源 = 仓库 `webdev-library.user.js`）**，EMH `@require` 引用 + 内嵌副本幂等兜底；面板菜单「备份 → WebDAV 云端备份」设置卡 + `EMH_API.webdav*` 桥；
 7. **跨脚本桥 `EMH_API`**（v3.6.1+）：挂 `unsafeWindow`，供 jav-code-scanner 等脚本入库/标记/截图。
+8. **悬浮坞入口**（v3.7.17）：有 `PageDock` 时隐藏右下角「番号库」按钮。左边打开或关闭面板，右边启用或停用整个脚本。停用状态写入 `emh_script_enabled`。独立页不走这个开关。
 
 主体是**单个严格模式 IIFE**（61-4613）。`@run-at document-start`（早起跑，standalone 封面/桥尽早就绪），`@noframes`（不进 iframe）。
 
@@ -21,7 +22,7 @@
 
 - `@match` 7 条 javgg.net 路径 + `@include` 30+ 域名（与 scanner 高度重合）；`@require` preact@10.19.6 / hooks / htm（jsdelivr，DEPS 另有 cdnjs fallback）+ **Greasy Fork 库 `webdev-component.js`（ID 593538，v3.7.2+：`https://update.greasyfork.org/scripts/593538/1916639/webdev-component.js`；真源 = 仓库 `webdev-library.user.js`）**
 - 授权：`GM_setValue/GM_getValue/GM_addValueChangeListener/GM_xmlhttpRequest/GM_openInTab/unsafeWindow`；`@connect 1cili.com / whatslink.info / avwikidb.com / *`（`*` 为 v3.7.0 起，WebDAV 任意主机需放行一次）
-- 版本策略：3.6.1 起每个桥/灯箱能力变更递增（3.6.4 加 `previewAvwiki` 回调，3.6.5 灯箱 z-index 置顶，3.7.0 加 WebDAV 备份 + 导出/导入桥，3.7.1 WebDAV 内核抽为共享组件 + jav 凭据导入 + 设置卡 UX 改版，3.7.2 组件上 Greasy Fork 库 + @require + 幂等 UMD/解析回退，3.7.4 修复 javgg 列表 `emh-javgg-controls` 溢出被相邻卡片覆盖不可点击，3.7.5 面板新增「未标记」筛选 tab（`CODE_LIBRARY.getUnmarked` + tab 栏横向滚动保护））
+- 版本策略：3.6.1 起每个桥/灯箱能力变更递增（3.6.4 加 `previewAvwiki` 回调，3.6.5 灯箱 z-index 置顶，3.7.0 加 WebDAV 备份 + 导出/导入桥，3.7.1 WebDAV 内核抽为共享组件 + jav 凭据导入 + 设置卡 UX 改版，3.7.2 组件上 Greasy Fork 库 + @require + 幂等 UMD/解析回退，3.7.4 修复 javgg 列表 `emh-javgg-controls` 溢出被相邻卡片覆盖不可点击，3.7.5 面板新增「未标记」筛选 tab（`CODE_LIBRARY.getUnmarked` + tab 栏横向滚动保护），3.7.6 有 `PageDock` 时番号库入口收进悬浮坞，不再单独放右下角按钮；独立页仍保留自己的入口，3.7.9 通过 Greasy Fork `@require https://update.greasyfork.org/scripts/600709/PageDock.js` 引入悬浮坞，并调用 `PageDock.mount()`，3.7.15 悬浮坞开关控制整个番号库脚本，状态写入 `emh_script_enabled`）
 
 ## 分区地图
 

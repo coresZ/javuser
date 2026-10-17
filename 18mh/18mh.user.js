@@ -12,7 +12,7 @@
 // @grant        GM_notification
 // @grant        GM_setValue
 // @grant        GM_getValue
-// @require https://update.greasyfork.org/scripts/593538/1936318/webdev-component.js
+// @require https://update.greasyfork.org/scripts/593538/webdev-component.js
 // @connect      18dm.net
 // @connect      *.18dm.net
 // @connect      18mh.net

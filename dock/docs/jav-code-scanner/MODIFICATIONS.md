@@ -1,14 +1,40 @@
-# MODIFICATIONS · docs/jav-code-scanner/
+# MODIFICATIONS · dock/docs/jav-code-scanner/
 
 > 本目录协议：修改本目录任意文档前先完整读取本文件；修改完成后必须回填（功能 → 修改内容 → 涉及文件与位置）。新建功能性子目录时同步创建 MODIFICATIONS.md。
 
 ## 项目约束（jav-code-scanner 文档域）
 
 - 本目录只放 **jav-code-scanner（JCS）单项目文档**：架构说明、对外契约、设计规范。
-- 跨两脚本协作的协议文档放 `docs/integration/`；EMH 侧文档放 `docs/enhanced-media-helper/`。
+- 跨两脚本协作的协议文档放 `dock/docs/integration/`；EMH 侧文档放 `dock/docs/enhanced-media-helper/`。
 - 文档内引用其它目录文档一律用**相对路径**（如 `../integration/integration-emh-scanner.md`）。
 - 文档头部必须标注对应的脚本版本号（如 v1.5.91），脚本改动推进时同步更新版本锚点。
 - 改 `jav-code-scanner.user.js` 时，同一轮必须更新本目录里描述该行为的文档（通常是 `README.md`；契约语义变化时还包括 `jcs-extension-contract.md`），并回填本文件。不得只改代码。仓库级约束见根目录 `AGENTS.md`。
+
+## 2026-10-17 · 扫描入口收进悬浮坞（JCS v1.5.92）
+
+**功能**：有 PageDock 时，JCS 浮钮收进悬浮坞。开关控制整个扫描脚本。
+
+**修改内容**：
+- `@version` / `STYLE_VER` / `SCRIPT_VER` 1.5.91 → 1.5.92。
+- `@require https://update.greasyfork.org/scripts/600709/PageDock.js`。
+- 登记「扫描」。开关写入 `jcs_script_enabled_v1`。关闭后不建面板、不扫描；点菜单名字没有反应。没有悬浮坞时仍用原来的浮钮。
+- CBox 轻量路径和 iframe 精简模式不进悬浮坞。
+
+**涉及文件与位置**：
+- `jav-code-scanner.user.js`：`joinPageDock`、`setScriptEnabled`、`boot`
+- `docs/jav-code-scanner/README.md`：安装说明与版本锚点
+
+## 2026-10-17 · 有悬浮坞时隐藏原扫描浮钮（JCS v1.5.93）
+
+**功能**：有 PageDock 时，页面上不再显示原来的红色扫描按钮。
+
+**修改内容**：
+- `@version` / `STYLE_VER` / `SCRIPT_VER` 1.5.92 → 1.5.93。
+- 检测到 `PageDock` 时给 `html` 加 `jcs-docked`，样式强制隐藏 `#jcs-fab`。
+- 悬浮坞里的「扫描」直接打开面板，不再依赖点击原来的浮钮。
+
+**涉及文件与位置**：
+- `jav-code-scanner.user.js`：`html.jcs-docked #jcs-fab`、`openScanPanel`、`ensurePanel`
 - 编码统一 UTF-8 **无 BOM**；中文正文，代码示例保留原格式。
 - 契约类文档（如 jcs-extension-contract.md）是对外发布物：改动契约语义时必须同步核对宿主实现章节（§11）与 JCS 源码一致性。
 
@@ -200,5 +226,5 @@
 - `AGENTS.md`（新建）
 - `README.md`（开发工作流）
 - `PROJECT-STATUS.md`（开发工作流速查）
-- `docs/jav-code-scanner/README.md`（§3.1、§5）
+- `dock/docs/jav-code-scanner/README.md`（§2.1 悬浮坞左右控件，2026-10-17）
 - `docs/jav-code-scanner/MODIFICATIONS.md`（项目约束）

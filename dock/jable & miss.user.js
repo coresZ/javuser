@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name Missav & Jable自动中文字幕 (交互优化版-ios修复)
 // @namespace http://tampermonkey.net/
-// @version 5.8
+// @version 5.23
 // @description 搜索按钮提级至首页，修复 Missav 番号识别，新增下载功能，让字幕列表常驻显示当前选中项，并优化首页设置布局，支持首页滑杆在 0%-100% 范围调整字幕垂直位置与横向位置，控制台与 CC 可拖动并记住位置，界面改为紧凑控制台，修复返回后重新搜索丢失当前选中标记的问题，并将 CC 悬浮图标恢复为低存在感透明样式，修复 Jable 评论区“求中文字幕”导致误判已有内置字幕的问题。
 // @author ron
 // @match *://missav*.com/*
@@ -10,6 +10,7 @@
 // @match *://missav.live/*
 // @match *://jable.tv/videos/*
 // @match *://*.jable.tv/videos/*
+// @require https://update.greasyfork.org/scripts/600709/PageDock.js
 // @grant GM_xmlhttpRequest
 // @grant GM_addStyle
 // @grant unsafeWindow
@@ -133,7 +134,8 @@
         nativeTrackUrl: null,
         rawSubtitleText: '',
         currentSubtitleName: '',
-        currentSubtitleKey: ''
+        currentSubtitleKey: '',
+        enabled: localStorage.getItem('msv-script-enabled') !== '0'
     };
     const savePos = () => {
         try {
@@ -146,7 +148,7 @@
     // ======================
     GM_addStyle(`
         #msv-dock {
-            position: fixed; z-index: 2147483647; width: 36px; height: 36px;
+            position: fixed; z-index: 2147483646; width: 36px; height: 36px;
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
             color: rgba(255,255,255,0.92); touch-action: none;
         }
@@ -162,6 +164,7 @@
         #msv-fab:active { cursor: grabbing; }
         #msv-fab:hover { background: rgba(255,255,255,0.16); color: #fff; }
         #msv-fab.ok { color: rgba(255,255,255,0.88); }
+        #msv-fab.is-docked { display: none !important; }
         #msv-dock.is-mini #msv-panel { display: none !important; }
         #msv-panel {
             position: absolute; right: 0; bottom: 44px; width: min(292px, calc(100vw - 24px)); display: none; flex-direction: column; gap: 0;
@@ -592,7 +595,7 @@
                         const msg = `💝字幕就绪，共 ${STATE.subs.length} 条\n${subStatus}`;
                         UI.toast(msg, 3000);
                         const fab = document.getElementById('msv-fab');
-                        if(fab) fab.className = 'ok';
+                        if (fab) fab.classList.add('ok');
                         if (targetEl) {
                             targetEl.style.opacity = "1";
                             delete targetEl.dataset.msvLoading;
@@ -723,6 +726,10 @@
             if (subLayer.textContent !== text) subLayer.textContent = text;
         },
         renderNow: () => {
+            if (!STATE.enabled) {
+                if (subLayer) subLayer.textContent = '';
+                return;
+            }
             Renderer.forceDomSubtitleLayer();
             Renderer.renderDomSubtitleText();
         },
@@ -891,10 +898,70 @@
             document.addEventListener('touchend', dragEnd);
 
             const visCheck = document.getElementById('msv-check-vis');
+            const pageRoot = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+            const setScriptEnabled = (enabled) => {
+                STATE.enabled = Boolean(enabled);
+                try { localStorage.setItem('msv-script-enabled', STATE.enabled ? '1' : '0'); } catch {}
+                if (!STATE.enabled && panel) panel.classList.remove('show');
+                if (!STATE.enabled && subLayer) subLayer.textContent = '';
+                const dockApi = pageRoot.PageDock || (typeof PageDock !== 'undefined' ? PageDock : null);
+                if (dockApi && typeof dockApi.setChecked === 'function') dockApi.setChecked('msv-subtitle', STATE.enabled);
+                UI.toast(STATE.enabled ? '字幕脚本已开启' : '字幕脚本已关闭', 800);
+                Renderer.renderNow('enabled');
+            };
             if (visCheck) visCheck.onchange = () => {
                 STATE.visible = visCheck.checked;
-                UI.toast(STATE.visible ? "字幕已开启" : "字幕已隐藏", 800);
+                UI.toast(STATE.visible ? '字幕已开启' : '字幕已隐藏', 800);
+                Renderer.renderNow('visibility');
             };
+            const openPanel = () => {
+                dock.classList.remove('is-mini');
+                const pageDock = document.getElementById('page-dock');
+                if (pageDock && fab.classList.contains('is-docked')) {
+                    const rect = pageDock.getBoundingClientRect();
+                    dock.style.left = rect.left + 'px';
+                    dock.style.top = rect.top + 'px';
+                    dock.style.right = 'auto';
+                    dock.style.bottom = 'auto';
+                }
+                if (!STATE.enabled) return;
+                panel.classList.add('show');
+                const dockApi = pageRoot.PageDock || (typeof PageDock !== 'undefined' ? PageDock : null);
+                if (dockApi && typeof dockApi.setActive === 'function') dockApi.setActive('msv-subtitle', true);
+            };
+            const setPanelActive = (active) => {
+                if (!STATE.enabled) return;
+                if (active) openPanel();
+                else {
+                    panel.classList.remove('show');
+                    const dockApi = pageRoot.PageDock || (typeof PageDock !== 'undefined' ? PageDock : null);
+                    if (dockApi && typeof dockApi.setActive === 'function') dockApi.setActive('msv-subtitle', false);
+                }
+            };
+            const joinPageDock = () => {
+                const dockApi = pageRoot.PageDock || (typeof PageDock !== 'undefined' ? PageDock : null);
+                if (dockApi && typeof dockApi.mount === 'function') dockApi.mount();
+                if (!dockApi || typeof dockApi.register !== 'function' || fab.dataset.msvDocked === '1') return false;
+                fab.dataset.msvDocked = '1';
+                fab.classList.add('is-docked');
+                dockApi.register({
+                    id: 'msv-subtitle',
+                    label: 'CC',
+                    title: '打开或关闭字幕面板',
+                    enabled: STATE.enabled,
+                    active: panel.classList.contains('show'),
+                    onActive: setPanelActive,
+                    onToggle: setScriptEnabled,
+                    onClick: openPanel
+                });
+                return true;
+            };
+            if (!joinPageDock()) {
+                let tries = 0;
+                const timer = setInterval(() => {
+                    if (joinPageDock() || ++tries > 20) clearInterval(timer);
+                }, 250);
+            }
             if (fab) fab.onclick = (e) => {
                 if (dragMoved) {
                     dragMoved = false;
@@ -968,7 +1035,7 @@
                         Engine.refreshSelectedMarks();
                         const msg = `💝字幕就绪，共 ${STATE.subs.length} 条\n${STATE.visible ? '✅开启字幕' : '⚠️关闭字幕'}`;
                         UI.toast(msg, 3000);
-                        if(fab) fab.className = 'ok';
+                        if (fab) fab.classList.add('ok');
                         Renderer.init();
                         panel.classList.remove('show');
                     });
@@ -978,7 +1045,7 @@
             document.addEventListener('click', (e) => {
                 if (panel && !dock.contains(e.target)) panel.classList.remove('show');
             });
-            if (CONFIG.autoSearch && STATE.code) setTimeout(() => {
+            if (STATE.enabled && CONFIG.autoSearch && STATE.code) setTimeout(() => {
                 STATE.hasBuiltInSub = checkBuiltInSub();
                 if (STATE.hasBuiltInSub) {
                     STATE.visible = false;

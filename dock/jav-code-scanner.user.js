@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         通用番号扫描 & 多源搜索
 // @namespace    http://tampermonkey.net/
-// @version      1.5.91
+// @version      1.5.94
 // @description  扫描页面番号，多源搜索与页内预览（iframe/GM 自渲染、拒绝自动降级）、字幕/原名下载、页面高亮自定义、番号库协作（Enhanced_Media_Helper）、扩展宿主（第三方油猴库接入，含选源 picker 按钮组 pickButtons）、全站配置备份（WebDAV 可加密）、window.JavCodeKit 开放 API
 // @author       You
 // @include      *://*jav*/*
@@ -37,6 +37,7 @@
 // @exclude      *://*/cdn-cgi/challenge-platform/*
 // @exclude      *://challenges.cloudflare.com/*
 // @exclude      *://*.cloudflare.com/*
+// @require      https://update.greasyfork.org/scripts/600709/PageDock.js
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
 // @grant        GM.xmlHttpRequest
@@ -59,8 +60,8 @@
     if (_pageWin.JavCodeKit && _pageWin.JavCodeKit.__ready) return;
 
     const NS = 'jcs';
-    const STYLE_VER = '1.5.91';
-    const SCRIPT_VER = '1.5.91';
+    const STYLE_VER = '1.5.94';
+    const SCRIPT_VER = '1.5.94';
     const IS_CBOX = /(^|\.)cbox\.ws$/i.test(location.hostname || '');
     const CBOX_MSG_SOURCE = 'jcs-cbox';
     const ENC_MARK = 'jcs-aes-gcm-v1';
@@ -70,6 +71,7 @@
     const HIST_KEY = 'jcs_hist_v1';
     const PANEL_KEY = 'jcs_panel_layout_v1';
     const FAB_POS_KEY = 'jcs_fab_pos_v1';
+    const SCRIPT_ENABLED_KEY = 'jcs_script_enabled_v1';
     const THEME_KEY = 'jcs_theme_v1';
     const CODE_ACT_KEY = 'jcs_code_actions_v1';
     const FRAME_BLOCK_KEY = 'jcs_frame_block_hosts_v1';
@@ -536,7 +538,7 @@
         return h === p || h.endsWith('.' + p);
     }
 
-    // ─── 扩展宿主（Extension Contract v1.1，规范见 docs/jav-code-scanner/jcs-extension-contract.md）───
+    // ─── 扩展宿主（Extension Contract v1.1，规范见 dock/docs/jav-code-scanner/jcs-extension-contract.md）───
     // 四类扩展点：actions（番号操作条图标）/ pickButtons（选源文字按钮或二级按钮组）/ styles / mounts
     // 注册入口：JavCodeKit.extensions.register(manifest)；形态 B 的 URL 列表存 JCS_EXT_KEY
     const EXT_LIMITS = {
@@ -5677,6 +5679,7 @@ time.${NS}-code-mark:hover{
   background:linear-gradient(145deg,#e05a50,var(--jcs-accent));border-color:transparent;color:#fff
 }
 html.${NS}-selpicking,html.${NS}-selpicking body{cursor:crosshair!important}
+html.${NS}-docked #${NS}-fab{display:none!important}
 #${NS}-fab{
   position:absolute;right:max(12px,env(safe-area-inset-right));bottom:max(12px,env(safe-area-inset-bottom));
   z-index:3;min-width:52px;height:52px;padding:0 14px;border:0;border-radius:16px;cursor:pointer;
@@ -7392,6 +7395,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         let panel = document.getElementById(NS + '-panel');
         if (fab && panel) return panel;
 
+        if (document.documentElement.classList.contains('jcs-script-off')) return null;
         fab = document.createElement('button');
         fab.id = NS + '-fab';
         fab.type = 'button';
@@ -7402,6 +7406,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             '<span class="jcs-fab-txt">番号</span>' +
             '<span class="jcs-badge is-zero" id="' + NS + '-badge">0</span>';
         mountUI(fab);
+        if (pageDockApi()) document.documentElement.classList.add(NS + '-docked');
 
         panel = document.createElement('div');
         panel.id = NS + '-panel';
@@ -11849,6 +11854,11 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             return;
         }
 
+        joinPageDock();
+        if (!scriptEnabled()) {
+            document.documentElement.classList.add('jcs-script-off');
+            return;
+        }
         ensurePanel();
         applyExtModeUi();
         refreshScan(true);
@@ -11872,6 +11882,76 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
         // 扩展宿主：SPA 挂载点重放 + 形态 B 扩展源注入（契约 v1）
         bindExtSpaHook();
         injectExtensionScripts();
+    }
+
+    function scriptEnabled() {
+        return storeGetStr(SCRIPT_ENABLED_KEY, '1') !== '0';
+    }
+
+    function setScriptEnabled(on) {
+        storeSetRaw(SCRIPT_ENABLED_KEY, on ? '1' : '0');
+        const dockApi = pageDockApi();
+        if (dockApi && typeof dockApi.setChecked === 'function') dockApi.setChecked('jcs-scanner', !!on);
+        if (!on) {
+            document.documentElement.classList.add('jcs-script-off');
+            ['panel', 'popup', 'win', 'cfg', 'sub'].forEach((id) => {
+                const el = document.getElementById(NS + '-' + id);
+                if (el) el.classList.remove('show');
+            });
+            const fab = document.getElementById(NS + '-fab');
+            if (fab) fab.style.display = 'none';
+            return;
+        }
+        document.documentElement.classList.remove('jcs-script-off');
+        const fab = document.getElementById(NS + '-fab');
+        if (fab) fab.style.display = '';
+        boot();
+    }
+
+    function pageDockApi() {
+        return _pageWin.PageDock || (typeof PageDock !== 'undefined' ? PageDock : null);
+    }
+
+    function openScanPanel() {
+        if (!scriptEnabled()) return;
+        ensurePanel();
+        const panel = document.getElementById(NS + '-panel');
+        if (!panel) return;
+        const open = !panel.classList.contains('show');
+        panel.classList.toggle('show', open);
+        const dockApi = pageDockApi();
+        if (dockApi && typeof dockApi.setActive === 'function') dockApi.setActive('jcs-scanner', open);
+        if (!open) return;
+        refreshScan(true);
+        renderPanelList({ force: true });
+    }
+
+    function setScanPanelActive(active) {
+        if (!scriptEnabled()) return;
+        ensurePanel();
+        const panel = document.getElementById(NS + '-panel');
+        if (!panel) return;
+        const open = panel.classList.contains('show');
+        if (active !== open) openScanPanel();
+    }
+
+    function joinPageDock() {
+        const dockApi = pageDockApi();
+        if (!dockApi || typeof dockApi.register !== 'function') return;
+        document.documentElement.classList.add(NS + '-docked');
+        if (typeof dockApi.mount === 'function') dockApi.mount();
+        const fab = document.getElementById(NS + '-fab');
+        if (fab) fab.style.display = 'none';
+        dockApi.register({
+            id: 'jcs-scanner',
+            label: '扫描',
+            title: '打开或关闭扫描面板',
+            enabled: scriptEnabled(),
+            active: !!(document.getElementById(NS + '-panel') && document.getElementById(NS + '-panel').classList.contains('show')),
+            onActive: setScanPanelActive,
+            onToggle: setScriptEnabled,
+            onClick: openScanPanel
+        });
     }
 
     // ─── 公共 API（其他油猴脚本可复用） ─────────────────────
@@ -11950,7 +12030,7 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             refreshSubtitleListView();
         },
         DEFAULT_PROVIDERS: DEFAULT_PROVIDERS.map((p) => Object.assign({}, p)),
-        // 扩展宿主 API（契约 v1.1：docs/jav-code-scanner/jcs-extension-contract.md）
+        // 扩展宿主 API（契约 v1.1：dock/docs/jav-code-scanner/jcs-extension-contract.md）
         extensions: {
             register: (manifest, source) => registerExtension(manifest, source),
             unregister: (id) => unregisterExtension(id),

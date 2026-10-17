@@ -1,11 +1,11 @@
-# MODIFICATIONS · docs/integration/
+# MODIFICATIONS · dock/docs/integration/
 
 > 本目录协议：修改本目录任意文档前先完整读取本文件；修改完成后必须回填（功能 → 修改内容 → 涉及文件与位置）。
 
 ## 项目约束（integration 文档域）
 
 - 本目录只放**跨脚本协作协议**：当前仅 JCS ⇄ EMH 集成指南；后续新增跨项目协议（如扩展宿主与第三方库的双向协议细则）放此处。
-- 单项目内部设计不得放本目录——JCS 文档去 `docs/jav-code-scanner/`，EMH 文档去 `docs/enhanced-media-helper/`。
+- 单项目内部设计不得放本目录——JCS 文档去 `dock/docs/jav-code-scanner/`，EMH 文档去 `dock/docs/enhanced-media-helper/`。
 - 协议文档必须写明**双向版本锚点**（如 scanner v1.5.71+ / EMH v3.7.2+），任一侧 API 变更时同步更新版本锚点与 API 参考表。
 - 文档内引用其它目录文档一律用**相对路径**（如 `../jav-code-scanner/README.md`）。
 - 编码统一 UTF-8 **无 BOM**；中文正文。
@@ -31,4 +31,15 @@
 
 **涉及文件与位置**：
 - `docs/integration/integration-emh-scanner.md`（相关文件）
-- `docs/integration/MODIFICATIONS.md`（约束示例）
+- `dock/docs/integration/MODIFICATIONS.md`（约束示例）
+
+## 2026-10-17 · 版本锚点对齐
+
+**功能**：集成指南头部改为当前脚本版本。
+
+**修改内容**：
+- 头部版本从 scanner v1.5.71 / EMH v3.7.2 改为 scanner v1.5.94 / EMH v3.7.17。
+- 说明悬浮坞不改变 `EMH_API`。
+
+**涉及文件与位置**：
+- `dock/docs/integration/integration-emh-scanner.md`
