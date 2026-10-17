@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name Missav & Jable自动中文字幕&评论时间跳转 (悬浮)
 // @namespace http://tampermonkey.net/
-// @version 5.37
+// @version 5.38
 // @description 搜索按钮提级至首页，修复 Missav 番号识别，新增下载功能，让字幕列表常驻显示当前选中项，并优化首页设置布局，支持首页滑杆在 0%-100% 范围调整字幕垂直位置与横向位置，控制台与 CC 可拖动并记住位置，界面改为紧凑控制台，修复返回后重新搜索丢失当前选中标记的问题，并将 CC 悬浮图标恢复为低存在感透明样式，修复 Jable 评论区“求中文字幕”导致误判已有内置字幕的问题。
 // @author cores
 // @match *://missav*.com/*

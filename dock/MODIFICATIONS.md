@@ -213,6 +213,16 @@
 **涉及文件与位置**：
 - `dock/jable & miss.user.js`：`currentRailPoint`、`updateSelectedSidebarItem`
 
+## 2026-10-17 · 修正字幕脚本版本号
+
+**功能**：避免把脚本版本从 5.37 误写成 71。
+
+**修改内容**：
+- `@version` 改为 5.38。脚本名已包含评论时间跳转。
+
+**涉及文件与位置**：
+- `dock/jable & miss.user.js`：`@version`
+
 ## 2026-10-17 · 右侧刻度区不再误暂停
 
 **功能**：全屏时点右侧刻度附近，不会再点到画面导致暂停。
