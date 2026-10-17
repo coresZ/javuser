@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name Missav & Jable自动中文字幕 (悬浮)
+// @name Missav & Jable自动中文字幕&评论时间跳转 (悬浮)
 // @namespace http://tampermonkey.net/
-// @version 5.27
+// @version 5.37
 // @description 搜索按钮提级至首页，修复 Missav 番号识别，新增下载功能，让字幕列表常驻显示当前选中项，并优化首页设置布局，支持首页滑杆在 0%-100% 范围调整字幕垂直位置与横向位置，控制台与 CC 可拖动并记住位置，界面改为紧凑控制台，修复返回后重新搜索丢失当前选中标记的问题，并将 CC 悬浮图标恢复为低存在感透明样式，修复 Jable 评论区“求中文字幕”导致误判已有内置字幕的问题。
 // @author cores
 // @match *://missav*.com/*
@@ -20,7 +20,7 @@
 // @connect subtitlecat.com
 // @connect *.subtitlecat.com
 // @connect subtitle.v.geilijiasu.com
-// @connect *.geilijiasu.com
+// @connect *.geilijiasu.com 
 // @run-at document-end
 // @license MIT 
 // ==/UserScript==
@@ -921,6 +921,7 @@
                 try { localStorage.setItem('msv-script-enabled', STATE.enabled ? '1' : '0'); } catch {}
                 if (!STATE.enabled && panel) panel.classList.remove('show');
                 if (!STATE.enabled && subLayer) subLayer.textContent = '';
+                if (location.hostname.includes('jable')) window.dispatchEvent(new CustomEvent('msv-script-enabled', { detail: STATE.enabled }));
                 const dockApi = pageRoot.PageDock || (typeof PageDock !== 'undefined' ? PageDock : null);
                 if (dockApi && typeof dockApi.setChecked === 'function') dockApi.setChecked('msv-subtitle', STATE.enabled);
                 UI.toast(STATE.enabled ? '字幕脚本已开启' : '字幕脚本已关闭', 800);
@@ -1083,5 +1084,968 @@
         document.addEventListener('DOMContentLoaded', UIBuilder.build);
     } else {
         UIBuilder.build();
+        const JableTimeJump = (() => {
+        const COMMENT_BLOCK_ID = 'video_comments_video_comments';
+        const MAX_AUTO_COMMENTS = 100;
+        const COMMENT_PAGE_SIZE = 5;
+        const LINK_CLASS = 'jable-comment-time-link';
+        const STYLE_ID = 'jable-comment-time-style';
+        const TOAST_ID = 'jable-comment-time-toast';
+        const SIDEBAR_ID = 'jable-comment-time-sidebar';
+        const RAIL_ID = 'jable-comment-time-rail';
+        const SIDEBAR_VIEWPORT_MARGIN = 8;
+        const DRAG_START_THRESHOLD = 3;
+        const CLOSE_BUTTON_VISIBLE_MS = 5000;
+
+        // 单个时间
+        const TIME_PATTERN = /([\-−－]?\d{1,3})\s*[:：]\s*(\d{1,2})(?:\s*[:：]\s*(\d{1,2}))?/g;
+        // 区间：A ~ B / A ↝ B / A → B / A - B / A 到 B 等
+        const RANGE_SEP = String.raw`[~～〜↝→\-–—到至]`;
+        const RANGE_PATTERN = new RegExp(
+          `([\\-−－]?\\d{1,3}\\s*[:：]\\s*\\d{1,2}(?:\\s*[:：]\\s*\\d{1,2})?)\\s*${RANGE_SEP}\\s*([\\-−－]?\\d{1,3}\\s*[:：]\\s*\\d{1,2}(?:\\s*[:：]\\s*\\d{1,2})?)`,
+          'g'
+        );
+
+        let toastTimer = null;
+        let refreshTimer = null;
+        let isAutoLoadingComments = false;
+        let selectedTimePoint = '';
+        let sidebarManualPosition = null;
+        let sidebarCloseTimer = null;
+        let sidebarCloseVisibleUntil = 0;
+        let timeEnabled = false;
+
+        function injectStyle() {
+          if (document.getElementById(STYLE_ID)) return;
+          const style = document.createElement('style');
+          style.id = STYLE_ID;
+          style.textContent = `
+            .${LINK_CLASS} {
+              color: #0a84ff !important;
+              cursor: pointer;
+              font-weight: 800;
+              text-decoration: none;
+              border-radius: 5px;
+              padding: 0 2px;
+            }
+            .${LINK_CLASS}:hover {
+              color: #5ac8fa !important;
+              background: rgba(10, 132, 255, .14);
+            }
+            #${SIDEBAR_ID} {
+              position: fixed;
+              z-index: 999998;
+              width: 128px;
+              max-height: 440px;
+              padding: 9px 8px;
+              border: 0;
+              background: transparent;
+              box-shadow: none;
+              box-sizing: border-box;
+              overflow: hidden;
+            }
+            #${SIDEBAR_ID} .jcts-title {
+              margin-bottom: 7px;
+              color: rgba(255,255,255,.72);
+              cursor: grab;
+              font-size: 11px;
+              font-weight: 800;
+              text-align: center;
+              touch-action: none;
+              user-select: none;
+              -webkit-user-select: none;
+            }
+            #${SIDEBAR_ID}.jcts-dragging .jcts-title {
+              cursor: grabbing;
+            }
+            #${SIDEBAR_ID} .jcts-close {
+              position: absolute;
+              top: 1px;
+              left: 1px;
+              z-index: 2;
+              display: flex;
+              width: 20px;
+              height: 20px;
+              padding: 0;
+              align-items: center;
+              justify-content: center;
+              border: 0;
+              border-radius: 50%;
+              background: rgba(15, 23, 42, .78);
+              color: #fff;
+              cursor: pointer;
+              font-size: 15px;
+              font-weight: 800;
+              line-height: 1;
+              opacity: 0;
+              pointer-events: none;
+              transform: scale(.8);
+              transition: opacity .15s ease, transform .15s ease;
+            }
+            #${SIDEBAR_ID} .jcts-close.jcts-visible {
+              opacity: 1;
+              pointer-events: auto;
+              transform: scale(1);
+            }
+            #${SIDEBAR_ID} .jcts-close:hover {
+              background: #ff453a;
+            }
+            #${SIDEBAR_ID} .jcts-list {
+              display: flex;
+              flex-direction: column;
+              gap: 5px;
+              max-height: 398px;
+              overflow-y: auto;
+              scrollbar-width: thin;
+            }
+            #${SIDEBAR_ID} .jcts-list::-webkit-scrollbar {
+              width: 4px;
+            }
+            #${SIDEBAR_ID} .jcts-list::-webkit-scrollbar-thumb {
+              border-radius: 999px;
+              background: rgba(255,255,255,.22);
+            }
+            #${SIDEBAR_ID} .jcts-item {
+              width: 100%;
+              min-height: 26px;
+              padding: 0 4px;
+              border: 0;
+              border-radius: 999px;
+              background: transparent;
+              color: #0a84ff;
+              cursor: pointer;
+              font-size: 11px;
+              font-weight: 900;
+              text-align: center;
+              white-space: nowrap;
+              transition: background .16s ease, color .16s ease, transform .12s ease, box-shadow .16s ease;
+            }
+            #${SIDEBAR_ID} .jcts-item.jcts-range {
+              font-size: 10px;
+              color: #30d158;
+            }
+            #${SIDEBAR_ID} .jcts-item:hover {
+              background: rgba(10, 132, 255, .14);
+              color: #0a84ff;
+            }
+            #${SIDEBAR_ID} .jcts-item.jcts-range:hover {
+              background: rgba(48, 209, 88, .18);
+              color: #30d158;
+            }
+            #${SIDEBAR_ID} .jcts-item.jcts-selected,
+            #${SIDEBAR_ID} .jcts-item.jcts-selected:hover {
+              background: #0a84ff;
+              color: #fff;
+              box-shadow: 0 6px 16px rgba(10,132,255,.28);
+            }
+            #${SIDEBAR_ID} .jcts-item.jcts-range.jcts-selected,
+            #${SIDEBAR_ID} .jcts-item.jcts-range.jcts-selected:hover {
+              background: #30d158;
+              color: #fff;
+              box-shadow: 0 6px 16px rgba(48,209,88,.28);
+            }
+            #${SIDEBAR_ID} .jcts-item:active {
+              transform: scale(.95);
+            }
+            #${TOAST_ID} {
+              position: fixed;
+              left: 50%;
+              bottom: 88px;
+              z-index: 999999;
+              padding: 8px 13px;
+              border-radius: 999px;
+              background: rgba(15, 23, 42, .86);
+              color: #fff;
+              box-shadow: 0 10px 28px rgba(0,0,0,.28);
+              font-size: 13px;
+              font-weight: 700;
+              opacity: 0;
+              pointer-events: none;
+              transform: translate(-50%, 8px) scale(.96);
+              transition: opacity .26s ease, transform .26s ease;
+            }
+            #${TOAST_ID}.show {
+              opacity: 1;
+              transform: translate(-50%, 0) scale(1);
+            }
+            #${RAIL_ID} {
+              position: absolute; top: 50%; right: 0; width: 64px; max-height: 70%; z-index: 40;
+              display: none; overflow-y: auto; pointer-events: auto; transform: translateY(-50%);
+            }
+            .plyr:-webkit-full-screen #${RAIL_ID}, .plyr:fullscreen #${RAIL_ID} { display: block; }
+            #${RAIL_ID} .jcts-mark, #${RAIL_ID} .jcts-span {
+              position: relative; display: block; width: 100%; height: 16px; margin-left: auto; border: 0; padding: 0;
+              pointer-events: auto; cursor: pointer; background: transparent;
+            }
+            #${RAIL_ID} .jcts-mark::before, #${RAIL_ID} .jcts-span::before {
+              content: ""; position: absolute; right: 0; top: 5px; width: 18px; height: 2px; background: rgba(255,255,255,.72);
+            }
+            #${RAIL_ID} .jcts-span::before { width: 28px; background: rgba(255,255,255,.9); }
+            #${RAIL_ID} .jcts-mark:hover::before, #${RAIL_ID} .jcts-span:hover::before,
+            #${RAIL_ID} .jcts-selected::before { width: 36px; background: #fff; }
+          `;
+          document.head.appendChild(style);
+        }
+
+        function showToast(message) {
+          let toast = document.getElementById(TOAST_ID);
+          if (!toast) {
+            toast = document.createElement('div');
+            toast.id = TOAST_ID;
+            document.body.appendChild(toast);
+          }
+          if (toastTimer) clearTimeout(toastTimer);
+          toast.textContent = message;
+          toast.classList.add('show');
+          toastTimer = setTimeout(() => {
+            toast.classList.remove('show');
+          }, 2000);
+        }
+
+        function normalizeRawTime(rawText) {
+          return String(rawText || '')
+            .replace(/[−－]/g, '-')
+            .replace(/[：]/g, ':')
+            .replace(/\s+/g, '');
+        }
+
+        function parseTimeToSeconds(rawText) {
+          const normalized = normalizeRawTime(rawText);
+          const isNegative = normalized.startsWith('-');
+          const cleanText = normalized.replace(/^-/, '');
+          const parts = cleanText.split(':').map(Number);
+          if (parts.some((item) => !Number.isFinite(item))) return null;
+          if (parts.length === 2) {
+            return { isNegative, seconds: parts[0] * 60 + parts[1] };
+          }
+          if (parts.length === 3) {
+            return { isNegative, seconds: parts[0] * 3600 + parts[1] * 60 + parts[2] };
+          }
+          return null;
+        }
+
+        function getVideoDuration() {
+          const video = getVideo();
+          if (!video || !Number.isFinite(video.duration) || video.duration <= 0) return null;
+          return video.duration;
+        }
+
+        function getTimePointVariants(rawText) {
+          const normalized = normalizeRawTime(rawText);
+          const points = [];
+          const match = normalized.match(/^([12]):(\d{1,2})$/);
+
+          if (!match) {
+            const sec = parseTimeToSeconds(normalized)?.seconds ?? 0;
+            points.push({
+              normalized,
+              raw: rawText,
+              display: normalized,
+              title: '点击跳转到这个时间并播放',
+              seconds: sec,
+              isRange: false
+            });
+            return points;
+          }
+
+          const firstPart = Number(match[1]);
+          const secondPart = Number(match[2]);
+          if (secondPart > 59) {
+            const sec = parseTimeToSeconds(normalized)?.seconds ?? 0;
+            points.push({
+              normalized,
+              raw: rawText,
+              display: normalized,
+              title: '点击跳转到这个时间并播放',
+              seconds: sec,
+              isRange: false
+            });
+            return points;
+          }
+
+          const paddedFirst = String(firstPart).padStart(2, '0');
+          const paddedSecond = String(secondPart).padStart(2, '0');
+          const minuteSecond = `00:${paddedFirst}:${paddedSecond}`;
+          const hourMinute = `${paddedFirst}:${paddedSecond}:00`;
+          const msSec = firstPart * 60 + secondPart;
+          const hmSec = firstPart * 3600 + secondPart * 60;
+          const duration = getVideoDuration();
+
+          let preferHour = false;
+          if (duration != null) {
+            if (hmSec < duration - 1 && (msSec < 180 || duration > 3600)) {
+              preferHour = true;
+            }
+          }
+
+          if (preferHour) {
+            points.push({
+              normalized: hourMinute,
+              raw: hourMinute,
+              display: hourMinute,
+              title: `${hourMinute}（按时:分解析）`,
+              seconds: hmSec,
+              isRange: false
+            });
+            points.push({
+              normalized: minuteSecond,
+              raw: minuteSecond,
+              display: minuteSecond,
+              title: `${minuteSecond}（按分:秒解析）`,
+              seconds: msSec,
+              isRange: false
+            });
+          } else {
+            points.push({
+              normalized: minuteSecond,
+              raw: minuteSecond,
+              display: minuteSecond,
+              title: `${minuteSecond}（按分:秒解析）`,
+              seconds: msSec,
+              isRange: false
+            });
+            points.push({
+              normalized: hourMinute,
+              raw: hourMinute,
+              display: hourMinute,
+              title: `${hourMinute}（按时:分解析）`,
+              seconds: hmSec,
+              isRange: false
+            });
+          }
+          return points;
+        }
+
+        function getVideo() {
+          return document.querySelector('video');
+        }
+
+        function getVideoBox() {
+          const video = getVideo();
+          if (!video) return null;
+          return video.closest('.plyr, .video-js, .jwplayer, .dplayer, .embed-responsive, .video-player, .player, .container')
+            || video.parentElement
+            || video;
+        }
+
+        function clamp(value, min, max) {
+          return Math.min(Math.max(value, min), max);
+        }
+
+        async function waitForVideoMetadata(video) {
+          if (Number.isFinite(video.duration) && video.duration > 0) return;
+          await new Promise((resolve) => {
+            const timer = setTimeout(resolve, 3000);
+            video.addEventListener('loadedmetadata', () => {
+              clearTimeout(timer);
+              resolve();
+            }, { once: true });
+          });
+        }
+
+        function currentRailPoint() {
+          const video = getVideo();
+          const rail = document.getElementById(RAIL_ID);
+          if (!video || !rail) return '';
+          const marks = Array.from(rail.querySelectorAll('.jcts-mark, .jcts-span'));
+          let current = '';
+          marks.forEach((mark) => {
+            const start = Number(mark.dataset.seconds);
+            const end = Number(mark.dataset.endSeconds || mark.dataset.seconds);
+            if (video.currentTime + 0.25 >= start && video.currentTime < end) current = mark.dataset.normalizedTime;
+          });
+          return current;
+        }
+        function updateSelectedSidebarItem() {
+          const active = currentRailPoint() || selectedTimePoint;
+          document.querySelectorAll(`#${RAIL_ID} .jcts-mark, #${RAIL_ID} .jcts-span`).forEach((mark) => {
+            mark.classList.toggle('jcts-selected', mark.dataset.normalizedTime === active);
+          });
+          document.querySelectorAll(`#${SIDEBAR_ID} .jcts-item`).forEach((button) => {
+            button.classList.toggle(
+              'jcts-selected',
+              button.dataset.normalizedTime === selectedTimePoint
+            );
+          });
+        }
+
+        async function jumpToTime(rawText) {
+          const video = getVideo();
+          if (!video) {
+            showToast('没有找到视频');
+            return;
+          }
+
+          const variants = getTimePointVariants(rawText);
+          let chosen = variants[0];
+          if (variants.length > 1) {
+            const duration = getVideoDuration();
+            if (duration != null) {
+              const valid = variants.filter(v => v.seconds < duration - 0.5);
+              if (valid.length) {
+                chosen = valid.sort((a, b) => b.seconds - a.seconds)[0];
+              }
+            }
+          }
+
+          const parsed = parseTimeToSeconds(chosen.raw);
+          if (!parsed) {
+            showToast('时间格式不正确');
+            return;
+          }
+
+          selectedTimePoint = chosen.normalized;
+          updateSelectedSidebarItem();
+
+          await waitForVideoMetadata(video);
+          if (!Number.isFinite(video.duration) || video.duration <= 0) {
+            showToast('视频时长还没加载');
+            return;
+          }
+
+          const targetTime = parsed.isNegative
+            ? video.duration - parsed.seconds
+            : parsed.seconds;
+          video.currentTime = clamp(targetTime, 0, Math.max(0, video.duration - 0.2));
+
+          try {
+            await video.play();
+          } catch {}
+          showToast(`已跳转 ${chosen.display}`);
+        }
+
+        function shouldSkipTextNode(textNode) {
+          const parent = textNode.parentElement;
+          if (!parent) return true;
+          return Boolean(parent.closest([
+            'script', 'style', 'textarea', 'input', 'video', 'audio', 'button', 'a',
+            `.${LINK_CLASS}`, `#${SIDEBAR_ID}`,
+            '.plyr', '.video-js', '.jwplayer', '.dplayer', '.vjs-control-bar'
+          ].join(',')));
+        }
+
+        function linkifyTextNode(textNode) {
+          if (shouldSkipTextNode(textNode)) return;
+          const text = textNode.nodeValue;
+          if (!text) return;
+
+          TIME_PATTERN.lastIndex = 0;
+          if (!TIME_PATTERN.test(text)) {
+            TIME_PATTERN.lastIndex = 0;
+            return;
+          }
+          TIME_PATTERN.lastIndex = 0;
+
+          const fragment = document.createDocumentFragment();
+          let lastIndex = 0;
+          let match;
+          while ((match = TIME_PATTERN.exec(text)) !== null) {
+            const raw = match[0];
+            const start = match.index;
+            const end = start + raw.length;
+            if (start > lastIndex) {
+              fragment.appendChild(document.createTextNode(text.slice(lastIndex, start)));
+            }
+            const link = document.createElement('span');
+            link.className = LINK_CLASS;
+            link.textContent = raw;
+            const variants = getTimePointVariants(raw);
+            link.title = variants.length > 1
+              ? '点击优先跳合理时间；侧边栏可选手动切换'
+              : '点击跳转到这个时间并播放';
+            link.dataset.rawTime = raw;
+            link.dataset.normalizedTime = normalizeRawTime(raw);
+            link.addEventListener('click', (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              jumpToTime(raw);
+            });
+            fragment.appendChild(link);
+            lastIndex = end;
+          }
+          if (lastIndex < text.length) {
+            fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+          }
+          textNode.parentNode.replaceChild(fragment, textNode);
+        }
+
+        function scanNode(root) {
+          const walker = document.createTreeWalker(
+            root,
+            NodeFilter.SHOW_TEXT,
+            {
+              acceptNode(node) {
+                if (shouldSkipTextNode(node)) return NodeFilter.FILTER_REJECT;
+                TIME_PATTERN.lastIndex = 0;
+                return TIME_PATTERN.test(node.nodeValue || '')
+                  ? NodeFilter.FILTER_ACCEPT
+                  : NodeFilter.FILTER_REJECT;
+              }
+            }
+          );
+          const nodes = [];
+          let node;
+          while ((node = walker.nextNode())) {
+            nodes.push(node);
+          }
+          nodes.forEach(linkifyTextNode);
+        }
+
+        /** 从评论原文中提取区间（A~B） */
+        function collectRangesFromText(text) {
+          const ranges = [];
+          RANGE_PATTERN.lastIndex = 0;
+          let match;
+          while ((match = RANGE_PATTERN.exec(text)) !== null) {
+            const startRaw = match[1];
+            const endRaw = match[2];
+            const startNorm = normalizeRawTime(startRaw);
+            const endNorm = normalizeRawTime(endRaw);
+            const startSec = parseTimeToSeconds(startNorm)?.seconds ?? 0;
+            const endSec = parseTimeToSeconds(endNorm)?.seconds ?? 0;
+            // 用起点作为排序键，显示完整区间
+            const display = `${startNorm}~${endNorm}`;
+            const key = `range:${startNorm}~${endNorm}`;
+            ranges.push({
+              normalized: key,
+              raw: startRaw,          // 跳转用起点
+              display,
+              title: `区间 ${display}（点击跳到起点）`,
+              seconds: Math.min(startSec, endSec),
+              endSeconds: Math.max(startSec, endSec),
+              isRange: true
+            });
+          }
+          return ranges;
+        }
+
+        function collectTimePoints() {
+          const uniqueMap = new Map();
+
+          // 1. 单个时间点（来自已 linkify 的 span）
+          const links = Array.from(document.querySelectorAll(`.${LINK_CLASS}`))
+            .filter((link) => !link.closest(`#${SIDEBAR_ID}`));
+          for (const link of links) {
+            const raw = link.dataset.rawTime || link.textContent || '';
+            for (const point of getTimePointVariants(raw)) {
+              if (!point.normalized || uniqueMap.has(point.normalized)) continue;
+              uniqueMap.set(point.normalized, point);
+            }
+          }
+
+          // 2. 区间（从评论块原文扫描，避免被 linkify 拆散后丢失）
+          const commentBlock = document.getElementById(COMMENT_BLOCK_ID) || document.body;
+          const commentTexts = [];
+          // 收集所有评论文本（尽量还原）
+          commentBlock.querySelectorAll('.comment, .comments-item, .item, .row, [class*="comment"]').forEach(el => {
+            commentTexts.push(el.innerText || el.textContent || '');
+          });
+          // 兜底：整块
+          if (commentTexts.length === 0) {
+            commentTexts.push(commentBlock.innerText || '');
+          }
+
+          for (const text of commentTexts) {
+            for (const range of collectRangesFromText(text)) {
+              if (!uniqueMap.has(range.normalized)) {
+                uniqueMap.set(range.normalized, range);
+              }
+            }
+          }
+
+          // 按真实秒数排序（区间按起点）
+          return Array.from(uniqueMap.values()).sort((a, b) => a.seconds - b.seconds);
+        }
+
+        function renderProgressMarks(points) {
+          const old = document.getElementById(RAIL_ID);
+          if (!timeEnabled) {
+            if (old) old.remove();
+            return;
+          }
+          const video = getVideo();
+          const duration = getVideoDuration();
+          const player = video && video.closest('.plyr');
+          if (!video || !duration || !player) {
+            if (old) old.remove();
+            return;
+          }
+          if (getComputedStyle(player).position === 'static') player.style.position = 'relative';
+          let rail = old;
+          if (!rail) {
+            rail = document.createElement('div');
+            rail.id = RAIL_ID;
+          }
+          if (rail.parentNode !== player) player.appendChild(rail);
+          if (!rail.dataset.bound) {
+            rail.dataset.bound = '1';
+            const stop = (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            };
+            ['pointerdown', 'pointerup', 'click', 'mousedown', 'mouseup'].forEach((name) => rail.addEventListener(name, stop));
+          }
+          const signature = points.map((point) => point.normalized).join('|');
+          if (rail.dataset.signature === signature) return;
+          rail.dataset.signature = signature;
+          rail.replaceChildren();
+          points.forEach((point) => {
+            const mark = document.createElement('button');
+            mark.type = 'button';
+            mark.className = point.isRange ? 'jcts-span' : 'jcts-mark';
+            mark.title = point.display || point.normalized;
+            mark.dataset.normalizedTime = point.normalized;
+            mark.dataset.seconds = String(point.seconds || 0);
+            mark.dataset.endSeconds = String(point.isRange ? (point.endSeconds || point.seconds || 0) : (point.seconds || 0) + 1);
+            mark.addEventListener('click', (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              jumpToTime(point.raw);
+            });
+            rail.appendChild(mark);
+          });
+        }
+
+        function clampSidebarPosition(sidebar, left, top) {
+          const width = sidebar.offsetWidth || 128;
+          const height = sidebar.offsetHeight || 0;
+          const maxLeft = Math.max(SIDEBAR_VIEWPORT_MARGIN, window.innerWidth - width - SIDEBAR_VIEWPORT_MARGIN);
+          const maxTop = Math.max(SIDEBAR_VIEWPORT_MARGIN, window.innerHeight - height - SIDEBAR_VIEWPORT_MARGIN);
+          return {
+            left: clamp(left, SIDEBAR_VIEWPORT_MARGIN, maxLeft),
+            top: clamp(top, SIDEBAR_VIEWPORT_MARGIN, maxTop)
+          };
+        }
+
+        function applySidebarPosition(sidebar, position) {
+          sidebar.style.left = `${position.left}px`;
+          sidebar.style.top = `${position.top}px`;
+        }
+
+        function positionSidebar(sidebar) {
+          if (sidebarManualPosition) {
+            sidebarManualPosition = clampSidebarPosition(
+              sidebar,
+              sidebarManualPosition.left,
+              sidebarManualPosition.top
+            );
+            applySidebarPosition(sidebar, sidebarManualPosition);
+            return;
+          }
+          const videoBox = getVideoBox();
+          if (!videoBox) return;
+          const rect = videoBox.getBoundingClientRect();
+          const width = sidebar.offsetWidth || 128;
+          const gap = 14;
+          sidebar.style.left = `${Math.max(8, rect.left - width - gap)}px`;
+          sidebar.style.top = `${Math.max(72, rect.top + 12)}px`;
+        }
+
+        function bindSidebarDragging(sidebar, title) {
+          let dragState = null;
+          function stopDragging(event) {
+            if (!dragState || event.pointerId !== dragState.pointerId) return;
+            if (title.hasPointerCapture?.(dragState.pointerId)) {
+              title.releasePointerCapture(dragState.pointerId);
+            }
+            dragState = null;
+            sidebar.classList.remove('jcts-dragging');
+          }
+          title.addEventListener('pointerdown', (event) => {
+            if (event.isPrimary === false) return;
+            if (event.pointerType === 'mouse' && event.button !== 0) return;
+            const rect = sidebar.getBoundingClientRect();
+            dragState = {
+              pointerId: event.pointerId,
+              startClientX: event.clientX,
+              startClientY: event.clientY,
+              startLeft: rect.left,
+              startTop: rect.top,
+              hasMoved: false
+            };
+            title.setPointerCapture?.(event.pointerId);
+            sidebar.classList.add('jcts-dragging');
+            event.preventDefault();
+          });
+          title.addEventListener('pointermove', (event) => {
+            if (!dragState || event.pointerId !== dragState.pointerId) return;
+            const deltaX = event.clientX - dragState.startClientX;
+            const deltaY = event.clientY - dragState.startClientY;
+            if (!dragState.hasMoved && Math.hypot(deltaX, deltaY) < DRAG_START_THRESHOLD) return;
+            dragState.hasMoved = true;
+            sidebarManualPosition = clampSidebarPosition(
+              sidebar,
+              dragState.startLeft + deltaX,
+              dragState.startTop + deltaY
+            );
+            applySidebarPosition(sidebar, sidebarManualPosition);
+            event.preventDefault();
+          });
+          title.addEventListener('pointerup', stopDragging);
+          title.addEventListener('pointercancel', stopDragging);
+          title.addEventListener('lostpointercapture', () => {
+            dragState = null;
+            sidebar.classList.remove('jcts-dragging');
+          });
+        }
+
+        function showSidebarCloseButton(sidebar, resetTimer = true) {
+          const closeButton = sidebar.querySelector('.jcts-close');
+          if (!closeButton) return;
+          if (sidebarCloseTimer) clearTimeout(sidebarCloseTimer);
+          if (resetTimer) {
+            sidebarCloseVisibleUntil = Date.now() + CLOSE_BUTTON_VISIBLE_MS;
+          }
+          const remainingTime = sidebarCloseVisibleUntil - Date.now();
+          if (remainingTime <= 0) {
+            closeButton.classList.remove('jcts-visible');
+            sidebarCloseVisibleUntil = 0;
+            sidebarCloseTimer = null;
+            return;
+          }
+          closeButton.classList.add('jcts-visible');
+          sidebarCloseTimer = setTimeout(() => {
+            closeButton.classList.remove('jcts-visible');
+            sidebarCloseVisibleUntil = 0;
+            sidebarCloseTimer = null;
+          }, remainingTime);
+        }
+
+        function createSidebarCloseButton(sidebar) {
+          const closeButton = document.createElement('button');
+          closeButton.type = 'button';
+          closeButton.className = 'jcts-close';
+          closeButton.textContent = '×';
+          closeButton.title = '关闭时间列表';
+          closeButton.setAttribute('aria-label', '关闭时间列表');
+          closeButton.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (sidebarCloseTimer) {
+              clearTimeout(sidebarCloseTimer);
+              sidebarCloseTimer = null;
+            }
+            sidebarCloseVisibleUntil = 0;
+            timeEnabled = false;
+            sidebar.remove();
+          });
+          sidebar.appendChild(closeButton);
+        }
+
+        function renderSidebar() {
+          const points = collectTimePoints();
+          renderProgressMarks(points);
+          let sidebar = document.getElementById(SIDEBAR_ID);
+          if (!timeEnabled) {
+            if (sidebar) sidebar.remove();
+            return;
+          }
+          if (points.length === 0) {
+            if (sidebar) sidebar.remove();
+            return;
+          }
+          if (!sidebar) {
+            sidebar = document.createElement('div');
+            sidebar.id = SIDEBAR_ID;
+            sidebar.addEventListener('pointerdown', () => showSidebarCloseButton(sidebar));
+            document.body.appendChild(sidebar);
+          }
+          const signature = points.map((point) => point.normalized).join('|');
+          if (sidebar.dataset.signature === signature) {
+            updateSelectedSidebarItem();
+            positionSidebar(sidebar);
+            return;
+          }
+          sidebar.dataset.signature = signature;
+          sidebar.classList.remove('jcts-dragging');
+          sidebar.innerHTML = '';
+          createSidebarCloseButton(sidebar);
+          showSidebarCloseButton(sidebar, false);
+
+          const title = document.createElement('div');
+          title.className = 'jcts-title';
+          title.textContent = `时间点 ${points.length}`;
+          title.title = '按住并拖动时间列表';
+          sidebar.appendChild(title);
+          bindSidebarDragging(sidebar, title);
+
+          const list = document.createElement('div');
+          list.className = 'jcts-list';
+          for (const point of points) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'jcts-item' + (point.isRange ? ' jcts-range' : '');
+            button.dataset.normalizedTime = point.normalized;
+            button.textContent = point.display;
+            button.title = point.title;
+            button.addEventListener('click', () => {
+              selectedTimePoint = point.normalized;
+              updateSelectedSidebarItem();
+              jumpToTime(point.raw);   // 区间跳起点，单点跳自身
+            });
+            list.appendChild(button);
+          }
+          sidebar.appendChild(list);
+          updateSelectedSidebarItem();
+          positionSidebar(sidebar);
+        }
+
+        function scheduleRefreshSidebar() {
+          if (refreshTimer) clearTimeout(refreshTimer);
+          refreshTimer = setTimeout(() => {
+            renderSidebar();
+          }, 150);
+        }
+
+        function getCommentCountFromPage() {
+          const text = document.body.innerText || '';
+          const match = text.match(/留言\s*[（(]\s*(\d+)\s*[）)]/);
+          return match ? Number(match[1]) : null;
+        }
+
+        function getLoadedCommentCount() {
+          const block = document.getElementById(COMMENT_BLOCK_ID);
+          if (!block) return 0;
+          const avatars = block.querySelectorAll('img.avatar, .avatar img, .avatar, .user-avatar, .comment-avatar');
+          if (avatars.length > 0) return avatars.length;
+          const commentLikeNodes = block.querySelectorAll('.comment, .comments-item, .item, .row');
+          return Math.max(commentLikeNodes.length, 0);
+        }
+
+        function getLoadMoreLink() {
+          const block = document.getElementById(COMMENT_BLOCK_ID) || document.body;
+          return Array.from(block.querySelectorAll('a[data-action="ajax"][data-block-id], button[data-action="ajax"][data-block-id]'))
+            .find((el) => {
+              const text = String(el.textContent || '').trim();
+              const blockId = el.dataset.blockId || '';
+              return blockId === COMMENT_BLOCK_ID
+                && /載入更多|载入更多|加载更多|更多|Load more/i.test(text);
+            }) || null;
+        }
+
+        function waitForCommentDomChange(oldCount, timeout = 5000) {
+          return new Promise((resolve) => {
+            const block = document.getElementById(COMMENT_BLOCK_ID);
+            if (!block) {
+              resolve(false);
+              return;
+            }
+            const observer = new MutationObserver(() => {
+              const newCount = getLoadedCommentCount();
+              if (newCount > oldCount || !getLoadMoreLink()) {
+                clearTimeout(timer);
+                observer.disconnect();
+                resolve(true);
+              }
+            });
+            const timer = setTimeout(() => {
+              observer.disconnect();
+              resolve(getLoadedCommentCount() > oldCount);
+            }, timeout);
+            observer.observe(block, {
+              childList: true,
+              subtree: true
+            });
+          });
+        }
+
+        async function autoClickLoadMoreComments() {
+          if (isAutoLoadingComments) return;
+          isAutoLoadingComments = true;
+          const totalCount = getCommentCountFromPage();
+          const targetCount = Math.min(totalCount || MAX_AUTO_COMMENTS, MAX_AUTO_COMMENTS);
+          try {
+            let guard = Math.ceil(targetCount / COMMENT_PAGE_SIZE) + 4;
+            while (guard-- > 0) {
+              const loadedCount = getLoadedCommentCount();
+              if (loadedCount >= targetCount) break;
+              const loadMore = getLoadMoreLink();
+              if (!loadMore) break;
+              loadMore.style.display = 'none';
+              loadMore.dispatchEvent(new MouseEvent('click', {
+                bubbles: true,
+                cancelable: true,
+                view: window
+              }));
+              await waitForCommentDomChange(loadedCount);
+              scanNode(document.getElementById(COMMENT_BLOCK_ID) || document.body);
+              renderSidebar();
+              await new Promise((resolve) => setTimeout(resolve, 350));
+            }
+            const finalCount = getLoadedCommentCount();
+            if (finalCount > COMMENT_PAGE_SIZE) {
+              showToast(`已加载 ${finalCount} 条评论`);
+            }
+          } catch (error) {
+            console.warn('[Jable comment time helper] 自动加载评论失败', error);
+            showToast('自动加载评论失败');
+          } finally {
+            isAutoLoadingComments = false;
+          }
+        }
+
+        function observeComments() {
+          const observer = new MutationObserver((mutations) => {
+            let changed = false;
+            for (const mutation of mutations) {
+              for (const node of mutation.addedNodes) {
+                if (node.nodeType === Node.TEXT_NODE) {
+                  linkifyTextNode(node);
+                  changed = true;
+                }
+                if (node.nodeType === Node.ELEMENT_NODE) {
+                  if (node.id === SIDEBAR_ID || node.closest?.(`#${SIDEBAR_ID}`)) continue;
+                  scanNode(node);
+                  changed = true;
+                }
+              }
+            }
+            if (changed) scheduleRefreshSidebar();
+          });
+          observer.observe(document.body, {
+            childList: true,
+            subtree: true
+          });
+        }
+
+        function bindLayoutUpdates() {
+          window.addEventListener('resize', () => {
+            const sidebar = document.getElementById(SIDEBAR_ID);
+            if (sidebar) positionSidebar(sidebar);
+          }, { passive: true });
+          window.addEventListener('scroll', () => {
+            const sidebar = document.getElementById(SIDEBAR_ID);
+            if (sidebar) positionSidebar(sidebar);
+          }, { passive: true });
+        }
+
+        let started = false;
+        window.addEventListener('msv-script-enabled', (event) => setEnabled(event.detail));
+        setInterval(updateSelectedSidebarItem, 400);
+        function setEnabled(enabled) {
+          timeEnabled = Boolean(enabled);
+          if (!timeEnabled) {
+            const sidebar = document.getElementById(SIDEBAR_ID);
+            if (sidebar) sidebar.remove();
+            const rail = document.getElementById(RAIL_ID);
+            if (rail) rail.remove();
+            return;
+          }
+          if (started) {
+            renderSidebar();
+            return;
+          }
+          started = true;
+          injectStyle();
+          scanNode(document.body);
+          renderSidebar();
+          observeComments();
+          bindLayoutUpdates();
+          setTimeout(autoClickLoadMoreComments, 800);
+        }
+
+        return { setEnabled };
+        })();
+        if (location.hostname.includes('jable')) JableTimeJump.setEnabled(STATE.enabled);
     }
 })();

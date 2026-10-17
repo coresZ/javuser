@@ -5,7 +5,7 @@
 
 ## 1. 这是什么
 
-单文件油猴脚本：`dock/jav-code-scanner.user.js`（严格模式 IIFE，当前 **v1.5.95**）。
+单文件油猴脚本：`dock/jav-code-scanner.user.js`（严格模式 IIFE，当前 **v1.5.96**）。
 
 功能全景：页面番号扫描高亮 → 点击即搜 → 多源切换与页内预览（iframe / GM 自渲染、
 拒绝自动降级）→ 操作条（字幕 / 复制 / 番号库 / 剧照 / 扩展按钮）→ 配置面板六个 tab
@@ -21,7 +21,7 @@
    `dock/jav-code-scanner.user.js` → 保存。
 2. 打开任意匹配站点（域名含 `jav`/`av`/`fc2` 的站、missav、jable、dmm 等 30+ 站，
    完整清单见脚本头 `@include`）。同时安装 `dock/page-dock.user.js` 后，只在悬浮坞菜单里看到「扫描」；没有悬浮坞时，右下角出现原来的红色浮钮。
-3. 悬浮坞左边点「扫描」打开或关闭扫描面板。右边开关停用整个扫描脚本；停用后左边变灰，点了没有反应，扫描和高亮不再继续。打开右边开关只恢复脚本，不会顺便打开面板。
+3. 悬浮坞左边点「扫描」打开或关闭扫描面板。右边开关停用整个扫描脚本；停用后左边变灰，点了没有反应，扫描和高亮不再继续。打开右边开关只恢复脚本，不会顺便打开面板。识别到的数量显示在「扫描」旁边，没有结果时不显示。
 
 ### 2.2 扫描与搜索
 
@@ -182,7 +182,7 @@ JavCodeKit.extensions.register(MANIFEST)     // 手动注册（调试 manifest �
 
 | 路径 | 说明 |
 |---|---|
-| `dock/jav-code-scanner.user.js` | 唯一产品文件（当前 v1.5.95） |
+| `dock/jav-code-scanner.user.js` | 唯一产品文件（当前 v1.5.96） |
 | `dock/docs/jav-code-scanner/jcs-extension-contract.md` | 扩展契约 v1.1（对外发布物，宿主 ≥ v1.5.81） |
 | `dock/docs/jav-code-scanner/MODIFICATIONS.md` | 修改协议与记录（改前读、改后回填） |
 | `dock/docs/integration/integration-emh-scanner.md` | 与 EMH 的双脚本协作协议 |

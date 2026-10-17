@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         通用番号扫描 & 多源搜索
 // @namespace    http://tampermonkey.net/
-// @version      1.5.95
+// @version      1.5.96
 // @description  扫描页面番号，多源搜索与页内预览（iframe/GM 自渲染、拒绝自动降级）、字幕/原名下载、页面高亮自定义、番号库协作（Enhanced_Media_Helper）、扩展宿主（第三方油猴库接入，含选源 picker 按钮组 pickButtons）、全站配置备份（WebDAV 可加密）、window.JavCodeKit 开放 API
 // @author       You
 // @include      *://*jav*/*
@@ -60,8 +60,8 @@
     if (_pageWin.JavCodeKit && _pageWin.JavCodeKit.__ready) return;
 
     const NS = 'jcs';
-    const STYLE_VER = '1.5.95';
-    const SCRIPT_VER = '1.5.95';
+    const STYLE_VER = '1.5.96';
+    const SCRIPT_VER = '1.5.96';
     const IS_CBOX = /(^|\.)cbox\.ws$/i.test(location.hostname || '');
     const CBOX_MSG_SOURCE = 'jcs-cbox';
     const ENC_MARK = 'jcs-aes-gcm-v1';
@@ -7706,6 +7706,10 @@ a.${NS}-link.is-pick-on,button.jcs-chip.is-pick-on,button.jcs-item.is-pick-on{
             fab.classList.toggle('has-codes', n > 0);
             fab.title = n ? ('番号扫描 · ' + n + ' 个') : '番号扫描';
             fab.setAttribute('aria-label', n ? ('番号扫描，识别到 ' + n + ' 个') : '番号扫描');
+        }
+        if (typeof pageDockApi === 'function') {
+            const dockApi = pageDockApi();
+            if (dockApi && typeof dockApi.setBadge === 'function') dockApi.setBadge('jcs-scanner', n > 0 ? (n > 99 ? '99+' : String(n)) : '');
         }
         if (sub) sub.textContent = n ? ('识别到 ' + n + ' 个') : '未识别到番号';
         if (foot) {

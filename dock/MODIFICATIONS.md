@@ -103,6 +103,139 @@
 - `dock/Enhanced_Media_Helper.js`：`PanelStore.set`
 - `dock/jav-code-scanner.user.js`：面板打开与关闭路径
 
+## 2026-10-17 · 扫描数量显示在悬浮坞
+
+**功能**：原浮钮上的扫描数量改到悬浮坞「扫描」旁边。
+
+**修改内容**：
+- JCS 1.5.95 → 1.5.96。
+- `renderPanelMeta` 调用已有的 `PageDock.setBadge('jcs-scanner', 数量)`。没有结果时清空。超过 99 显示 `99+`。
+- 不改悬浮坞。
+
+**涉及文件与位置**：
+- `dock/jav-code-scanner.user.js`：`renderPanelMeta`
+
+## 2026-10-17 · Jable 评论时间并入字幕脚本
+
+**功能**：评论时间列表只在 Jable 启用，默认打开，和 CC 共用同一个脚本开关。
+
+**修改内容**：
+- `jable-time-jump.js` 1.9.0 → 1.10.0。去掉自动启动，改为 `window.JableTimeJump.setEnabled`。关闭时移除时间列表。
+- 字幕脚本 5.27 → 5.28。`@require ./jable-time-jump.js`。脚本开关变化时同步时间列表。
+- Missav 页面不调用这个模块。
+
+**涉及文件与位置**：
+- `dock/jable-time-jump.js`：`setEnabled`
+- `dock/jable & miss.user.js`：`@require`、`setScriptEnabled`
+
+## 2026-10-17 · 评论时间代码直接迁入字幕脚本
+
+**功能**：不再通过独立文件或 `@require` 挂评论时间功能。
+
+**修改内容**：
+- 字幕脚本 5.28 → 5.29。
+- `jable-time-jump.js` 的时间解析、评论链接、自动加载和时间列表代码直接放进字幕脚本的 `JableTimeJump`。
+- 删除 `dock/jable-time-jump.js`。Jable 上仍和 CC 共用 `STATE.enabled`，Missav 不启动。
+
+**涉及文件与位置**：
+- `dock/jable & miss.user.js`：`JableTimeJump`
+- `dock/jable-time-jump.js`：删除
+
+## 2026-10-17 · 时间列表显隐只跟右侧开关
+
+**功能**：评论更新不能在脚本关闭后把时间列表重新画出来。
+
+**修改内容**：
+- 字幕脚本 5.29 → 5.30。
+- `JableTimeJump.setEnabled` 写入 `timeEnabled`。`renderSidebar` 在关闭时直接移除列表，不再因为评论变化重建。
+- 列表上的关闭也走同一个关闭状态。
+
+**涉及文件与位置**：
+- `dock/jable & miss.user.js`：`timeEnabled`、`renderSidebar`、`setEnabled`
+
+## 2026-10-17 · 右侧开关当场控制时间列表
+
+**功能**：不刷新页面，右侧开关关闭就隐藏时间列表，打开就重新显示。
+
+**修改内容**：
+- 字幕脚本 5.30 → 5.31。
+- 开关不再直接调用内层的 `JableTimeJump`。它在另一个函数作用域里，调用不到。
+- 改为派发 `msv-script-enabled`。时间模块监听后立刻移除或重建列表。
+
+**涉及文件与位置**：
+- `dock/jable & miss.user.js`：`setScriptEnabled`、`JableTimeJump.setEnabled`
+
+## 2026-10-17 · 评论时间显示在进度条上
+
+**功能**：时间点和时间段画在播放器进度条上，全屏时跟着进度条显示。
+
+**修改内容**：
+- 字幕脚本 5.31 → 5.32。
+- 单个时间画成刻度，时间段画成区间。点击跳到起点。
+- 右侧开关关闭时，进度条标记和时间列表一起移除。
+
+**涉及文件与位置**：
+- `dock/jable & miss.user.js`：`renderProgressMarks`
+
+## 2026-10-17 · 全屏右侧时间刻度
+
+**功能**：全屏时不再把时间点压在进度条上，改为播放器右侧的横向刻度。
+
+**修改内容**：
+- 字幕脚本 5.32 → 5.33。
+- 刻度挂在 `.plyr` 内，只在全屏显示。单个时间是短横线，时间段是更长的横线，点击热区比进度条上的点大。
+- 点击仍跳到起点。右侧开关关闭时移除。
+
+**涉及文件与位置**：
+- `dock/jable & miss.user.js`：`#jable-comment-time-rail`、`renderProgressMarks`
+
+## 2026-10-17 · 右侧刻度按数量均匀排列
+
+**功能**：全屏右侧刻度不再按片长时间隔拉开。
+
+**修改内容**：
+- 字幕脚本 5.35 → 5.36。
+- 每个时间点和时间段各占一行，行高 16px。数量少时尺子短，数量多时变长，最高 70%，超出后在刻度区内滚动。
+- 点击仍跳到真实时间。时间段只是横线更长，不再按时间跨度拉高。
+
+**涉及文件与位置**：
+- `dock/jable & miss.user.js`：`#jable-comment-time-rail`、`renderProgressMarks`
+
+## 2026-10-17 · 选中刻度保持变长
+
+**功能**：选中的右侧刻度保持长线，直到选择另一个，或播放进入下一个时间段。
+
+**修改内容**：
+- 字幕脚本 5.36 → 5.37。
+- 刻度记录起止秒数。播放进入某个时间段时自动选中该段；离开后如果没有进入下一段，仍保持上次选中。
+- 点击刻度或侧栏时间也会更新选中状态。
+
+**涉及文件与位置**：
+- `dock/jable & miss.user.js`：`currentRailPoint`、`updateSelectedSidebarItem`
+
+## 2026-10-17 · 右侧刻度区不再误暂停
+
+**功能**：全屏时点右侧刻度附近，不会再点到画面导致暂停。
+
+**修改内容**：
+- 字幕脚本 5.34 → 5.35。
+- 右侧刻度条改为可点击区域，挡住背后的播放器点击。
+- 刻度热区加高到 12px。点空白只拦截，不暂停；点刻度仍跳转。
+
+**涉及文件与位置**：
+- `dock/jable & miss.user.js`：`#jable-comment-time-rail`、`renderProgressMarks`
+
+## 2026-10-17 · 右侧时间刻度收短
+
+**功能**：全屏右侧刻度不再拉满播放器高度，相邻刻度更近。
+
+**修改内容**：
+- 字幕脚本 5.33 → 5.34。
+- 刻度尺改为垂直居中，高度 `min(240px, 42%)`。时间百分比仍按这条较短的尺计算。
+
+**涉及文件与位置**：
+- `dock/jable & miss.user.js`：`#jable-comment-time-rail`
+
 ## 2026-10-17 · 调整 PageDock 接入说明
 
 **功能**：写明脚本自己关闭面板时也要同步左边状态。
