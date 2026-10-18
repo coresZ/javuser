@@ -13,6 +13,12 @@
 
 **涉及文件**：`docs/superpowers/specs/2026-09-20-18mh-book-blacklist-design.md`
 
+## 2026-10-18 · 18mh 黑名单列表毛玻璃
+
+**功能**：spec 与实现对齐：列表卡改为封面、书名各自毛玻璃，不再写「不半透明」。
+
+**涉及文件**：`docs/superpowers/specs/2026-09-20-18mh-book-blacklist-design.md`
+
 ## 2026-09-22 · 18mh 书目状态 spec
 
 **功能**：记录 18mh 书目状态（连载/完结 + 更新时间）设计。

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         18dm小说下载器
 // @namespace    http://tampermonkey.net/
-// @version      4.7.6
+// @version      4.7.10
 // @description  一键下载18dm/18mh小说为TXT · UI v2（Lobe 实色层 / Lucide 图标 / PowerGlitch 成功态）· 章节缓存 · 增量更新 · 收藏更新提醒 · 书目状态（连载/完结+更新时间）· 果核阅读器直连（书库/悬浮条/列表卡）· Dock 动作菜单 · 标签抽屉 · 悬浮条拖拽磁吸 · 收藏/黑名单 WebDAV 同步
 // @author       you
 // @match        *://18dm.net/*
@@ -160,8 +160,8 @@
       '#dm-dl-dialog-acts{gap:8px!important}',
       '.dm-dl-dialog-btn{height:34px!important;font-size:12.5px!important;border-radius:8px!important}',
       '#dm-dl-sheet-mask{background:transparent!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;transition:none!important}',
-      '#dm-dl-sheet{position:fixed!important;width:382px!important;max-width:82vw!important;height:auto!important;',
-      'max-height:min(62vh, 540px)!important;margin:0!important;border-radius:16px!important;',
+      '#dm-dl-sheet{position:fixed!important;width:382px!important;max-width:82vw!important;height:min(62vh, 540px)!important;',
+      'min-height:min(360px, 62vh)!important;max-height:min(62vh, 540px)!important;margin:0!important;border-radius:16px!important;',
       'box-shadow:0 24px 64px rgba(0,0,0,0.6)!important;transform:scale(0.92) translateY(10px)!important;',
       'transform-origin:100% 100%!important;transition:transform .16s var(--dm-ease)!important}',
       '#dm-dl-sheet-mask.open #dm-dl-sheet{transform:scale(1) translateY(0)!important}',
@@ -179,14 +179,14 @@
       '.dm-dl-tab{flex:1;padding:9px 0;border-radius:var(--dm-r-sm);color:var(--dm-text-dim);font-size:13px;font-weight:600;text-align:center;transition:all .15s}',
       '.dm-dl-tab:hover{color:#fff;background:rgba(255,255,255,0.06)}',
       '.dm-dl-tab.on{color:#fff;background:var(--dm-accent-soft);box-shadow:inset 0 0 0 1px rgba(129,140,248,0.4)}',
-      '.dm-dl-body{flex:1;overflow-y:auto;padding:12px 14px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.22) transparent}',
+      '.dm-dl-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px 14px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.22) transparent}',
       '#dm-dl-root,#dm-dl-sheet,#dm-dl-tag-sheet,.dm-dl-body,.dm-dl-tag-sel,#dm-dl-tag-body{color-scheme:dark;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.22) transparent}',
       '#dm-dl-root *::-webkit-scrollbar{width:5px!important;height:5px!important;background:transparent!important}',
       '#dm-dl-root *::-webkit-scrollbar-track,#dm-dl-root *::-webkit-scrollbar-corner{background:transparent!important;border:none!important;box-shadow:none!important}',
       '#dm-dl-root *::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.22)!important;border-radius:99px!important;border:none!important}',
       '#dm-dl-root *::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.35)!important}',
       '.dm-dl-search{width:100%;padding:10px 12px;margin-bottom:10px;border-radius:var(--dm-r-sm);border:1px solid var(--dm-glass-border);background:rgba(0,0,0,0.25);color:var(--dm-text);font-size:13px}',
-      '.dm-dl-item{display:flex;gap:10px;align-items:flex-start;padding:11px 12px;border-radius:var(--dm-r-md);background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.05);margin-bottom:8px;transition:background .15s}',
+      '.dm-dl-item{display:flex;gap:8px;align-items:flex-start;padding:11px 10px;border-radius:var(--dm-r-md);background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.05);margin-bottom:8px;transition:background .15s}',
       '.dm-dl-item:hover{background:rgba(255,255,255,0.07)}',
       '.dm-dl-item-main{flex:1;min-width:0;cursor:pointer}',
       '.dm-dl-item-title{font-size:13.5px;font-weight:600;color:#f1f3f4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px}',
@@ -194,8 +194,8 @@
       '.dm-dl-tag{padding:1px 6px;border-radius:var(--dm-r-pill);font-size:10px;font-weight:600}',
       '.dm-dl-tag.dl{background:rgba(52,211,153,0.16);color:var(--dm-success)}',
       '.dm-dl-tag.fav{background:rgba(251,113,133,0.16);color:var(--dm-fav)}',
-      '.dm-dl-item-acts{display:flex;gap:6px}',
-      '.dm-dl-mini{padding:7px 12px!important;border-radius:var(--dm-r-sm)!important;background:rgba(255,255,255,0.06)!important;color:var(--dm-text-dim)!important;font-size:12px!important;font-weight:500!important;transition:background .15s,color .15s,transform .12s!important}',
+      '.dm-dl-item-acts{display:flex;gap:4px;flex:0 0 auto}',
+      '.dm-dl-mini{padding:7px 7px!important;border-radius:var(--dm-r-sm)!important;background:rgba(255,255,255,0.06)!important;color:var(--dm-text-dim)!important;font-size:12px!important;font-weight:500!important;transition:background .15s,color .15s,transform .12s!important}',
       '.dm-dl-mini:hover{background:rgba(255,255,255,0.12)!important;color:#fff!important}',
       '.dm-dl-mini:active{transform:scale(0.94)!important}',
       '.dm-dl-mini.danger:hover{background:rgba(239,68,68,0.22)!important;color:#fca5a5!important}',
@@ -337,6 +337,13 @@
       '.dm-dl-card-badge.fav{background:#e11d48!important}',
       '.dm-dl-card-badge.both{background:#3b82f6!important}',
       '.dm-dl-card-badge.ban{background:#52525b!important}',
+      '.dm-dl-veil{position:absolute!important;inset:0!important;z-index:4!important;display:flex!important;align-items:center!important;justify-content:center!important;',
+      'border-radius:inherit!important;overflow:hidden!important;pointer-events:none!important;',
+      'background:rgba(18,18,22,0.42)!important;-webkit-backdrop-filter:blur(14px) saturate(0.8)!important;backdrop-filter:blur(14px) saturate(0.8)!important;',
+      'color:#e4e4e7!important;font-size:12px!important;font-weight:650!important;letter-spacing:.04em!important;',
+      'transition:opacity .18s var(--dm-ease)!important}',
+      '.dm-dl-veil-title{background:rgba(18,18,22,0.72)!important;color:transparent!important;font-size:0!important}',
+      '.dm-dl-banned:hover .dm-dl-veil{opacity:0!important}',
       '.dm-dl-tag.ban{background:rgba(161,161,170,0.18);color:var(--dm-ban)}',
       '.dm-dl-card-badge.ser{background:#3b82f6!important}',
       '.dm-dl-card-badge.fin{background:#52525b!important}',
@@ -1924,12 +1931,15 @@
 
         var canRead = currentSheetTab === 'fav' || currentSheetTab === 'dl';
 
+        var timeTip = item.timeText
+          ? ((currentSheetTab === 'fav' ? '收藏于 ' : (currentSheetTab === 'ban' ? '拉黑于 ' : '下载于 ')) + item.timeText)
+          : '';
         row.innerHTML =
           '<div class="dm-dl-item-main">' +
-          '<div class="dm-dl-item-title">' + esc(item.title || '未知标题') + '</div>' +
+          '<div class="dm-dl-item-title" title="' + esc(timeTip) + '">' + esc(item.title || '未知标题') + '</div>' +
           '<div class="dm-dl-item-meta">' + tags +
           (upd ? '<span>' + esc(upd) + '</span>' : '') +
-          '<span>' + (item.timeText || '') + '</span></div>' +
+          '</div>' +
           '</div>' +
           '<div class="dm-dl-item-acts">' +
           '<button type="button" class="dm-dl-mini go">打开</button>' +
@@ -2034,8 +2044,10 @@
 
     // 列表卡片通常含 3 个 /novel/detail/ 链接（封面、标题、时间），
     // 旧逻辑对每个 <a> 各插一枚徽章，二次 boot / 列表重绘还会叠加。
-    var leftovers = document.querySelectorAll('.dm-dl-card-badge, .dm-dl-reader-bar');
+    var leftovers = document.querySelectorAll('.dm-dl-card-badge, .dm-dl-reader-bar, .dm-dl-veil');
     for (var i = 0; i < leftovers.length; i++) leftovers[i].remove();
+    var bannedCards = document.querySelectorAll('.dm-dl-banned');
+    for (var b = 0; b < bannedCards.length; b++) bannedCards[b].classList.remove('dm-dl-banned');
 
     var links = document.querySelectorAll('a[href*="/novel/detail/"]');
     var seenCard = [];
@@ -2093,10 +2105,44 @@
           last
         );
       }
-      if (hasBan) last = addCardBadge('ban', '已拉黑', last);
+      if (hasBan) veilBannedCard(card, titleEl);
 
       var stText = statusLabel(getStatus(id));
       if (stText) addCardBadge(stText === '已完结' ? 'fin' : 'ser', stText, last);
+    }
+  }
+
+  function veilHost(el) {
+    if (!el) return null;
+    try {
+      if (window.getComputedStyle(el).position === 'static') el.style.position = 'relative';
+    } catch (e) {
+      el.style.position = 'relative';
+    }
+    return el;
+  }
+
+  function veilBannedCard(card, titleEl) {
+    if (!card) return;
+    card.classList.add('dm-dl-banned');
+    var poster = veilHost(card.querySelector('.poster'));
+    if (!poster) {
+      var img = card.querySelector('img');
+      if (img) poster = veilHost(img.parentElement);
+    }
+    if (poster && !poster.querySelector(':scope > .dm-dl-veil')) {
+      var cover = document.createElement('div');
+      cover.className = 'dm-dl-veil';
+      cover.textContent = '已拉黑';
+      poster.appendChild(cover);
+    }
+    var title = titleEl || card.querySelector('h2, h3');
+    title = veilHost(title);
+    if (title && !title.querySelector(':scope > .dm-dl-veil')) {
+      var name = document.createElement('div');
+      name.className = 'dm-dl-veil dm-dl-veil-title';
+      name.setAttribute('aria-hidden', 'true');
+      title.appendChild(name);
     }
   }
 
