@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name Missav & Jable自动中文字幕&评论时间跳转 (悬浮)
 // @namespace http://tampermonkey.net/
-// @version 6.0
+// @version 6.4
 // @description 搜索按钮提级至首页，修复 Missav 番号识别，新增下载功能，让字幕列表常驻显示当前选中项，并优化首页设置布局，支持首页滑杆在 0%-100% 范围调整字幕垂直位置与横向位置，控制台与 CC 可拖动并记住位置，界面改为紧凑控制台，修复返回后重新搜索丢失当前选中标记的问题，并将 CC 悬浮图标恢复为低存在感透明样式，修复 Jable 评论区“求中文字幕”导致误判已有内置字幕的问题。
 // @author cores
 // @match *://missav*.com/*
@@ -12,7 +12,9 @@
 // @match *://*.jable.tv/videos/*
 // @require https://update.greasyfork.org/scripts/600709/PageDock.js
 // @grant GM_xmlhttpRequest
+// @grant GM.xmlHttpRequest
 // @grant GM_addStyle
+// @grant GM.addStyle
 // @grant unsafeWindow
 // @connect api-shoulei-ssl.xunlei.com
 // @connect xunlei.com
@@ -26,10 +28,84 @@
 // ==/UserScript==
 (function () {
     'use strict';
+    // ======================
+    // GM API 兼容层
+    // 各脚本管理器暴露的名字不一致：Tampermonkey/Violentmonkey 有 GM_addStyle，
+    // iOS 的 Userscripts 只注册 GM.addStyle（见 quoid/userscripts 的 grant 映射），
+    // 直接调用 GM_addStyle 会在 iOS 上抛 ReferenceError 并中断整个脚本。
+    // 注意：这里刻意不声明名为 GM / GM_xmlhttpRequest 的局部变量，避免遮蔽管理器注入的同名 API 造成自递归。
+    // ======================
+    const MsvGM = {
+        addStyle: (css) => {
+            try {
+                if (typeof GM_addStyle === 'function') {
+                    GM_addStyle(css);
+                    return true;
+                }
+            } catch {}
+            try {
+                if (typeof GM !== 'undefined' && GM && typeof GM.addStyle === 'function') {
+                    const result = GM.addStyle(css);
+                    if (result && typeof result.catch === 'function') result.catch(() => {});
+                    return true;
+                }
+            } catch {}
+            try {
+                const style = document.createElement('style');
+                style.textContent = css;
+                (document.head || document.documentElement).appendChild(style);
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        // 统一请求入口：优先旧式 GM_xmlhttpRequest，其次 GM.xmlHttpRequest，
+        // 都没有时回退到页面 XMLHttpRequest，保证 iOS 上搜索链路不至于整体哑掉。
+        request: (details) => {
+            try {
+                if (typeof GM_xmlhttpRequest === 'function') return GM_xmlhttpRequest(details);
+            } catch {}
+            try {
+                if (typeof GM !== 'undefined' && GM && typeof GM.xmlHttpRequest === 'function') {
+                    const req = GM.xmlHttpRequest(details);
+                    if (req && typeof req.then === 'function') {
+                        req.then((res) => { if (details.onload) details.onload(res); })
+                            .catch(() => { if (details.onerror) details.onerror({ status: 0 }); });
+                        return { abort: () => {} };
+                    }
+                    return req;
+                }
+            } catch {}
+            try {
+                const req = new XMLHttpRequest();
+                req.open(details.method || 'GET', details.url, true);
+                if (details.timeout) req.timeout = details.timeout;
+                if (details.responseType) req.responseType = details.responseType;
+                req.onload = () => {
+                    if (details.onload) details.onload({ status: req.status, response: req.response, responseText: req.responseText });
+                };
+                req.onerror = () => { if (details.onerror) details.onerror({ status: 0 }); };
+                req.ontimeout = () => { if (details.ontimeout) details.ontimeout({ status: 0 }); };
+                req.send(details.data != null ? details.data : null);
+                return req;
+            } catch {
+                if (details.onerror) details.onerror({ status: 0 });
+                return { abort: () => {} };
+            }
+        }
+    };
+    // 字幕默认字号按视口宽度分档：桌面 24px 在 402px 宽的手机上会占掉近半行宽，
+    // 移动端按「一行能放下约 18~20 个汉字」取值。
+    const defaultSubtitleFontSize = () => {
+        const vw = window.innerWidth || 1024;
+        if (vw <= 480) return 17;   // iPhone 竖屏（402/430）
+        if (vw <= 820) return 19;   // 小平板 / 手机横屏
+        return 24;
+    };
     const CONFIG = {
         autoSearch: true,
         pauseOnSearch: true,
-        defaultFontSize: 24, // 默认字号加大
+        defaultFontSize: defaultSubtitleFontSize(),
     };
     const normalizeCode = (value) => {
         const match = String(value || '').toUpperCase().replace(/MISSAV/g, '').match(/([A-Z]{2,8})[-_\s]?(\d{2,6})/);
@@ -107,50 +183,94 @@
         return missavCheck || jableCheck;
     };
     const initialBuiltInSub = checkBuiltInSub();
-    const POS_KEY = 'msv-subtitle-pos-v1';
-    const readSavedPos = () => {
+    // ======================
+    // 设置持久化
+    // 字号 / 垂直 / 横向三项共用一份记录。原实现只存了 bottom+x，字号完全没存，
+    // 所以字号每次刷新都回到默认值。这里统一成 VIEW_KEY，并且：
+    //   1. 读写全部包 try/catch —— iOS 无痕模式或「阻止所有 Cookie」下访问
+    //      localStorage 会直接抛 SecurityError，不能让一个存储异常拖垮整个脚本。
+    //   2. 兼容旧的 POS_KEY（老用户已存的 bottom/x 不会丢）。
+    //   3. 存进内存副本，存储不可用时本次会话内仍能记住设置。
+    // ======================
+    const VIEW_KEY = 'msv-subtitle-view-v2';
+    const LEGACY_POS_KEY = 'msv-subtitle-pos-v1';
+    const memoryStore = Object.create(null);
+
+    const storageGet = (key) => {
         try {
-            const saved = JSON.parse(localStorage.getItem(POS_KEY) || '{}');
-            const bottom = Number(saved.bottom);
-            const x = Number(saved.x);
-            return {
-                bottom: Number.isFinite(bottom) ? Math.min(100, Math.max(0, bottom)) : 8,
-                x: Number.isFinite(x) ? Math.min(100, Math.max(0, x)) : 50
-            };
-        } catch {
-            return { bottom: 8, x: 50 };
-        }
+            const value = window.localStorage.getItem(key);
+            if (value !== null) return value;
+        } catch {}
+        return key in memoryStore ? memoryStore[key] : null;
     };
-    const savedPos = readSavedPos();
+    const storageSet = (key, value) => {
+        memoryStore[key] = value;
+        try { window.localStorage.setItem(key, value); } catch {}
+    };
+    const clampPercent = (value, fallback) => {
+        const num = Number(value);
+        return Number.isFinite(num) ? Math.min(100, Math.max(0, num)) : fallback;
+    };
+
+    const readSavedView = () => {
+        const result = {
+            bottom: 8,
+            x: 50,
+            fontSize: CONFIG.defaultFontSize
+        };
+        // 先读旧键，保证老用户已保存的位置不丢
+        try {
+            const legacy = JSON.parse(storageGet(LEGACY_POS_KEY) || 'null');
+            if (legacy && typeof legacy === 'object') {
+                result.bottom = clampPercent(legacy.bottom, result.bottom);
+                result.x = clampPercent(legacy.x, result.x);
+            }
+        } catch {}
+        try {
+            const saved = JSON.parse(storageGet(VIEW_KEY) || 'null');
+            if (saved && typeof saved === 'object') {
+                result.bottom = clampPercent(saved.bottom, result.bottom);
+                result.x = clampPercent(saved.x, result.x);
+                const size = Number(saved.fontSize);
+                // 与滑杆 min/max 一致；越界值直接丢弃，避免脏数据把字号顶到不可读
+                if (Number.isFinite(size) && size >= 12 && size <= 60) result.fontSize = Math.round(size);
+            }
+        } catch {}
+        return result;
+    };
+    const savedView = readSavedView();
     const STATE = {
         offset: window.location.hostname.includes('jable.tv') ? -6.0 : 0.0,
-        bottom: savedPos.bottom,
-        x: savedPos.x,
+        bottom: savedView.bottom,
+        x: savedView.x,
         visible: !initialBuiltInSub,
         hasBuiltInSub: initialBuiltInSub,
         code: null,
         subs: [],
-        fontSize: CONFIG.defaultFontSize,
+        fontSize: savedView.fontSize,
         nativeTrackUrl: null,
         rawSubtitleText: '',
         currentSubtitleName: '',
         currentSubtitleKey: '',
-        enabled: localStorage.getItem('msv-script-enabled') !== '0'
+        enabled: storageGet('msv-script-enabled') !== '0'
     };
-    const savePos = () => {
-        try {
-            localStorage.setItem(POS_KEY, JSON.stringify({ bottom: STATE.bottom, x: STATE.x }));
-        } catch {}
+    // 三项一起写，避免只存一半导致「有的记住有的没记住」
+    const saveView = () => {
+        storageSet(VIEW_KEY, JSON.stringify({
+            bottom: STATE.bottom,
+            x: STATE.x,
+            fontSize: STATE.fontSize
+        }));
     };
     let subLayer = null;
     // ======================
     // 样式重构
     // ======================
-    GM_addStyle(`
+    MsvGM.addStyle(`
         #msv-dock {
             position: fixed; z-index: 2147483646; width: 36px; height: 36px;
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-            color: rgba(255,255,255,0.92); touch-action: none;
+            color: rgba(255,255,255,0.92); touch-action: manipulation;
         }
         #msv-fab {
             position: absolute; right: 0; bottom: 0; width: 36px; height: 36px; border-radius: 12px;
@@ -159,7 +279,9 @@
             display: flex; align-items: center; justify-content: center;
             font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
             backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-            cursor: grab; user-select: none; box-shadow: 0 8px 22px rgba(0,0,0,0.28);
+            cursor: grab; user-select: none; -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent; touch-action: none;
+            box-shadow: 0 8px 22px rgba(0,0,0,0.28);
         }
         #msv-fab:active { cursor: grabbing; }
         #msv-fab:hover { background: rgba(255,255,255,0.16); color: #fff; }
@@ -167,7 +289,9 @@
         #msv-fab.is-docked { display: none !important; }
         #msv-dock.is-mini #msv-panel { display: none !important; }
         #msv-panel {
-            position: absolute; right: 0; bottom: 44px; width: min(292px, calc(100vw - 24px)); display: none; flex-direction: column; gap: 0;
+            position: absolute; right: 0; bottom: 44px; width: min(292px, calc(100vw - 24px));
+            max-height: calc(100vh - 80px);
+            max-height: calc(100dvh - 80px); display: none; flex-direction: column; gap: 0;
             background: rgba(22,22,24,0.78);
             border: 1px solid rgba(255,255,255,0.16); border-radius: 16px;
             box-shadow: 0 18px 48px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.16);
@@ -175,16 +299,18 @@
             overflow: hidden;
         }
         #msv-panel.show { display: flex; animation: msv-pop 0.16s cubic-bezier(.2,.8,.2,1); }
-        @keyframes msv-pop { from { opacity:0; transform: translateY(6px); } to { opacity:1; transform: none; } }
+        /* 用独立的 translate 属性做入场动画，把 transform 留给 placePanel() 的视口夹取 */
+        @keyframes msv-pop { from { opacity:0; translate: 0 6px; } to { opacity:1; translate: 0 0; } }
         .msv-head {
             display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px; cursor: grab; user-select: none;
+            -webkit-user-select: none; touch-action: none;
             border-bottom: 1px solid rgba(255,255,255,0.08);
         }
         .msv-head:active { cursor: grabbing; }
         .msv-grip { width: 18px; height: 10px; opacity: 0.45; flex: none; }
         .msv-head-title { font-size: 12px; font-weight: 650; letter-spacing: 0.01em; }
         .msv-head-code { margin-left: auto; font-size: 11px; color: rgba(255,214,102,0.92); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .msv-body { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; }
+        .msv-body { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
         .msv-mini-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
         .msv-val-box {
             flex: 1; text-align: center; color: #ffd166; font-weight: 700; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -206,8 +332,9 @@
         }
         input:checked + .msv-slider-round { background: #0a84ff; }
         input:checked + .msv-slider-round:before { transform: translateX(18px); }
-        .msv-list-container { max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+        .msv-list-container { max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
         .msv-list-container::-webkit-scrollbar { width: 6px; }
+        .msv-list-container::-webkit-scrollbar-track { background: transparent; }
         .msv-list-container::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.22); border-radius: 999px; }
         .msv-list-item {
             background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.86); border: 1px solid rgba(255,255,255,0.10);
@@ -222,12 +349,45 @@
         .msv-label b { color: rgba(255,255,255,0.92); font-weight: 650; font-variant-numeric: tabular-nums; }
         .msv-input {
             background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.94); border: 1px solid rgba(255,255,255,0.12);
-            padding: 7px 9px; text-align: center; border-radius: 9px; font-size: 12px; width: 100%; box-sizing: border-box; outline: none;
+            padding: 7px 9px; text-align: center; border-radius: 9px;
+            /* 16px：低于此值 iOS Safari 聚焦输入框会自动放大整页 */
+            font-size: 16px; width: 100%; box-sizing: border-box; outline: none;
         }
         .msv-input:focus { border-color: rgba(10,132,255,0.8); }
-        .msv-slider { width: 100%; height: 18px; margin: 0; accent-color: #0a84ff; cursor: pointer; }
+        .msv-slider {
+            width: 100%; height: 22px; margin: 0; cursor: pointer;
+            /* 触屏滑杆：交给浏览器原生手势，不要被拖动逻辑吞掉 */
+            touch-action: pan-y;
+            /* 自绘轨道：-webkit-appearance:none 会去掉原生轨道，必须显式画，否则只剩一个圆点 */
+            -webkit-appearance: none; appearance: none; background: transparent;
+            /* --msv-fill 由 syncSliderFill() 按当前值写入，用来画已填充段 */
+            --msv-fill: 50%;
+        }
+        .msv-slider::-webkit-slider-runnable-track {
+            height: 6px; border-radius: 999px;
+            background: linear-gradient(to right,
+                #0a84ff 0%, #0a84ff var(--msv-fill),
+                rgba(255,255,255,0.22) var(--msv-fill), rgba(255,255,255,0.22) 100%);
+        }
+        .msv-slider::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%;
+            background: #fff; border: 0; box-shadow: 0 1px 4px rgba(0,0,0,0.45);
+            /* 让 18px 圆点在 6px 轨道上垂直居中 */
+            margin-top: -6px;
+        }
+        .msv-slider::-moz-range-track {
+            height: 6px; border-radius: 999px; background: rgba(255,255,255,0.22);
+        }
+        .msv-slider::-moz-range-progress {
+            height: 6px; border-radius: 999px; background: #0a84ff;
+        }
+        .msv-slider::-moz-range-thumb {
+            width: 18px; height: 18px; border-radius: 50%; background: #fff; border: 0;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.45);
+        }
         .msv-btn-blue, .msv-btn-gray, .msv-btn-red {
             border: 1px solid rgba(255,255,255,0.12); padding: 7px 8px; border-radius: 9px; font-size: 12px; font-weight: 650; cursor: pointer;
+            -webkit-tap-highlight-color: transparent; touch-action: manipulation;
         }
         .msv-btn-blue { background: #0a84ff; color: #fff; flex: 1; border-color: transparent; }
         .msv-btn-gray { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.9); flex: 1; }
@@ -240,6 +400,7 @@
             opacity: 0; transition: opacity 0.2s ease; text-align: center;
             white-space: pre-line; line-height: 1.5; box-shadow: 0 16px 40px rgba(0,0,0,0.36);
             backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+            max-width: calc(100vw - 32px); box-sizing: border-box;
         }
         .msv-toast.show { opacity: 1; }
         .msv-subtitle-overlay {
@@ -248,6 +409,43 @@
             color: #fff !important; font-weight: 600 !important;
             text-shadow: 0 1px 2px rgba(0,0,0,0.9), 0 0 6px #000 !important;
             z-index: 2147483646 !important; line-height: 1.4 !important; white-space: pre-line !important; display: block !important;
+        }
+        /* 移动端：固定宽度贴底面板，不再拉满整屏（402px 屏上全宽显得过大） */
+        @media (max-width: 820px), (pointer: coarse) {
+            #msv-panel {
+                position: fixed; top: auto;
+                left: auto; right: 8px;
+                width: min(320px, calc(100vw - 24px));
+                bottom: calc(52px + env(safe-area-inset-bottom, 0px));
+                max-height: calc(100vh - 84px);
+                max-height: calc(100dvh - 84px);
+                border-radius: 14px;
+            }
+            /* 内部间距与字级整体收一档，让 320px 宽的卡片不显臃肿 */
+            .msv-head { cursor: default; padding: 8px 10px 7px; gap: 6px; }
+            .msv-head-title { font-size: 11.5px; }
+            .msv-head-code { max-width: 88px; font-size: 10.5px; }
+            .msv-grip { width: 15px; height: 9px; }
+            .msv-body { padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px)); gap: 7px; }
+            .msv-label { font-size: 9.5px; }
+            .msv-val-box { font-size: 11.5px; padding: 4px 0; }
+            /* 输入框必须保留 16px，否则 iOS 聚焦时会自动放大整页；靠 padding 收高度 */
+            .msv-input { padding: 5px 8px; border-radius: 8px; }
+            .msv-slider { height: 20px; }
+            .msv-btn-blue, .msv-btn-gray { padding: 6px 8px; font-size: 11.5px; border-radius: 8px; }
+            .msv-btn-red { font-size: 10.5px; }
+            .msv-mini-btn { width: 38px; height: 30px; border-radius: 7px; }
+            .msv-switch { width: 38px; height: 22px; }
+            .msv-slider-round:before { height: 18px; width: 18px; }
+            input:checked + .msv-slider-round:before { transform: translateX(16px); }
+            .msv-list-container { max-height: 34dvh; gap: 5px; }
+            .msv-list-item { padding: 8px 9px; font-size: 11.5px; border-radius: 9px; }
+            .msv-subtitle-name { line-height: 1.35; }
+            .msv-toast { font-size: 13px; padding: 10px 14px; }
+            /* 触屏没有 hover，改用 :active 反馈，避免点击看起来「没反应」 */
+            .msv-fab:hover, .msv-list-item:hover, .msv-btn-blue:hover, .msv-btn-gray:hover { filter: none; }
+            .msv-list-item:active { background: rgba(255,255,255,0.16); }
+            #msv-fab { -webkit-tap-highlight-color: transparent; }
         }
     `);
     // ======================
@@ -345,7 +543,7 @@
             if (!isAuto) UI.switchView(true);
             const listContainer = document.getElementById('msv-results');
             if (listContainer) listContainer.innerHTML = '<div style="color:#666;text-align:center;font-size:11px;padding:20px">正在云端检索版本...</div>';
-            GM_xmlhttpRequest({
+            MsvGM.request({
                 method: 'GET', url: `https://api-shoulei-ssl.xunlei.com/oracle/subtitle?name=${encodeURIComponent(normalizedCode)}`,
                 timeout: 15000,
                 onload: (res) => {
@@ -366,7 +564,7 @@
             });
         },
         scraper: (code, isAuto) => {
-            GM_xmlhttpRequest({
+            MsvGM.request({
                 method: 'GET', url: `https://subtitlecat.com/index.php?search=${encodeURIComponent(code)}`,
                 timeout: 15000,
                 onload: (res) => {
@@ -484,7 +682,7 @@
                 if (done) done();
                 UI.toast(`❌ ${msg}`, 2000);
             };
-            GM_xmlhttpRequest({
+            MsvGM.request({
                 method: 'GET', url,
                 timeout: 15000,
                 onload: (res) => {
@@ -536,7 +734,7 @@
                 if (done) done();
                 UI.toast(`❌ ${msg}`, 2000);
             };
-            GM_xmlhttpRequest({
+            MsvGM.request({
                 method: 'GET', url, responseType: 'arraybuffer', timeout: 20000,
                 onload: (r) => {
                     try {
@@ -574,7 +772,7 @@
                 }
                 UI.toast(`❌ ${msg}`, 2000);
             };
-            GM_xmlhttpRequest({
+            MsvGM.request({
                 method: 'GET', url, responseType: 'arraybuffer', timeout: 20000,
                 onload: (r) => {
                     try {
@@ -829,10 +1027,13 @@
                 <div id="msv-toast" class="msv-toast"></div>
             `;
 
-            if(document.body) {
-                document.body.appendChild(d);
+            // 挂到 documentElement 而不是 body：站点若给 body 加了 transform/filter，
+            // 会让内部 position:fixed 退化成相对 body 定位，iOS 上表现为控件跑到屏幕外。
+            const mountTarget = document.documentElement || document.body;
+            if (mountTarget) {
+                mountTarget.appendChild(d);
             } else {
-                document.addEventListener('DOMContentLoaded', () => document.body.appendChild(d));
+                document.addEventListener('DOMContentLoaded', () => (document.documentElement || document.body).appendChild(d));
             }
 
             const panel = document.getElementById('msv-panel');
@@ -848,11 +1049,20 @@
             let initialY = 0;
             const DOCK_POS_KEY = 'msv-dock-pos-v1';
 
+            // iOS Safari 的 window.innerHeight 会随工具栏收缩变化，也可能比真实可视区更大。
+            // 优先用 visualViewport 的尺寸与偏移来夹取悬浮坞位置。
+            const viewportSize = () => {
+                const vv = window.visualViewport;
+                const width = (vv && vv.width) ? vv.width : window.innerWidth;
+                const height = (vv && vv.height) ? vv.height : window.innerHeight;
+                return { width: Math.max(1, width), height: Math.max(1, height) };
+            };
             const clampDock = (x, y) => {
                 const w = dock.offsetWidth || 36;
                 const h = dock.offsetHeight || 36;
-                const maxX = Math.max(8, window.innerWidth - w - 8);
-                const maxY = Math.max(8, window.innerHeight - h - 8);
+                const vp = viewportSize();
+                const maxX = Math.max(8, vp.width - w - 8);
+                const maxY = Math.max(8, vp.height - h - 8);
                 return {
                     x: Math.min(maxX, Math.max(8, x)),
                     y: Math.min(maxY, Math.max(8, y))
@@ -867,21 +1077,66 @@
                 dock.style.right = 'auto';
                 dock.style.bottom = 'auto';
                 if (persist) {
-                    try { localStorage.setItem(DOCK_POS_KEY, JSON.stringify(next)); } catch {}
+                    storageSet(DOCK_POS_KEY, JSON.stringify(next));
                 }
             };
-            const point = (e) => e.touches ? e.touches[0] : e;
+            // 面板默认贴在悬浮坞上方；iOS 上悬浮坞可能被拖到任意位置，
+            // 这里用可视区把面板夹回屏幕内，否则窄屏上会整块溢出到屏幕外。
+            // 位移走 transform，避免改 left/top 与 bottom 混用后在 iOS 上跳位。
+            // 与 CSS 的 @media (max-width:820px),(pointer:coarse) 保持同一判定，
+            // 不用 getComputedStyle 反推（依赖样式解析结果，环境差异下不可靠）。
+            const isMobilePanel = () => {
+                try {
+                    if (window.matchMedia && window.matchMedia('(max-width: 820px), (pointer: coarse)').matches) return true;
+                } catch {}
+                return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+            };
+            const placePanel = () => {
+                if (!panel || !panel.classList.contains('show')) return;
+                panel.style.transform = '';
+                const vp = viewportSize();
+                const margin = 8;
+                if (isMobilePanel()) {
+                    // 窄屏：固定宽度贴底，靠向悬浮坞所在的一侧，避免全宽拉伸
+                    const width = Math.min(320, Math.max(240, vp.width - 24));
+                    panel.style.width = width + 'px';
+                    panel.style.left = 'auto';
+                    panel.style.right = 'auto';
+                    const dockCenter = currentX + (dock.offsetWidth || 36) / 2;
+                    if (dockCenter < vp.width / 2) panel.style.left = margin + 'px';
+                    else panel.style.right = margin + 'px';
+                    return;
+                }
+                const rect = panel.getBoundingClientRect();
+                let dx = 0;
+                let dy = 0;
+                if (rect.right > vp.width - margin) dx = (vp.width - margin) - rect.right;
+                if (rect.left + dx < margin) dx = margin - rect.left;
+                if (rect.top < margin) {
+                    // 上方放不下就翻到悬浮坞下方
+                    const dockRect = dock.getBoundingClientRect();
+                    dy = Math.min((dockRect.bottom + 8) - rect.top, 0);
+                } else if (rect.bottom > vp.height - margin) {
+                    dy = (vp.height - margin) - rect.bottom;
+                }
+                if (dx || dy) panel.style.transform = `translate(${Math.round(dx)}px, ${Math.round(dy)}px)`;
+            };
+            const point = (e) => (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
             const dragStart = (e) => {
                 if (e.target.closest('button, input, label, a, .msv-list-item')) return;
+                if (e.type === 'mousedown' && e.button) return;
                 const p = point(e);
+                if (!p) return;
                 isDragging = true;
                 dragMoved = false;
                 initialX = p.clientX - currentX;
                 initialY = p.clientY - currentY;
+                // 此处不 preventDefault：触屏上会让后续 click/tap 彻底不触发
             };
             const dragMove = (e) => {
                 if (!isDragging) return;
                 const p = point(e);
+                if (!p) return;
                 const nextX = p.clientX - initialX;
                 const nextY = p.clientY - initialY;
                 if (Math.abs(nextX - currentX) + Math.abs(nextY - currentY) > 4) dragMoved = true;
@@ -891,20 +1146,37 @@
             const dragEnd = () => {
                 if (!isDragging) return;
                 isDragging = false;
-                if (dragMoved) placeDock(currentX, currentY, true);
+                if (!dragMoved) return;
+                placeDock(currentX, currentY, true);
+                // 触屏拖动后 click 有可能不触发（touchmove 已 preventDefault），
+                // 这里定时复位，避免下一次点按被残留的 dragMoved 吞掉。
+                setTimeout(() => { dragMoved = false; }, 400);
             };
 
             try {
-                const savedDock = JSON.parse(localStorage.getItem(DOCK_POS_KEY) || 'null');
+                const savedDock = JSON.parse(storageGet(DOCK_POS_KEY) || 'null');
                 if (savedDock && Number.isFinite(savedDock.x) && Number.isFinite(savedDock.y)) {
                     placeDock(savedDock.x, savedDock.y, false);
                 } else {
-                    placeDock(window.innerWidth - 64, window.innerHeight - 220, false);
+                    const vp = viewportSize();
+                    placeDock(vp.width - 64, vp.height - 220, false);
                 }
             } catch {
-                placeDock(window.innerWidth - 64, window.innerHeight - 220, false);
+                const vp = viewportSize();
+                placeDock(vp.width - 64, vp.height - 220, false);
             }
-            window.addEventListener('resize', () => placeDock(currentX, currentY, false), { passive: true });
+            const replantDock = () => placeDock(currentX, currentY, false);
+            const relayout = () => {
+                replantDock();
+                placePanel();
+            };
+            window.addEventListener('resize', relayout, { passive: true });
+            window.addEventListener('orientationchange', () => setTimeout(relayout, 120), { passive: true });
+            // iOS 地址栏收起/展开时只触发 visualViewport 事件，不一定会触发 window.resize
+            if (window.visualViewport) {
+                window.visualViewport.addEventListener('resize', relayout, { passive: true });
+                window.visualViewport.addEventListener('scroll', relayout, { passive: true });
+            }
             fab.addEventListener('mousedown', dragStart);
             dragHandle.addEventListener('mousedown', dragStart);
             document.addEventListener('mousemove', dragMove);
@@ -913,12 +1185,14 @@
             dragHandle.addEventListener('touchstart', dragStart, { passive: true });
             document.addEventListener('touchmove', dragMove, { passive: false });
             document.addEventListener('touchend', dragEnd);
+            // iOS 页面滚动时浏览器会中止触摸序列，只有 touchcancel；不接会卡在 isDragging
+            document.addEventListener('touchcancel', dragEnd);
 
             const visCheck = document.getElementById('msv-check-vis');
             const pageRoot = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
             const setScriptEnabled = (enabled) => {
                 STATE.enabled = Boolean(enabled);
-                try { localStorage.setItem('msv-script-enabled', STATE.enabled ? '1' : '0'); } catch {}
+                try { storageSet('msv-script-enabled', STATE.enabled ? '1' : '0'); } catch {}
                 if (!STATE.enabled && panel) panel.classList.remove('show');
                 if (!STATE.enabled && subLayer) subLayer.textContent = '';
                 if (location.hostname.includes('jable')) window.dispatchEvent(new CustomEvent('msv-script-enabled', { detail: STATE.enabled }));
@@ -941,6 +1215,7 @@
                 }
                 if (!STATE.enabled) return;
                 panel.classList.add('show');
+                placePanel();
                 const dockApi = pageRoot.PageDock || (typeof PageDock !== 'undefined' ? PageDock : null);
                 if (dockApi && typeof dockApi.setActive === 'function') dockApi.setActive('msv-subtitle', true);
             };
@@ -990,6 +1265,7 @@
                 dock.classList.remove('is-mini');
                 const open = !panel.classList.contains('show');
                 panel.classList.toggle('show', open);
+                if (open) placePanel();
                 syncDockPanel(open);
                 e.stopPropagation();
             };
@@ -1013,29 +1289,55 @@
             const incT = document.getElementById('msv-inc-t');
             if(decT) decT.onclick = () => { STATE.offset -= 0.5; tVal.textContent = (STATE.offset>=0?'+':'')+STATE.offset.toFixed(1)+'s'; };
             if(incT) incT.onclick = () => { STATE.offset += 0.5; tVal.textContent = (STATE.offset>=0?'+':'')+STATE.offset.toFixed(1)+'s'; };
+            // 滑杆轨道用 CSS 变量画已填充段，值变化时必须同步，否则轨道一直是初始比例。
+            const syncSliderFill = (input) => {
+                if (!input) return;
+                const min = Number(input.min) || 0;
+                const max = Number(input.max) || 100;
+                const value = Number(input.value);
+                const span = max - min;
+                const percent = span > 0 ? ((value - min) / span) * 100 : 0;
+                input.style.setProperty('--msv-fill', `${Math.min(100, Math.max(0, percent)).toFixed(2)}%`);
+            };
             const pVal = document.getElementById('msv-p-val');
             const posRange = document.getElementById('msv-pos-range');
-            if(posRange) posRange.oninput = function() {
-                STATE.bottom = Number(this.value);
-                if (pVal) pVal.textContent = STATE.bottom + '%';
-                savePos();
-                Renderer.renderNow('position');
-            };
+            if(posRange) {
+                posRange.oninput = function() {
+                    STATE.bottom = Number(this.value);
+                    if (pVal) pVal.textContent = STATE.bottom + '%';
+                    syncSliderFill(this);
+                    saveView();
+                    Renderer.renderNow('position');
+                };
+                // change 兜底：部分触屏环境拖动结束后才派发 change，input 可能被手势吞掉
+                posRange.onchange = posRange.oninput;
+            }
             const xVal = document.getElementById('msv-x-val');
             const xRange = document.getElementById('msv-x-range');
-            if(xRange) xRange.oninput = function() {
-                STATE.x = Number(this.value);
-                if (xVal) xVal.textContent = STATE.x + '%';
-                savePos();
-                Renderer.renderNow('position-x');
-            };
+            if(xRange) {
+                xRange.oninput = function() {
+                    STATE.x = Number(this.value);
+                    if (xVal) xVal.textContent = STATE.x + '%';
+                    syncSliderFill(this);
+                    saveView();
+                    Renderer.renderNow('position-x');
+                };
+                xRange.onchange = xRange.oninput;
+            }
             const fontRange = document.getElementById('msv-font-range');
-            if(fontRange) fontRange.oninput = function() {
-                STATE.fontSize = this.value;
-                const fontVal = document.getElementById('msv-font-val');
-                if (fontVal) fontVal.textContent = STATE.fontSize;
-                Renderer.renderNow('font');
-            };
+            if(fontRange) {
+                fontRange.oninput = function() {
+                    STATE.fontSize = Number(this.value);
+                    const fontVal = document.getElementById('msv-font-val');
+                    if (fontVal) fontVal.textContent = STATE.fontSize;
+                    syncSliderFill(this);
+                    saveView();
+                    Renderer.renderNow('font');
+                };
+                fontRange.onchange = fontRange.oninput;
+            }
+            // 初始比例（含从存储恢复的值）
+            [posRange, xRange, fontRange].forEach(syncSliderFill);
             const goMain = document.getElementById('msv-go-main');
             if(goMain) goMain.onclick = () => Engine.search(document.getElementById('msv-code').value.trim(), false);
             const downloadCurrentBtn = document.getElementById('msv-download-current');
@@ -1096,6 +1398,15 @@
         const SIDEBAR_VIEWPORT_MARGIN = 8;
         const DRAG_START_THRESHOLD = 3;
         const CLOSE_BUTTON_VISIBLE_MS = 5000;
+
+        // 触屏判定：移动端不适合「贴视频左侧 128px 竖排 + 小标题拖动 + hover 高亮」这套 PC 交互，
+        // 改成底部横向面板，点条目即跳转。
+        const isTouchLayout = () => {
+          try {
+            if (window.matchMedia && window.matchMedia('(max-width: 820px), (pointer: coarse)').matches) return true;
+          } catch {}
+          return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+        };
 
         // 单个时间
         const TIME_PATTERN = /([\-−－]?\d{1,3})\s*[:：]\s*(\d{1,2})(?:\s*[:：]\s*(\d{1,2}))?/g;
@@ -1283,6 +1594,103 @@
             #${RAIL_ID} .jcts-span::before { width: 28px; background: rgba(255,255,255,.9); }
             #${RAIL_ID} .jcts-mark:hover::before, #${RAIL_ID} .jcts-span:hover::before,
             #${RAIL_ID} .jcts-selected::before { width: 36px; background: #fff; }
+            /* ── 移动端时间面板：底部横向滚动条，替代贴视频左侧的 128px 竖栏 ── */
+            #${SIDEBAR_ID}.jcts-touch {
+              left: 8px !important;
+              right: 8px;
+              width: auto !important;
+              max-height: none !important;
+              top: auto !important;
+              bottom: calc(6px + env(safe-area-inset-bottom, 0px)) !important;
+              padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+              border-radius: 12px;
+              background: rgba(15, 23, 42, .82);
+              -webkit-backdrop-filter: blur(12px);
+              backdrop-filter: blur(12px);
+              box-shadow: 0 8px 22px rgba(0,0,0,.38);
+              z-index: 2147483645;
+            }
+            #${SIDEBAR_ID}.jcts-touch .jcts-title {
+              display: flex;
+              align-items: center;
+              gap: 6px;
+              margin: 0 0 4px;
+              font-size: 10.5px;
+              line-height: 1.2;
+              cursor: default;
+              touch-action: auto;
+              text-align: left;
+              color: rgba(255,255,255,.62);
+            }
+            #${SIDEBAR_ID}.jcts-touch .jcts-list {
+              flex-direction: row;
+              gap: 5px;
+              max-height: none;
+              overflow-x: auto;
+              overflow-y: hidden;
+              -webkit-overflow-scrolling: touch;
+              overscroll-behavior-x: contain;
+              scrollbar-width: none;
+              padding-bottom: 1px;
+            }
+            #${SIDEBAR_ID}.jcts-touch .jcts-list::-webkit-scrollbar { display: none; }
+            #${SIDEBAR_ID}.jcts-touch .jcts-item {
+              /* 36px 高：仍高于 iOS 最小点按区下限，但比首版 40px 收一档 */
+              flex: 0 0 auto;
+              width: auto;
+              min-width: 50px;
+              min-height: 36px;
+              padding: 0 11px;
+              font-size: 12.5px;
+              border-radius: 9px;
+              background: rgba(255,255,255,.08);
+              color: rgba(255,255,255,.92);
+              -webkit-tap-highlight-color: transparent;
+            }
+            #${SIDEBAR_ID}.jcts-touch .jcts-item.jcts-range {
+              font-size: 11.5px;
+              color: #30d158;
+            }
+            #${SIDEBAR_ID}.jcts-touch .jcts-item.jcts-selected,
+            #${SIDEBAR_ID}.jcts-touch .jcts-item.jcts-range.jcts-selected {
+              background: #0a84ff;
+              color: #fff;
+              box-shadow: none;
+            }
+            #${SIDEBAR_ID}.jcts-touch .jcts-item.jcts-range.jcts-selected {
+              background: #30d158;
+            }
+            #${SIDEBAR_ID}.jcts-touch .jcts-close {
+              /* 触屏常显，不再靠 pointerdown 才浮现 */
+              position: static;
+              opacity: 1;
+              pointer-events: auto;
+              transform: none;
+              margin-left: auto;
+              width: 22px;
+              height: 22px;
+              flex: none;
+              font-size: 14px;
+            }
+            /* 移动端右侧刻度：热区比桌面大，但整体比首版收一档 */
+            #${RAIL_ID}.jcts-touch {
+              width: 66px;
+              max-height: 52%;
+              -webkit-overflow-scrolling: touch;
+              overscroll-behavior-y: contain;
+            }
+            #${RAIL_ID}.jcts-touch .jcts-mark,
+            #${RAIL_ID}.jcts-touch .jcts-span {
+              height: 22px;
+            }
+            #${RAIL_ID}.jcts-touch .jcts-mark::before,
+            #${RAIL_ID}.jcts-touch .jcts-span::before {
+              top: 8px;
+              width: 24px;
+              height: 3px;
+            }
+            #${RAIL_ID}.jcts-touch .jcts-span::before { width: 34px; }
+            #${RAIL_ID}.jcts-touch .jcts-selected::before { width: 42px; }
           `;
           document.head.appendChild(style);
         }
@@ -1677,6 +2085,7 @@
             rail.id = RAIL_ID;
           }
           if (rail.parentNode !== player) player.appendChild(rail);
+          rail.classList.toggle('jcts-touch', isTouchLayout());
           if (!rail.dataset.bound) {
             rail.dataset.bound = '1';
             const stop = (event) => {
@@ -1709,8 +2118,13 @@
         function clampSidebarPosition(sidebar, left, top) {
           const width = sidebar.offsetWidth || 128;
           const height = sidebar.offsetHeight || 0;
-          const maxLeft = Math.max(SIDEBAR_VIEWPORT_MARGIN, window.innerWidth - width - SIDEBAR_VIEWPORT_MARGIN);
-          const maxTop = Math.max(SIDEBAR_VIEWPORT_MARGIN, window.innerHeight - height - SIDEBAR_VIEWPORT_MARGIN);
+          // 用 visualViewport 而不是 innerHeight：iOS 工具栏收缩后 innerHeight 偏大，
+          // 会把面板夹到屏幕外。
+          const vv = window.visualViewport;
+          const vpWidth = (vv && vv.width) ? vv.width : window.innerWidth;
+          const vpHeight = (vv && vv.height) ? vv.height : window.innerHeight;
+          const maxLeft = Math.max(SIDEBAR_VIEWPORT_MARGIN, vpWidth - width - SIDEBAR_VIEWPORT_MARGIN);
+          const maxTop = Math.max(SIDEBAR_VIEWPORT_MARGIN, vpHeight - height - SIDEBAR_VIEWPORT_MARGIN);
           return {
             left: clamp(left, SIDEBAR_VIEWPORT_MARGIN, maxLeft),
             top: clamp(top, SIDEBAR_VIEWPORT_MARGIN, maxTop)
@@ -1723,6 +2137,12 @@
         }
 
         function positionSidebar(sidebar) {
+          if (sidebar.classList.contains('jcts-touch')) {
+            // 移动端：由 CSS 固定在底部横条，不跟随视频矩形，也不接受手动拖动
+            sidebar.style.left = '';
+            sidebar.style.top = '';
+            return;
+          }
           if (sidebarManualPosition) {
             sidebarManualPosition = clampSidebarPosition(
               sidebar,
@@ -1742,6 +2162,8 @@
         }
 
         function bindSidebarDragging(sidebar, title) {
+          // 触屏走底部固定面板，不需要拖动；标题拖动反而会抢走横向滚动的手势
+          if (sidebar.classList.contains('jcts-touch')) return;
           let dragState = null;
           function stopDragging(event) {
             if (!dragState || event.pointerId !== dragState.pointerId) return;
@@ -1850,6 +2272,8 @@
             sidebar.addEventListener('pointerdown', () => showSidebarCloseButton(sidebar));
             document.body.appendChild(sidebar);
           }
+          // 每次渲染都对齐当前布局模式，避免旋转屏幕或改窗口宽度后停在旧模式
+          sidebar.classList.toggle('jcts-touch', isTouchLayout());
           const signature = points.map((point) => point.normalized).join('|');
           if (sidebar.dataset.signature === signature) {
             updateSelectedSidebarItem();
@@ -1865,7 +2289,7 @@
           const title = document.createElement('div');
           title.className = 'jcts-title';
           title.textContent = `时间点 ${points.length}`;
-          title.title = '按住并拖动时间列表';
+          title.title = isTouchLayout() ? '' : '按住并拖动时间列表';
           sidebar.appendChild(title);
           bindSidebarDragging(sidebar, title);
 
@@ -2009,14 +2433,17 @@
         }
 
         function bindLayoutUpdates() {
-          window.addEventListener('resize', () => {
+          const reposition = () => {
             const sidebar = document.getElementById(SIDEBAR_ID);
             if (sidebar) positionSidebar(sidebar);
-          }, { passive: true });
-          window.addEventListener('scroll', () => {
-            const sidebar = document.getElementById(SIDEBAR_ID);
-            if (sidebar) positionSidebar(sidebar);
-          }, { passive: true });
+          };
+          window.addEventListener('resize', reposition, { passive: true });
+          window.addEventListener('scroll', reposition, { passive: true });
+          // iOS 旋转与地址栏收放不一定触发 window.resize
+          window.addEventListener('orientationchange', () => setTimeout(reposition, 120), { passive: true });
+          if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', reposition, { passive: true });
+          }
         }
 
         let started = false;

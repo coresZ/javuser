@@ -32,7 +32,7 @@
 | `page-dock.user.js` | v1.3.8 | 悬浮坞库。Greasy Fork [600709](https://update.greasyfork.org/scripts/600709/PageDock.js)，引用不钉版本号 |
 | `jav-code-scanner.user.js` | v1.5.96 | 番号扫描。扫描数量显示在悬浮坞「扫描」旁边 |
 | `Enhanced_Media_Helper.js` | v3.7.18 | 番号库。脚本自己关闭面板时同步悬浮坞左边状态 |
-| `jable & miss.user.js` | v6.0 | Missav / Jable 字幕与评论时间跳转 |
+| `jable & miss.user.js` | v6.4 | Missav / Jable 字幕与评论时间跳转。兼容 iOS Userscripts；移动端面板收窄；字号与位置三项记忆 |
 
 悬浮坞每一行有两个控件：左边打开或关闭对应面板，右边启用或停用整个脚本。脚本关闭时左边变灰，点了没有反应。打开右边开关不会顺便打开面板。
 

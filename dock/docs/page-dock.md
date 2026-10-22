@@ -28,7 +28,7 @@
 
 | 脚本 | 面板状态变化时 |
 |---|---|
-| 字幕 v5.27 | 所有关闭路径集中到 `closePanel()` |
+| 字幕 v6.4 | 所有关闭路径集中到 `closePanel()`。兼容 iOS Userscripts 的 `GM.addStyle`；移动端时间点用底部横向条，面板宽度与字幕字号按屏宽自适应；字号/垂直/横向三项记忆 |
 | 番号库 v3.7.18 | `PanelStore.set` 发现 `visible` 变化时同步 |
 | 扫描 v1.5.96 | 打开、关闭按钮、Esc 和原浮钮切换时同步。扫描数量通过 `setBadge` 显示在「扫描」旁边 |
 
@@ -42,6 +42,15 @@
 6. 接入完成后，把脚本移入 `dock/`，并在根 `README.md` 的 dock 表登记。
 
 页面上已有实例时，后加载的副本不会再创建一个图标。各脚本的 `register()` 都进同一个菜单。
+
+## 脚本管理器差异（iOS）
+
+接入脚本如果直接用 `GM_addStyle`，在 iOS Safari 的 Userscripts 扩展上会抛 `ReferenceError` 并中断整个脚本：该扩展只注册 `GM.addStyle`，不提供 `GM_addStyle`（对照 quoid/userscripts 的 `src/ext/content-scripts/api.js` 导出表与 `entry-userscripts.js` 的 `@grant` 映射）。请求同理，老名字 `GM_xmlhttpRequest` 与 `GM.xmlHttpRequest` 都可用，但不能假定页面一定注入了哪一个。
+
+写兼容层时注意两点：
+
+- 不要声明名为 `GM` 或 `GM_xmlhttpRequest` 的局部变量，否则会遮蔽管理器注入的同名 API，形成自递归。
+- 全部实现都取不到时要有回退：样式自己插 `<style>`，请求回退到页面 `XMLHttpRequest`，别让整段脚本因为一个 API 缺失而静默死掉。
 
 ## 登记
 
