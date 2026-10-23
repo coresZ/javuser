@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         18dm小说下载器
 // @namespace    http://tampermonkey.net/
-// @version      4.7.10
+// @version      4.8.0
 // @description  一键下载18dm/18mh小说为TXT · UI v2（Lobe 实色层 / Lucide 图标 / PowerGlitch 成功态）· 章节缓存 · 增量更新 · 收藏更新提醒 · 书目状态（连载/完结+更新时间）· 果核阅读器直连（书库/悬浮条/列表卡）· Dock 动作菜单 · 标签抽屉 · 悬浮条拖拽磁吸 · 收藏/黑名单 WebDAV 同步
 // @author       you
 // @match        *://18dm.net/*
@@ -173,8 +173,8 @@
       '.dm-dl-hd-close{width:34px;height:34px;border-radius:var(--dm-r-sm);background:rgba(255,255,255,0.06);color:var(--dm-text-dim);display:flex;align-items:center;justify-content:center;font-size:15px;transition:background .15s,transform .12s}',
       '.dm-dl-hd-close:hover{background:rgba(255,255,255,0.12);color:#fff}',
       '.dm-dl-hd-close:active{transform:scale(0.92)}',
-      '#dm-dl-status-refresh.busy,#dm-dl-updates-btn.busy{opacity:.65;cursor:wait}',
-      '#dm-dl-status-refresh.busy svg,#dm-dl-updates-btn.busy svg{animation:dm-spin .8s linear infinite}',
+      '#dm-dl-refresh-btn.busy{opacity:.65;cursor:wait}',
+      '#dm-dl-refresh-btn.busy svg{animation:dm-spin .8s linear infinite}',
       '.dm-dl-tabs{display:flex;gap:6px;padding:10px 14px 0}',
       '.dm-dl-tab{flex:1;padding:9px 0;border-radius:var(--dm-r-sm);color:var(--dm-text-dim);font-size:13px;font-weight:600;text-align:center;transition:all .15s}',
       '.dm-dl-tab:hover{color:#fff;background:rgba(255,255,255,0.06)}',
@@ -405,7 +405,7 @@
     sheetMask.id = 'dm-dl-sheet-mask';
     sheetMask.innerHTML =
       '<div id="dm-dl-sheet">' +
-      '<div class="dm-dl-hd"><h3>我的书库</h3><div class="dm-dl-hd-acts"><button type="button" class="dm-dl-hd-close" id="dm-dl-updates-btn" title="检查更新"></button><button type="button" class="dm-dl-hd-close" id="dm-dl-status-refresh" title="刷新状态"></button><button type="button" class="dm-dl-hd-close" id="dm-dl-webdav-btn" title="云同步"></button><button type="button" class="dm-dl-hd-close" id="dm-dl-sheet-close">✕</button></div></div>' +
+      '<div class="dm-dl-hd"><h3>我的书库</h3><div class="dm-dl-hd-acts"><button type="button" class="dm-dl-hd-close" id="dm-dl-refresh-btn" title="刷新状态与更新"></button><button type="button" class="dm-dl-hd-close" id="dm-dl-webdav-btn" title="云同步"></button><button type="button" class="dm-dl-hd-close" id="dm-dl-sheet-close">✕</button></div></div>' +
       '<div class="dm-dl-tabs">' +
       '<button type="button" class="dm-dl-tab on" data-tab="dl">已下载</button>' +
       '<button type="button" class="dm-dl-tab" data-tab="fav">已收藏</button>' +
@@ -491,29 +491,13 @@
         openWebdavPanel();
       };
     }
-    var refreshBtn = document.getElementById('dm-dl-status-refresh');
+    var refreshBtn = document.getElementById('dm-dl-refresh-btn');
     if (refreshBtn) {
       refreshBtn.innerHTML = ICONS.refresh;
-      refreshBtn.setAttribute('data-title', '刷新状态');
+      refreshBtn.setAttribute('data-title', '刷新状态与更新');
       refreshBtn.onclick = function (e) {
         e.stopPropagation();
-        refreshLibraryStatus(refreshBtn);
-      };
-    }
-    var updatesBtn = document.getElementById('dm-dl-updates-btn');
-    if (updatesBtn) {
-      updatesBtn.innerHTML = ICONS.bell;
-      updatesBtn.onclick = function (e) {
-        e.stopPropagation();
-        if (updatesBtn.classList.contains('busy')) return;
-        updatesBtn.classList.add('busy');
-        showToast({ title: '正在检查更新…', msg: '收藏 ' + Object.keys(loadFavs()).length + ' 本' });
-        checkFavUpdates(true).then(function () {
-          updatesBtn.classList.remove('busy');
-        }).catch(function () {
-          updatesBtn.classList.remove('busy');
-          showToast({ title: '检查失败', msg: '网络异常，请稍后再试' });
-        });
+        refreshLibrary({ manual: true, scope: 'all' });
       };
     }
     var tagClose = document.getElementById('dm-dl-tag-close');
@@ -845,74 +829,158 @@
     return out;
   }
 
-  function fetchOneStatus(id) {
+  // ========== 统一刷新（状态 + 更新，一次抓取） ==========
+  // 背景：状态刷新与更新检查原先各自抓同一份 /novel/detail/{id}，
+  // 各维护一份并发池、各写一份存储，导致同一本书被请求两次、
+  // 且 checkFavUpdates 的 add 累加器在并发时可能重复计数。
+  // 这里收敛为单一入口：一次抓取同时产出「书目状态」与「章节更新」。
+  var REFRESH_CONCURRENCY = 4;
+  var REFRESH_MIN_GAP_MS = 30 * 1000;
+  var refreshInFlight = null;
+
+  function fetchNovelSnapshot(id) {
     return requestText(absUrl('/novel/detail/' + id)).then(function (html) {
       var doc = new DOMParser().parseFromString(html, 'text/html');
-      var info = readDetailStatus(doc);
-      if (!info.status && !info.statusText && !info.updateText) return false;
-      recordStatus(id, info);
-      return true;
+      return {
+        id: String(id),
+        status: readDetailStatus(doc),
+        chapters: parseChaptersIn(doc)
+      };
     });
   }
 
-  function fetchStatusForIds(ids, onProgress) {
-    var CONC = 4;
-    var list = ids || [];
-    return new Promise(function (resolve) {
-      if (!list.length) { resolve({ ok: 0, fail: 0 }); return; }
-      var idx = 0;
-      var done = 0;
-      var ok = 0;
-      var fail = 0;
-      var active = 0;
-      function next() {
-        while (active < CONC && idx < list.length) {
-          (function (id) {
-            active++;
-            fetchOneStatus(id).then(function (good) {
-              if (good) ok++; else fail++;
-            }).catch(function () {
-              fail++;
-            }).then(function () {
-              active--;
-              done++;
-              if (typeof onProgress === 'function') onProgress(done, list.length);
-              if (done >= list.length) resolve({ ok: ok, fail: fail });
-              else next();
-            });
-          })(list[idx++]);
-        }
+  function setRefreshBusy(btn, busy, done, total) {
+    if (!btn) return;
+    var baseTitle = btn.getAttribute('data-title') || '刷新状态与更新';
+    if (busy) {
+      btn.classList.add('busy');
+      btn.disabled = true;
+      btn.title = (total != null) ? ('刷新中 ' + (done || 0) + '/' + total) : '刷新中';
+    } else {
+      btn.classList.remove('busy');
+      btn.disabled = false;
+      btn.title = baseTitle;
+    }
+  }
+
+  function showRefreshSummary(stats, total) {
+    var parts = ['已刷新 ' + stats.ok + ' 本'];
+    if (stats.updated.length) parts.push(stats.updated.length + ' 本有更新');
+    if (stats.finished) parts.push(stats.finished + ' 本已完结');
+    if (stats.fail) parts.push(stats.fail + ' 本失败');
+    showToast({
+      title: stats.updated.length ? '发现更新' : '已是最新',
+      msg: parts.join(' · ')
+    });
+  }
+
+  /**
+   * 统一刷新入口。
+   * @param {Object} opts
+   *   - manual: 是否用户手动触发（决定是否弹汇总 toast、是否做连点保护）
+   *   - scope:  'all' = 已下载 ∪ 已收藏（默认，与旧「刷新状态」一致）
+   *             'fav' = 仅已收藏（旧「检查更新」的范围）
+   * 两者都会排除已拉黑。
+   */
+  function refreshLibrary(opts) {
+    opts = opts || {};
+    var manual = opts.manual !== false;
+    var scope = opts.scope === 'fav' ? 'fav' : 'all';
+
+    // 单飞：同一时刻只允许一个刷新任务，避免两处并发写同一份存储
+    if (refreshInFlight) return refreshInFlight;
+
+    if (manual) {
+      var guard = loadUpdates();
+      if (guard.lastManualAt && (Date.now() - guard.lastManualAt) < REFRESH_MIN_GAP_MS) {
+        showToast({ title: '刚刚已刷新', msg: '请稍后再试' });
+        return Promise.resolve(null);
       }
-      next();
-    });
-  }
+    }
 
-  function refreshLibraryStatus(btn) {
-    if (btn && btn.classList.contains('busy')) return;
     var hist = loadHistory();
     var favs = loadFavs();
     var bans = loadBans();
     var seen = {};
     var ids = [];
-    Object.keys(hist).concat(Object.keys(favs)).forEach(function (id) {
-      if (!id || seen[id] || bans[id]) return;
-      seen[id] = true;
-      ids.push(id);
-    });
+    var collect = function (map) {
+      Object.keys(map || {}).forEach(function (id) {
+        if (!id || seen[id] || bans[id]) return;
+        seen[id] = true;
+        ids.push(id);
+      });
+    };
+    if (scope === 'fav') collect(favs);
+    else { collect(hist); collect(favs); }
+
     if (!ids.length) {
-      showToast({ title: '无可刷新书目', msg: '书库中没有需要刷新的书' });
-      return;
+      if (manual) showToast({ title: '无可刷新书目', msg: '书库中没有需要刷新的书' });
+      return Promise.resolve(null);
     }
-    var baseTitle = btn ? (btn.getAttribute('data-title') || '刷新状态') : '';
-    if (btn) { btn.classList.add('busy'); btn.disabled = true; btn.title = '刷新中 0/' + ids.length; }
-    fetchStatusForIds(ids, function (done, total) {
-      if (btn) btn.title = '刷新中 ' + done + '/' + total;
-    }).then(function (r) {
-      if (btn) { btn.classList.remove('busy'); btn.disabled = false; btn.title = baseTitle; }
+
+    var btn = document.getElementById('dm-dl-refresh-btn');
+    setRefreshBusy(btn, true, 0, ids.length);
+
+    refreshInFlight = mapPool(ids, REFRESH_CONCURRENCY, function (id) {
+      return fetchNovelSnapshot(id);
+    }, function (done, total) {
+      setRefreshBusy(btn, true, done, total);
+    }).then(function (results) {
+      var stats = { ok: 0, fail: 0, updated: [], finished: 0 };
+      var store = loadUpdates();
+      var items = (store.items && typeof store.items === 'object') ? store.items : {};
+      var statusBefore = loadStatus();
+
+      results.forEach(function (r, i) {
+        var id = String(ids[i]);
+        if (!r || !r.ok || !r.value) { stats.fail++; return; }
+        stats.ok++;
+        var snap = r.value;
+
+        // ---- 书目状态 ----
+        var st = snap.status || {};
+        if (st.status || st.statusText || st.updateText) {
+          var prevStatus = statusBefore[id] || {};
+          var nextText = st.statusText ? statusFromRaw(st.statusText) : '';
+          if (nextText && nextText !== prevStatus.statusText && nextText === '已完结') stats.finished++;
+          recordStatus(id, st);
+        }
+
+        // ---- 章节更新 ----
+        if (!snap.chapters || !snap.chapters.length) return;
+        var latestId = snap.chapters[snap.chapters.length - 1].id;
+        var prevItem = items[id];
+        var title = (favs[id] && favs[id].title) || (hist[id] && hist[id].title) || ('小说 ' + id);
+        if (prevItem && typeof prevItem.maxId === 'number' && latestId > prevItem.maxId) {
+          var delta = countNewChapters(snap.chapters, prevItem.maxId);
+          var add = (prevItem.add || 0) + delta;
+          items[id] = { maxId: latestId, title: title, add: add };
+          stats.updated.push({ id: id, title: title, add: add, delta: delta });
+        } else {
+          items[id] = { maxId: latestId, title: title, add: (prevItem && prevItem.add) || 0 };
+        }
+      });
+
+      store.items = items;
+      store.lastCheckAt = Date.now();
+      if (manual) store.lastManualAt = Date.now();
+      saveUpdates(store);
+
+      refreshInFlight = null;
+      setRefreshBusy(btn, false);
       renderSheetBody();
       markListCards();
-      showToast({ title: '状态已刷新', msg: '成功 ' + r.ok + ' · 失败 ' + r.fail });
+      if (manual) showRefreshSummary(stats, ids.length);
+      if (stats.updated.length) setPanelDot(true);
+      return stats;
+    }).catch(function (err) {
+      refreshInFlight = null;
+      setRefreshBusy(btn, false);
+      if (manual) showToast({ title: '刷新失败', msg: '网络异常，请稍后再试' });
+      throw err;
     });
+
+    return refreshInFlight;
   }
 
   // ========== 收藏更新检查 ==========
@@ -957,83 +1025,6 @@
     return n;
   }
 
-  function fetchChapterLists(ids) {
-    var CONC = 4;
-    var list = ids || [];
-    var out = [];
-    return new Promise(function (resolve) {
-      if (!list.length) { resolve(out); return; }
-      var idx = 0;
-      var done = 0;
-      var active = 0;
-      function next() {
-        while (active < CONC && idx < list.length) {
-          (function (id) {
-            active++;
-            fetchChapterList(id).then(function (chs) {
-              out.push({ id: String(id), list: chs || [] });
-            }).catch(function () {}).then(function () {
-              active--;
-              done++;
-              if (done >= list.length) resolve(out);
-              else next();
-            });
-          })(list[idx++]);
-        }
-      }
-      next();
-    });
-  }
-
-  function notifyUpdates(updated) {
-    var total = updated.length;
-    var lines = updated.slice(0, 3).map(function (u) {
-      return '「' + u.title + '」+' + u.delta + '章';
-    });
-    if (total > 3) lines.push('…共 ' + total + ' 本有更新');
-    showToast({ title: '收藏有更新（' + total + ' 本）', msg: lines.join('\n') });
-    setPanelDot(true);
-  }
-
-  function checkFavUpdates(manual) {
-    var favs = loadFavs();
-    var ids = Object.keys(favs);
-    if (!ids.length) {
-      if (manual) showToast({ title: '暂无收藏', msg: '收藏夹为空，无法检查更新' });
-      return Promise.resolve({ checked: 0, updated: [] });
-    }
-    return fetchChapterLists(ids).then(function (res) {
-      var store = loadUpdates();
-      var items = store.items && typeof store.items === 'object' ? store.items : {};
-      var updated = [];
-      res.forEach(function (r) {
-        if (!r || !r.list || !r.list.length) return;
-        var key = String(r.id);
-        var latestId = r.list[r.list.length - 1].id;
-        var prev = items[key];
-        var title = (favs[key] && favs[key].title) || ('小说 ' + key);
-        if (prev && typeof prev.maxId === 'number' && latestId > prev.maxId) {
-          var delta = countNewChapters(r.list, prev.maxId);
-          var add = (prev.add || 0) + delta;
-          items[key] = { maxId: latestId, title: title, add: add };
-          updated.push({ id: key, title: title, add: add, delta: delta });
-        } else {
-          items[key] = { maxId: latestId, title: title, add: (prev && prev.add) || 0 };
-        }
-      });
-      store.items = items;
-      store.lastCheckAt = Date.now();
-      saveUpdates(store);
-      if (updated.length) {
-        notifyUpdates(updated);
-        renderSheetBody();
-      } else if (manual) {
-        showToast({ title: '已是最新', msg: '收藏的 ' + ids.length + ' 本书暂无更新' });
-      }
-      return { checked: ids.length, updated: updated };
-    });
-  }
-
   var autoCheckRan = false;
   function maybeAutoCheckUpdates() {
     if (autoCheckRan) return;
@@ -1041,7 +1032,8 @@
     var u = loadUpdates();
     if (u.lastCheckAt && (Date.now() - u.lastCheckAt) < UPDATE_CHECK_MS) return;
     if (!Object.keys(loadFavs()).length) return;
-    checkFavUpdates(false).catch(function () {});
+    // 自动检查只覆盖收藏，静默不弹汇总；仍走统一入口，避免再出现第二条抓取路径
+    refreshLibrary({ manual: false, scope: 'fav' }).catch(function () {});
   }
 
   // ========== 果核阅读器 ==========
@@ -1392,6 +1384,15 @@
     });
     saveFavs(result.favs);
     saveBans(result.bans);
+    // 拉黑后清掉该书的更新标记：刷新范围本来就排除已拉黑，
+    // 不清会留下永远不会被刷新的「有更新 +N」。
+    if (result.on && id) {
+      var u = loadUpdates();
+      if (u.items && typeof u.items === 'object' && u.items[String(id)]) {
+        delete u.items[String(id)];
+        saveUpdates(u);
+      }
+    }
     return result.on;
   }
 
