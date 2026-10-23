@@ -115,7 +115,7 @@
       git diff --check
       here-string 静态断言：@'...js 代码...'@ | node -（参照 MODIFICATIONS.md 各条目写法）
   → 更新本 README 中受影响的行为说明（扩展契约有变再改 jcs-extension-contract.md）
-  → 回填 dock/docs/jav-code-scanner/MODIFICATIONS.md（功能 → 修改内容 → 文件与位置）
+  → 回填仓库根 `MODIFICATIONS.md` 的「四、dock/docs/jav-code-scanner/」小节（功能 → 修改内容 → 文件与位置）
 ```
 
 注意 CBox 隔离：`cbox.ws` 域走 `bootCboxLite()` 轻量路径（只有扫描/linkify/精简 API），
@@ -184,7 +184,7 @@ JavCodeKit.extensions.register(MANIFEST)     // 手动注册（调试 manifest �
 |---|---|
 | `dock/jav-code-scanner.user.js` | 唯一产品文件（当前 v1.5.96） |
 | `dock/docs/jav-code-scanner/jcs-extension-contract.md` | 扩展契约 v1.1（对外发布物，宿主 ≥ v1.5.81） |
-| `dock/docs/jav-code-scanner/MODIFICATIONS.md` | 修改协议与记录（改前读、改后回填） |
+| `MODIFICATIONS.md`（仓库根）的「四、dock/docs/jav-code-scanner/」小节 | 修改协议与记录（改前读、改后回填） |
 | `dock/docs/integration/integration-emh-scanner.md` | 与 EMH 的双脚本协作协议 |
 | `tools/test-extension.js` | 全类型扩展样例（脚手架） |
 | `tools/jable-live-preview.extension.js` | 真实脚本改造参考（mounts 型，含完整 cleanup） |

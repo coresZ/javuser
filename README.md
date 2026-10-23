@@ -19,7 +19,7 @@
 | 目录 | 内容 |
 |---|---|
 | `dock/` | 悬浮坞和已接入的脚本。见下表 |
-| `18mh/` | `18mh.user.js`（v4.7.10）：18dm/18mh 小说一键下载为 TXT，章节缓存/增量更新，收藏更新提醒，书目状态（连载/完结+更新时间），果核阅读器直连（书库/悬浮条/列表卡），Dock 动作菜单，收藏与黑名单 WebDAV 云同步（接入 `WebdevComponent`），适配移动端 |
+| `18mh/` | `18mh.user.js`（v4.8.0）：18dm/18mh 小说一键下载为 TXT，章节缓存/增量更新，收藏更新提醒，书目状态（连载/完结+更新时间），果核阅读器直连（书库/悬浮条/列表卡），Dock 动作菜单，收藏与黑名单 WebDAV 云同步（接入 `WebdevComponent`），适配移动端。刷新状态与检查更新已合并为单一入口 |
 | `websiteTool/` | `网页对象工具库.user.js`（v0.4.3，Greasy Fork [590111](https://greasyfork.org/scripts/590111)）：取选任意网页元素、识别类型、绑定动作，支持远程规则订阅；`config/cores-ppk-rules-all.json` 为规则导出 |
 | `tools/` | 开发辅助：`sync-webdev.js`（组件库同步嵌入 EMH）、`test-extension.js`（JCS 契约 v1 测试扩展）、`jable-live-preview.extension.js`（mounts 型实例扩展） |
 | `html/` | 用户向静态页：`manual.html`（7 章交互式使用手册）、`changelog.html`（用户视角更新日志） |
@@ -56,14 +56,14 @@
 | `dock/docs/integration/integration-emh-scanner.md` | 跨脚本桥集成指南（EMH_API 参考/时序/降级） |
 | `dock/docs/page-dock.md` | PageDock 接入说明 |
 | `docs/superpowers/specs/` | 功能设计 spec（如 18mh 黑名单设计） |
-| `dock/MODIFICATIONS.md`、`dock/docs/*/MODIFICATIONS.md`、`<脚本目录>/MODIFICATIONS.md` | 各域修改协议与回填记录（**改该域文件前必读，改完必回填**） |
+| `MODIFICATIONS.md`（仓库根，单文件制） | 全仓库修改协议与回填记录，按目录分节（**改前必读对应小节，改完必回填同一小节**） |
 
 ## 开发工作流
 
 - 语法校验：`node --check <脚本>`
 - 提交/推送：`ego commit "<msg>" --yes` → `ego push`（多身份工作流）
 - 版本号：代码改动须递增版本（纯文档/配置改动除外）
-- **改代码必须同步更新文档**（见根目录 `AGENTS.md`）：行为说明与代码一致，并回填受影响目录的 `MODIFICATIONS.md`。只改代码、留下过时文档，视为未完成。
+- **改代码必须同步更新文档**（见根目录 `AGENTS.md`）：行为说明与代码一致，并回填仓库根 `MODIFICATIONS.md` 的对应目录小节。只改代码、留下过时文档，视为未完成。
 
 ---
 
