@@ -31,7 +31,7 @@
 | 六、dock/docs/integration/ | 跨脚本协议文档域 |
 | 七、docs/superpowers/ | 设计 spec |
 | 八、.opencode/skills/ | 项目级 skills |
-| 九、websiteTool/ | `websiteTool/`（网页对象工具库，单文件脚本） |
+| 九、websiteTool/ | `websiteTool/`（网页对象工具库，`src/` 源码 + `build.mjs` 构建，产物 `dist/`） |
 
 - **新增目录**：若新目录不属于上表任何小节，在根 `MODIFICATIONS.md` 末尾新增一节，并在上表补一行。不要为新目录建独立文件。
 - 该文件已合并历史记录，早期条目里出现 `docs/xxx/MODIFICATIONS.md` 之类的路径是历史事实，不是当前结构。
@@ -46,7 +46,7 @@
 | JCS ⇄ EMH 桥、`EMH_API`、`JavCodeKit` 跨脚本面 | `dock/docs/integration/integration-emh-scanner.md` |
 | 根目录版本表、安装入口、工作流 | 仓库根 `README.md` |
 | `18mh/` | `18mh/` 内说明文档与根 `MODIFICATIONS.md` 的「三、18mh/」小节 |
-| `websiteTool/` 脚本行为 | 根 `MODIFICATIONS.md` 的「九、websiteTool/」小节（该目录无独立 README） |
+| `websiteTool/` 脚本行为 | `websiteTool/README.md`；并回填根 `MODIFICATIONS.md` 的「九、websiteTool/」小节 |
 
 行号会随改动漂移。文档写函数名和行为，不把行号当长期锚点。
 

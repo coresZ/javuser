@@ -1779,10 +1779,48 @@
 
 ### 目录约束
 
-- 本目录是单文件脚本 `网页对象工具库.user.js`（Greasy Fork [590111](https://greasyfork.org/scripts/590111)）+ 规则订阅源 `config/cores-ppk-rules-all.json`，无构建管线。
-- 产物头三段内联 CSS（style_default / style_refine / style_page）与代码耦合在单文件里；改样式须改产物内字符串，并遵守仓库滚动条规范（现状合规：`scrollbar-color: … transparent` + webkit track 显式透明，无 `color-scheme` 陷阱）。
+- 本目录是**源码 + 构建管线**：`src/**`（19 个共享作用域模块）、`styles/*.css`（构建时生成 `src/ui/styles.gen.js`）、`meta.header.js`（元数据模板）、`build.mjs`（零依赖构建脚本）、`package.json`（版本与脚本）。
+- 产物 `dist/网页对象工具库.user.js` 是 Greasy Fork 发布物，**已入库**（用户可直接安装，无需构建环境）。`.gitignore` 里对 `websiteTool/dist/` 做了目录级放行例外，其它目录的 `dist/` 仍被忽略。
+- **版本号唯一来源是 `package.json` 的 `version`**：`build.mjs` 读它并写入产物头部；`meta.header.js` 的 `@version` 只是占位，构建时被覆盖。升级用 `npm run version:bump` 后 `npm run build`，不要手工改多处。
+- 改样式须改 `styles/*.css` 再重建（不要直接改 `src/ui/styles.gen.js`，它是 AUTO-GENERATED），并遵守仓库滚动条规范（现状合规：`scrollbar-color: … transparent` + webkit track 显式透明，无 `color-scheme` 陷阱）。
+- 构建零依赖（仅 Node 内置模块），无 `node_modules` / lock 文件。
 
-### 2026-10-26 · 工程化尝试：拆分 src 模块树 + esbuild 构建管线（**已应用户要求整体回退**）
+### 2026-10-27 · 重新应用 src 构建管线，版本统一 0.4.6，dist 入库
+
+**功能**：websiteTool 恢复为 `src/` 模块树 + 零依赖构建管线；版本号收敛到 `package.json` 单一来源并统一为 0.4.6；构建产物纳入 git。
+
+**背景**：2026-10-26 曾做过一次同样的工程化（见下条），当时被要求整体回退。此后目录结构实际已重新演进为 `src/` + `styles/` + `build.mjs`，但 git 仍只跟踪旧单文件路径 `websiteTool/网页对象工具库.user.js`（磁盘已无此文件），且 `.gitignore` 的 `dist/` 规则导致产物无法入库。
+
+**问题**：版本号散在 4 处且互不一致——`package.json` 0.4.4、`meta.header.js` 0.4.4、`build.mjs` 硬编码默认值 0.4.3、README 示例 0.4.4，而产物已是 0.4.6。`build.mjs` 不读 `package.json`，所以「改 package.json 就生效」的直觉是错的。
+
+**修改内容**：
+- `build.mjs`：`VERSION` 改为 `process.env.PPK_VERSION || PKG.version`，从 `package.json` 读取；删除硬编码 `"0.4.3"`。`PPK_VERSION` 保留为临时覆盖通道。
+- `package.json`：`version` 0.4.4 → 0.4.6。
+- `meta.header.js`：`@version` 0.4.4 → 0.4.6（仅占位，构建时被覆盖）。
+- `websiteTool/README.md`：构建示例版本改 0.4.6，并补一段「版本号以 package.json 为唯一来源」的说明。
+- `.gitignore`：新增 websiteTool 例外段。注意父目录被忽略时 `!file` 不生效，必须先放行目录层级，最终写法为 `!websiteTool/` → `!websiteTool/dist/` → `!websiteTool/dist/**`。已实测：该产物可 `git add`，而 `dock/dist/` 等其它 `dist/` 仍被忽略。
+- git 索引：`git rm --cached websiteTool/网页对象工具库.user.js`，移除磁盘已不存在的旧路径跟踪。
+- 根 `README.md`：websiteTool 行改为指向 `dist/网页对象工具库.user.js`，版本 0.4.3 → 0.4.6，并说明源码在 `src/`、产物已入库。
+- 重新执行 `node build.mjs` 生成产物（0.4.6，153.0 KB，19 模块）。
+
+**验证**：
+- `node build.mjs` 输出 `version: 0.4.6`，产物头部 `@version 0.4.6`，156,693 bytes。
+- `node --check dist/网页对象工具库.user.js` 通过。
+- 产物完整性：19 个 `// --- src/` 模块分隔注释齐全；`RulesManager` / `Toolbar` / `RulesPanel` / `PopupPanel` / `style_default` 等关键符号均存在。
+- `git add --dry-run` 可加该产物；`dock/dist/x.js` 与 `websiteTool/node_modules/x.js` 仍被忽略。
+
+**未验证**：未在浏览器实际安装运行该产物；未提交 push。
+
+**涉及文件与位置**：
+- `websiteTool/build.mjs`：`VERSION` 计算
+- `websiteTool/package.json`：`version`
+- `websiteTool/meta.header.js`：`@version`
+- `websiteTool/README.md`：开发一节
+- `websiteTool/dist/网页对象工具库.user.js`：重新构建
+- `.gitignore`：新增 websiteTool 段
+- `README.md`：仓库构成表 websiteTool 行
+
+### 2026-10-26 · 工程化尝试：拆分 src 模块树 + esbuild 构建管线（**当次已回退，后于 2026-10-27 重新应用**）
 
 **功能**：把 v0.4.3 单文件产物（154 KB，内含 `// src/...` 模块边界注释的 esbuild bundle）还原为 `src/` 源码模块树 + esbuild 构建管线，产物与原版做了 AST 级等价验证；随后应用户要求删除本次 websiteTool/ 全部改动，脚本与目录结构还原为单文件状态。
 
@@ -1797,6 +1835,6 @@
 - 关键构建参数：`--tree-shaking=false`（保留 `eventFromUI` 死代码，对齐原版）；`target: es2020`（es2018 会把 `catch {}` 降级展开）；`isSafeUrl` 双份定义会被 esbuild 改名 `isSafeUrl2`（原版两模块共享函数声明），须单点导出；`legal-comments=inline` 只保留 bang/license 注释，**普通中文注释会被任何版本 esbuild 剥离**——注释真相必须在 src 源文件。
 - jsdom 冒烟可行且有效（GM 桩 + shadow DOM 断言），基线 11/12 项（「ppk:rules 未写入」在全新页面预期失败）。
 
-**状态**：websiteTool/ 已还原为原始两文件（`config/cores-ppk-rules-all.json` + `网页对象工具库.user.js`），产物 SHA256 与工程化前一致；AGENTS.md / MODIFICATIONS.md / README.md 仅保留中性化描述与本条历史记录。未提交。
+**状态**：当次已按要求回退为原始两文件；**2026-10-27 该工程化被重新应用并保留**（见上条），目录现为 `src/` + `styles/` + `build.mjs` + `dist/`，产物已入库。
 
 ---

@@ -39,3 +39,10 @@ dist/
 build/
 coverage/
 *.tsbuildinfo
+
+# ===== websiteTool =====
+# dist/ 是 Greasy Fork 的发布产物，需要入库（用户可直接安装，无需构建环境）。
+# 注意：父目录被忽略时 `!file` 不会生效，必须先放行目录层级。
+!websiteTool/
+!websiteTool/dist/
+!websiteTool/dist/**

@@ -1,0 +1,44 @@
+
+html > #cores-ppk-root[data-cores="root"],
+#cores-ppk-root[data-cores="root"][data-author="cores"] {
+  all: initial !important;
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  pointer-events: none !important;
+  z-index: 2147483646 !important;
+  overflow: visible !important;
+  transform: none !important;
+  filter: none !important;
+  clip: auto !important;
+  clip-path: none !important;
+  contain: none !important;
+  display: block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  zoom: 1 !important;
+}
+#cores-ppk-root:popover-open {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  overflow: visible !important;
+}
+.cores-ppk-bold[data-cores-bold],
+.cores-ppk-bold {
+  font-weight: 700 !important;
+}
