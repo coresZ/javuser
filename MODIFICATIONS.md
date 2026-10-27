@@ -848,9 +848,112 @@
 - 拉黑时若已收藏则取消收藏；取消拉黑不恢复收藏。
 - 状态刷新范围 = 已下载 ∪ 已收藏，按 id 去重并排除已拉黑。
 - 刷新入口统一为 `refreshLibrary({ manual, scope })`：一次抓取同时产出书目状态与章节更新，不要再新增第二条详情页抓取路径。
+- 站点 DOM 以 `jm-*` 命名体系为准（2026-10 改版），旧 `dx-*` / `detail-page__*` / `.poster` 选择器只作兜底保留，新增选择器优先 `jm-*`。核心锚点：`div.jm-wrap[data-novel-info]`、`a.jm-dt-ch`、`[data-rd-text]`、`h1.jm-dt-title`、`.jm-dt-pill--st`、`.jm-dt-meta span`、`.jm-card` / `.jm-card__cover` / `.jm-card__title` / `.jm-card__badge--status`。
+- 标签选择功能已于 v4.9.0 移除：站点改版删除了多选标签抽屉，脚本不再寄生站点标签 UI，也不再自建。
+- 页面类型决定注入范围：章节页只注入 Dock 与「最新章」提示条，**不注入**卡片阅读条、状态徽章、拉黑毛玻璃。所有「操作后刷新列表」的调用点必须走 `markListCardsOnPage()`，不要直接调 `markListCards()`。
+- 已拉黑的书不显示连载/完结、更新时间、「有更新 +N」，也不采集书目状态：刷新范围本就排除黑名单，这些信息对拉黑书没有意义。
 - WebDAV 走 Greasy Fork 库 `webdev-component`（`@require`），接入方只接线，不改库源码、不自写表单。
 - iOS / 全端均不注册 `GM_registerMenuCommand`；入口只有书库标题栏一个设置按钮。
 - WebDAV 下载合并：远端同 id 覆盖，本地独有保留；黑名单 id 从收藏中剔除。
+
+### 2026-10-27 · 拉黑书不再显示连载/完结与更新标记
+
+**功能**：已被拉黑的书，无论在站点列表卡还是书库列表里，都不再显示「连载中 / 已完结」状态胶囊、更新时间，以及「有更新 +N」。
+
+**问题**：拉黑只是给卡片盖了一层毛玻璃并把书名糊住，状态胶囊、更新时间、「有更新」这些信息照旧注入：
+- 站点列表卡：`markListCards` 末尾无条件 `statusLabel(getStatus(id))` 并 `addCardBadge`（`ser` / `fin` 类），拉黑卡上仍会冒出「连载中」。
+- 书库列表：`renderSheetBody` 的 `getStatus(id)` / `getUpdateAdd(id)` 同样不问是否拉黑，拉黑 tab 里会显示状态与「有更新」。
+- 顺带还有一个数据污染：`readCardStatus` 仍会对拉黑卡采集状态并写进 `dm_dl_status_v1`，留下一条永不刷新也不会显示的脏记录（刷新范围本就排除黑名单）。
+
+**修改内容**：
+- `@version` 4.9.1 → 4.9.2。
+- `markListCards`：状态胶囊的注入包进 `if (!hasBan)`；拉黑卡的状态采集条件由 `hasDl || hasFav` 改为 `!hasBan && (hasDl || hasFav)`。
+- `renderSheetBody`：`getStatus(id)` 改为 `bans[id] ? null : getStatus(id)`，`getUpdateAdd(id)` 改为 `bans[id] ? 0 : getUpdateAdd(id)`。`updateLabel(st)` 收到 `null` 时自身返回空串，更新时间胶囊随之消失。
+- 保留未动：拉黑卡的毛玻璃（`.dm-dl-veil` / `.dm-dl-veil-title`）、`dm-dl-banned` 类、书库里的「已拉黑」胶囊，以及未拉黑书的全部标记。
+
+**验证**：`node --check` 通过。jsdom 22 项断言全部通过：
+- 站点列表卡：未拉黑的收藏卡与下载卡仍显示「连载中」；拉黑卡不显示「连载中」「已完结」，也没有 `ser` / `fin` 类徽章，但毛玻璃与 `dm-dl-banned` 仍在；
+- 书库收藏 tab：401 显示「连载中」与「有更新 +3」；
+- 书库拉黑 tab：402 显示「已拉黑」，不显示「连载中」、「有更新」，也没有更新时间胶囊；
+- 结构断言：4 处保护条件均已就位。
+
+连同前几轮回归共 131 项全部通过（24 章节页 + 34 改版适配 + 29 刷新链路 + 22 滚动条 + 22 本次）。**未在真实站点验证**。
+
+**涉及文件与位置**：
+- `18mh/18mh.user.js`：`@version`、`markListCards`、`renderSheetBody`
+
+### 2026-10-27 · 章节页不再注入卡片装饰
+
+**功能**：阅读页（`/novel_chapter/`）只保留 Dock 悬浮条与「最新章」提示条，正文页不再出现卡片阅读条、状态徽章、拉黑毛玻璃。
+
+**问题**：`boot()` 末尾无条件调用 `markListCards()`，而该函数遍历页面上所有 `a[href*="/novel/detail/"]` 注入装饰。章节页的正文下方通常有推荐位/侧栏，引用其它书的详情链接，于是正文页也长出「📖 阅读」条、已下载/已收藏徽章和拉黑毛玻璃——这些是列表页的语义，在阅读页上是噪音。另外 6 处「用户操作后刷新列表」的调用点（刷新状态、收藏/拉黑切换、清空记录、书库删除、下载完成）同样无条件注入，在章节页操作书库后会把装饰重新长回来。
+
+**修改内容**：
+- `@version` 4.9.0 → 4.9.1。
+- `markListCards(cleanupOnly)` 新增参数：完成清理（移除 `.dm-dl-card-badge` / `.dm-dl-reader-bar` / `.dm-dl-veil`、摘掉 `.dm-dl-banned`）后若是 `cleanupOnly` 直接 return，不再新建任何节点。
+- 新增 `markListCardsOnPage()`：按 `location.pathname` 判断是否章节页，自动传 `cleanupOnly`。所有 6 处调用点统一改走它，避免在章节页重新注入。
+- `boot()` 里把页面类型判断提前到函数开头（`isChapterPage`），下载中提前返回的分支也走 `markListCardsOnPage()`。
+- 章节页仍保留：Dock 悬浮条（唯一操作入口）、`#dm-dl-latest-tip` 最新章提示条。
+
+**保留未动**：详情页的书名旁徽章（`injectTitleBadges`，`h1.jm-dt-title` + 已下载/已收藏/已更新/已拉黑）本来就只在详情页分支调用，章节页从未有过，本次未改。
+
+**验证**：`node --check` 通过。jsdom 24 项断言全部通过：
+- 章节页：无 `.dm-dl-reader-bar` / `.dm-dl-card-badge` / `.dm-dl-veil` / `.dm-dl-banned`；推荐卡封面未被写入 `position`（证明 `addReaderBar` 未执行）；
+- 章节页：Dock 存在且内容非空、`#dm-dl-latest-tip` 容器存在；
+- 章节页二次启动、切换书库 tab 后仍无装饰；
+- 列表页：阅读条 3 个、徽章与毛玻璃正常；
+- 详情页：书名旁「已下载」「已收藏」徽章正常。
+
+连同前三轮回归共 109 项全部通过（34 改版适配 + 29 刷新链路 + 22 滚动条/时间胶囊 + 24 本次）。**未在真实站点验证**。
+
+**涉及文件与位置**：
+- `18mh/18mh.user.js`：`@version`、`markListCards`、`markListCardsOnPage`、`boot`、6 处列表刷新调用点
+
+### 2026-10-27 · 适配 18mh.net 改版（jm-* 体系），移除标签选择功能
+
+**功能**：站点 2026-10 改版后 `18mh.user.js` 全面失效，本次恢复章节标题、正文提取、书目状态、列表卡标记；并移除已无宿主可挂的标签选择功能。
+
+**问题（站点改版实测，2026-10-27）**：
+站点把 `dx-*` / `detail-page__*` / `.poster` 命名体系整体换成 `jm-*`，多处选择器归零：
+
+| 原选择器 | 线上实际 | 后果 |
+|---|---|---|
+| `.detail-page__chapter-badge` / `__chapter-title` | `.jm-dt-ch__no` / `.jm-dt-ch__t` | 章节标题全部退化为「第N章」，TXT 目录丢失标题 |
+| `.article .line` / `div.line` | `div.jm-rd-text[data-rd-text] > p` | 正文提取靠第三个兜底 `.article p` 勉强可用 |
+| `main[data-novel-info]` | `div.jm-wrap[data-novel-info]` | 书名/状态码/书目 id 采集失败 |
+| `.detail-page__cover-corner-badge` | `.jm-dt-pill--st` | 状态胶囊采集失败 |
+| `.detail-page__meta-row span` | `.jm-dt-meta span` | 更新时间采集失败 |
+| `.poster` / `.dx-bg-linear` | `.jm-card__cover` / `.jm-card__badge--status` | 列表卡状态、毛玻璃、阅读条挂载失败 |
+| `h1.detail-page__title` / `h1.dx-title` | `h1.jm-dt-title` | 标题徽章退化到任意 h1 |
+| `.dx-middle-popup` / `.dx-tag-list` / `.multi-select-btn` | **全部不存在** | 标签选择功能整体报废 |
+
+**修改内容**：
+- `@version` 4.8.0 → 4.9.0。
+- `parseChaptersIn`：选择器改为 `a.jm-dt-ch` → `.jm-dt-grid a[href*="novel_chapter"]` → `a[href*="/novel_chapter/"]`；标题取 `.jm-dt-ch__no` + `.jm-dt-ch__t`，并去掉 `__t` 与 `__no` 重复的「第N章」前缀（线上存在 `第 169 章` 带空格的变体与 `第331-340章` 这类非标准编号）。
+- `extractContent`：优先 `[data-rd-text]` → `.jm-rd-text` → `.article`，取内部 `<p>`；旧 `.article .line / div.line / .article p` 保留兜底。
+- 新增 `NOVEL_INFO_SELECTOR = '[data-novel-info]'` 与 `readNovelInfoDoc(doc)`，把 `main[data-novel-info]` 放宽到任意宿主元素；`readNovelTitleFromPage`、`readNovelIdFromPage`、`readDetailStatus`、`boot` 全部改用它。JSON 字段名（`novel_id` / `novel_title` / `content_status`）站点未改，无需字段映射。
+- `readDetailStatus`：状态胶囊改 `.jm-dt-pill--st`（兜底 `.jm-dt-pill`、`.detail-page__cover-corner-badge`）；meta 行改 `.jm-dt-meta span`（兜底旧类名），并新增「单独日期」识别（`/^\d{4}-\d{2}-\d{2}$/`）作为更新时间。
+- `readCardStatus`：状态改 `.jm-card__badge--status`（兜底 `[class*="jm-card__badge"]`、旧 `.dx-bg-linear`）；卡片时间仍只认 `span.mr-auto`，取不到就不写，避免脏值。
+- `injectTitleBadges`：书名改 `h1.jm-dt-title`（兜底旧类名与 `.jm-dt-title`）。
+- `markListCards`：卡片容器改 `a.closest('.jm-card')`（兜底 `li` / `article` / `parentElement`），修复徽章错误挂到封面链接上的问题；标题改 `.jm-card__title`。
+- `veilBannedCard` / `addReaderBar`：封面宿主改 `.jm-card__cover`（兜底 `.poster`），毛玻璃与阅读条重新挂到封面内。
+- **移除标签选择功能**：删除 `tagPicker` 模块（`bindTagPicker` / `openTagPicker` / `renderTagSheetBody` / `submitTagPicker` / `isTagTrigger` / `collectSiteTags` / `selectedIdsFromContext` / `parsePageUrlStore` / `syncSelectedToSite` / `hideSiteTagPopups`）、标签抽屉 DOM（`#dm-dl-tag-mask` 整块）、标签相关 CSS（约 30 条规则）、Esc 与点击遮罩的关闭分支、`boot` 里的 `bindTagPicker()` 调用。站点已无多选标签 UI，脚本不再寄生、也不再自建替代界面。
+- 保留 `.dm-dl-tag*` 样式：那是书库条目里的「已下载/已收藏/已拉黑/连载中」状态胶囊，与标签抽屉无关。
+
+**验证**：`node --check` 通过。用 2026-10-27 真实抓取的站点结构做 jsdom 回归，34 项断言全部通过：
+- 真实详情页解析：169 章全部命中，`__no`=「第1章」、`__t`=「了无性趣的男大学生和性瘾女友」，标题拼接正确；
+- 真实章节页：`[data-rd-text]` 内 26 个 `<p>`，正文提取正常；
+- `data-novel-info` 在 `div.jm-wrap` 上可读到 `novel_id=106` / `novel_title` / `content_status=serializing`；
+- 状态胶囊「连载中」、meta 行「… 连载中 2025-06-29 更新」均可解析；
+- 列表卡：`.jm-card` 识别、徽章落在 `.jm-card__top`、毛玻璃与阅读条落在 `.jm-card__cover`；
+- 标签功能零残留（`dm-dl-tag-mask` / `dx-middle-popup` / `dx-tag-list` / `multi-select-btn` 均无引用）；
+- 旧结构（`main[data-novel-info]` + `detail-page__*`）仍能工作，镜像站不受影响。
+
+同时重跑 v4.8.0 的 29 项刷新链路断言，全部通过（共 63 项）。**未在真实站点做完整手动下载验证**，章节标题拼接与正文分段建议实际下一本书确认。
+
+**涉及文件与位置**：
+- `18mh/18mh.user.js`：`@version`、`parseChaptersIn`、`extractContent`、`NOVEL_INFO_SELECTOR` / `readNovelInfoDoc`、`readNovelTitleFromPage`、`readNovelIdFromPage`、`readDetailStatus`、`readCardStatus`、`injectTitleBadges`、`markListCards`、`veilBannedCard`、`addReaderBar`、`boot`、注入样式块、`ensureDOM`
+- 已移除：`tagPicker` 模块及其全部辅助函数、`#dm-dl-tag-mask` DOM、标签抽屉 CSS
 
 ### 2026-10-23 · 合并「刷新状态」与「检查更新」
 
@@ -1668,5 +1771,3 @@
 **涉及文件与位置**：本目录 9 个 trellis-* 技能目录（删除）；`.opencode/skills/MODIFICATIONS.md`（本条记录 + 约束改写）
 
 **状态**：未提交，git 可查（全部为删除记录，可从历史恢复）
-
----

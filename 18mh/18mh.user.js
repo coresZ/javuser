@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         18dm小说下载器
 // @namespace    http://tampermonkey.net/
-// @version      4.8.0
-// @description  一键下载18dm/18mh小说为TXT · UI v2（Lobe 实色层 / Lucide 图标 / PowerGlitch 成功态）· 章节缓存 · 增量更新 · 收藏更新提醒 · 书目状态（连载/完结+更新时间）· 果核阅读器直连（书库/悬浮条/列表卡）· Dock 动作菜单 · 标签抽屉 · 悬浮条拖拽磁吸 · 收藏/黑名单 WebDAV 同步
+// @version      4.9.2
+// @description  一键下载18dm/18mh小说为TXT · UI v2（Lobe 实色层 / Lucide 图标 / PowerGlitch 成功态）· 章节缓存 · 增量更新 · 收藏更新提醒 · 书目状态（连载/完结+更新时间）· 果核阅读器直连（书库/悬浮条/列表卡）· Dock 动作菜单 · 悬浮条拖拽磁吸 · 收藏/黑名单 WebDAV 同步
 // @author       you
 // @match        *://18dm.net/*
 // @match        *://*.18dm.net/*
@@ -179,8 +179,10 @@
       '.dm-dl-tab{flex:1;padding:9px 0;border-radius:var(--dm-r-sm);color:var(--dm-text-dim);font-size:13px;font-weight:600;text-align:center;transition:all .15s}',
       '.dm-dl-tab:hover{color:#fff;background:rgba(255,255,255,0.06)}',
       '.dm-dl-tab.on{color:#fff;background:var(--dm-accent-soft);box-shadow:inset 0 0 0 1px rgba(129,140,248,0.4)}',
-      '.dm-dl-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px 14px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.22) transparent}',
-      '#dm-dl-root,#dm-dl-sheet,#dm-dl-tag-sheet,.dm-dl-body,.dm-dl-tag-sel,#dm-dl-tag-body{color-scheme:dark;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.22) transparent}',
+      // 滚动条改为 overlay（覆盖式）：不占内容宽度，条目宽度不随条数变化。
+      // WebKit 下用 5px 窄条 + 透明轨道；Firefox 仍是 thin（它本身就占位，靠右侧内边距补偿）。
+      '.dm-dl-body{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:12px 14px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.22) transparent;overscroll-behavior:contain}',
+      '#dm-dl-root,#dm-dl-sheet,.dm-dl-body{color-scheme:dark;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.22) transparent}',
       '#dm-dl-root *::-webkit-scrollbar{width:5px!important;height:5px!important;background:transparent!important}',
       '#dm-dl-root *::-webkit-scrollbar-track,#dm-dl-root *::-webkit-scrollbar-corner{background:transparent!important;border:none!important;box-shadow:none!important}',
       '#dm-dl-root *::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.22)!important;border-radius:99px!important;border:none!important}',
@@ -190,10 +192,14 @@
       '.dm-dl-item:hover{background:rgba(255,255,255,0.07)}',
       '.dm-dl-item-main{flex:1;min-width:0;cursor:pointer}',
       '.dm-dl-item-title{font-size:13.5px;font-weight:600;color:#f1f3f4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px}',
+      // meta 行：所有子项都不收缩，宽度不够时整项换行，而不是把文字挤断
       '.dm-dl-item-meta{font-size:11.5px;color:var(--dm-text-mute);display:flex;flex-wrap:wrap;gap:6px;align-items:center}',
+      '.dm-dl-item-meta>*{flex:0 0 auto;white-space:nowrap}',
       '.dm-dl-tag{padding:1px 6px;border-radius:var(--dm-r-pill);font-size:10px;font-weight:600}',
       '.dm-dl-tag.dl{background:rgba(52,211,153,0.16);color:var(--dm-success)}',
       '.dm-dl-tag.fav{background:rgba(251,113,133,0.16);color:var(--dm-fav)}',
+      // 更新时间胶囊：与状态胶囊同款外观，避免裸 span 被 flex 挤压后掉行
+      '.dm-dl-tag.time{background:rgba(255,255,255,0.06);color:var(--dm-text-dim);font-weight:500}',
       '.dm-dl-item-acts{display:flex;gap:4px;flex:0 0 auto}',
       '.dm-dl-mini{padding:7px 7px!important;border-radius:var(--dm-r-sm)!important;background:rgba(255,255,255,0.06)!important;color:var(--dm-text-dim)!important;font-size:12px!important;font-weight:500!important;transition:background .15s,color .15s,transform .12s!important}',
       '.dm-dl-mini:hover{background:rgba(255,255,255,0.12)!important;color:#fff!important}',
@@ -205,39 +211,6 @@
       '.dm-dl-ft button:hover{background:rgba(255,255,255,0.12);color:#fff}',
       '.dm-dl-ft button:active{transform:scale(0.96)}',
       '.dm-dl-empty{text-align:center;padding:50px 0;color:var(--dm-text-mute);font-size:13px}',
-
-      /* 标签选择抽屉（替代站点 dx-middle-popup） */
-      '#dm-dl-tag-mask{position:fixed!important;inset:0!important;background:rgba(0,0,0,0.48)!important;',
-      'z-index:2147483646!important;',
-      'display:flex!important;align-items:flex-end!important;justify-content:center!important;overflow:hidden!important;',
-      'opacity:0!important;visibility:hidden!important;pointer-events:none!important;',
-      'transition:opacity .25s var(--dm-ease),visibility 0s linear .25s!important}',
-      '#dm-dl-tag-mask.open{opacity:1!important;visibility:visible!important;pointer-events:auto!important;',
-      'transition:opacity .25s var(--dm-ease),visibility 0s linear 0s!important}',
-      '#dm-dl-tag-sheet{width:100%!important;max-width:460px!important;margin:0 auto!important;',
-      'height:min(84vh, 720px)!important;height:min(84dvh, 720px)!important;background:#1a1a1f!important;',
-      'border:1px solid var(--dm-glass-border)!important;border-radius:20px 20px 0 0!important;',
-      'display:flex!important;flex-direction:column!important;overflow:hidden!important;',
-      'box-shadow:0 -16px 48px rgba(0,0,0,0.5)!important;transform:translateY(110%)!important;',
-      'transition:transform .3s var(--dm-ease)!important;padding-bottom:env(safe-area-inset-bottom, 0px)!important}',
-      '#dm-dl-tag-mask.open #dm-dl-tag-sheet{transform:translateY(0)!important}',
-      '#dm-dl-tag-search{font-size:16px!important}',
-      '.dm-dl-tag-sel{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 8px;max-height:76px;overflow-y:auto;-webkit-overflow-scrolling:touch}',
-      '.dm-dl-tag-sel:empty{display:none}',
-      '.dm-dl-tag-chip{padding:7px 11px;border-radius:var(--dm-r-pill);background:rgba(255,255,255,0.06);',
-      'color:#d1d5db;font-size:12.5px;border:1px solid rgba(255,255,255,0.07);cursor:pointer;line-height:1.2;',
-      'min-height:32px;transition:background .12s,color .12s,border-color .12s,transform .12s;-webkit-tap-highlight-color:transparent}',
-      '.dm-dl-tag-chip:active{transform:scale(0.96)}',
-      '.dm-dl-tag-chip.on{background:rgba(248,113,113,0.2);color:#fecaca;border-color:rgba(248,113,113,0.45)}',
-      '.dm-dl-tag-chip.mini{padding:5px 9px;font-size:11.5px;min-height:28px}',
-      '.dm-dl-tag-group{margin:12px 0 6px;font-size:11px;color:var(--dm-text-mute);font-weight:700;letter-spacing:.06em}',
-      '.dm-dl-tag-grid{display:flex;flex-wrap:wrap;gap:6px}',
-      '#dm-dl-tag-body{-webkit-overflow-scrolling:touch;overscroll-behavior:contain}',
-      '#dm-dl-tag-count{font-size:12px;color:var(--dm-text-dim);display:flex;align-items:center;flex:0 0 auto;padding-right:6px}',
-      '#dm-dl-tag-submit{background:#f43f5e!important;color:#fff!important;min-height:42px!important}',
-      '#dm-dl-tag-clear{flex:0 0 auto!important;padding:9px 12px!important;min-height:42px!important}',
-      '.dx-middle-popup,.dx-shield-tag-box{visibility:hidden!important;pointer-events:none!important;',
-      'transform:translate(250%,-50%)!important}',
 
       /* Dock */
       '#dm-dl-dock-wrap{position:fixed!important;z-index:2147483645!important;display:flex!important;flex-direction:column!important;align-items:flex-end!important;touch-action:none!important}',
@@ -357,7 +330,8 @@
       // 默认常显（移动端/触屏）；仅桌面 hover 设备改为悬停显示
       '@media (hover:hover) and (pointer:fine){',
       '.dm-dl-reader-bar{opacity:0!important;transform:translateY(100%)!important;pointer-events:none!important}',
-      '.poster:hover .dm-dl-reader-bar,.dm-dl-reader-bar:hover{opacity:1!important;transform:translateY(0)!important;pointer-events:auto!important}',
+      // 封面悬停显示阅读条；改版后封面是 .jm-card__cover，旧 .poster 保留
+      '.jm-card__cover:hover .dm-dl-reader-bar,.poster:hover .dm-dl-reader-bar,.dm-dl-reader-bar:hover{opacity:1!important;transform:translateY(0)!important;pointer-events:auto!important}',
       '}',
       '.dm-dl-tag.ser{background:rgba(59,130,246,0.18);color:#93c5fd}',
       '.dm-dl-tag.fin{background:rgba(161,161,170,0.18);color:var(--dm-ban)}',
@@ -371,9 +345,6 @@
       '.dm-dl-menu-row{padding:9px 7px!important;font-size:13px!important;min-height:40px!important}',
       '#dm-dl-main-btn{min-width:96px!important;max-width:160px!important;height:36px!important;padding:0 10px!important;font-size:12.5px!important}',
       '#dm-dl-dock.collapsed{width:42px!important;height:42px!important}',
-      '#dm-dl-tag-sheet{max-width:100%!important;height:min(90vh, 100%)!important;height:min(90dvh, 100%)!important;',
-      'border-radius:16px 16px 0 0!important}',
-      '#dm-dl-tag-search{font-size:16px!important}',
       '}'
     ].join('');
     document.head.appendChild(css);
@@ -436,25 +407,6 @@
     dockWrap.innerHTML = '<div id="dm-dl-latest-tip"></div><div id="dm-dl-dock"></div>';
     root.appendChild(dockWrap);
 
-    // 标签选择抽屉
-    var tagMask = document.createElement('div');
-    tagMask.id = 'dm-dl-tag-mask';
-    tagMask.innerHTML =
-      '<div id="dm-dl-tag-sheet">' +
-      '<div class="dm-dl-hd"><h3 id="dm-dl-tag-title">选择标签</h3><button type="button" class="dm-dl-hd-close" id="dm-dl-tag-close">✕</button></div>' +
-      '<div style="padding:10px 14px 0"><input type="search" class="dm-dl-search" id="dm-dl-tag-search" placeholder="搜索标签…" style="margin-bottom:8px"></div>' +
-      '<div class="dm-dl-tag-sel" id="dm-dl-tag-sel"></div>' +
-      '<div class="dm-dl-body" id="dm-dl-tag-body"></div>' +
-      '<div class="dm-dl-ft">' +
-      '<span id="dm-dl-tag-count">已选 0</span>' +
-      '<button type="button" id="dm-dl-tag-clear">清空</button>' +
-      '<button type="button" id="dm-dl-tag-submit">提交</button>' +
-      '</div></div>';
-    root.appendChild(tagMask);
-    tagMask.addEventListener('click', function (e) {
-      if (e.target === tagMask) closeTagSheet();
-    });
-
     document.body.appendChild(root);
 
     // 把 toast 移到根节点末尾，保证提示条绘制在弹窗遮罩之上
@@ -469,11 +421,6 @@
           mm.classList.remove('open');
           mm._resolve(false);
           mm._resolve = null;
-          return;
-        }
-        var tm = document.getElementById('dm-dl-tag-mask');
-        if (tm && tm.classList.contains('open')) {
-          closeTagSheet();
           return;
         }
         var sm = document.getElementById('dm-dl-sheet-mask');
@@ -500,11 +447,8 @@
         refreshLibrary({ manual: true, scope: 'all' });
       };
     }
-    var tagClose = document.getElementById('dm-dl-tag-close');
-    if (tagClose) tagClose.onclick = closeTagSheet;
 
     bindSheetTabs();
-    bindTagSheetActions();
   }
 
   // Toast
@@ -711,12 +655,6 @@
     clearPopoverAnchor(document.getElementById('dm-dl-sheet'));
   }
 
-  function closeTagSheet() {
-    var mask = document.getElementById('dm-dl-tag-mask');
-    if (mask) mask.classList.remove('open');
-    document.body.style.removeProperty('overflow');
-  }
-
   // ========== 存储 ==========
   function loadJSON(key) {
     try {
@@ -796,8 +734,14 @@
     var out = {};
     if (!card || !card.querySelector) return out;
     try {
-      var chip = card.querySelector('.poster .dx-bg-linear') || card.querySelector('.dx-bg-linear');
+      // 改版后状态胶囊在封面链接内：<a class="jm-card__cover">…<span class="jm-card__badge jm-card__badge--status">连载中</span></a>
+      // 旧结构是 .poster 下的 .dx-bg-linear，保留兜底。
+      var chip = card.querySelector('.jm-card__badge--status')
+        || card.querySelector('[class*="jm-card__badge"]')
+        || card.querySelector('.poster .dx-bg-linear')
+        || card.querySelector('.dx-bg-linear');
       if (chip) out.statusText = statusFromRaw(chip.textContent);
+      // 改版后卡片没有「xx更新」文本；旧结构用 span.mr-auto。取不到就不写，避免脏值。
       var timeEl = card.querySelector('span.mr-auto');
       if (timeEl) out.updateText = (timeEl.textContent || '').trim();
     } catch (e) {}
@@ -807,23 +751,26 @@
   function readDetailStatus(doc) {
     var out = {};
     if (!doc || !doc.querySelector) return out;
+    var info = readNovelInfoDoc(doc);
+    if (info && info.content_status) out.status = String(info.content_status);
     try {
-      var main = doc.querySelector('main[data-novel-info]');
-      if (main) {
-        var info = JSON.parse(main.getAttribute('data-novel-info') || '{}');
-        if (info && info.content_status) out.status = String(info.content_status);
-      }
-    } catch (e) {}
-    try {
-      var badge = doc.querySelector('.detail-page__cover-corner-badge');
+      // 改版后状态胶囊：<span class="jm-dt-pill jm-dt-pill--st">连载中</span>
+      // 旧结构 .detail-page__cover-corner-badge，保留兜底。
+      var badge = doc.querySelector('.jm-dt-pill--st')
+        || doc.querySelector('.jm-dt-pill')
+        || doc.querySelector('.detail-page__cover-corner-badge');
       if (badge) out.statusText = statusFromRaw(badge.textContent);
     } catch (e) {}
     try {
-      var spans = doc.querySelectorAll('.detail-page__meta-row span');
+      // 改版后 meta 行是 .jm-dt-meta > span（分类 / 作者 / 连载中 / …），
+      // 旧结构是 .detail-page__meta-row span。
+      var spans = doc.querySelectorAll('.jm-dt-meta span, .detail-page__meta-row span');
       for (var i = 0; i < spans.length; i++) {
-        var t = (spans[i].textContent || '').trim();
+        var t = (spans[i].textContent || '').replace(/\s+/g, ' ').trim();
         if (!out.statusText && statusFromRaw(t)) out.statusText = statusFromRaw(t);
         if (!out.updateText && /更新$/.test(t)) out.updateText = t.replace(/\s*更新$/, '');
+        // 改版后更新时间可能以单独日期形式出现（如 2026-10-26），只在还没有值时取第一个像日期的
+        if (!out.updateText && /^\d{4}-\d{2}-\d{2}$/.test(t)) out.updateText = t;
       }
     } catch (e) {}
     return out;
@@ -969,7 +916,7 @@
       refreshInFlight = null;
       setRefreshBusy(btn, false);
       renderSheetBody();
-      markListCards();
+      markListCardsOnPage();
       if (manual) showRefreshSummary(stats, ids.length);
       if (stats.updated.length) setPanelDot(true);
       return stats;
@@ -1119,7 +1066,7 @@
     }
     function afterToggle() {
       injectTitleBadges(ctx.novelId);
-      markListCards();
+      markListCardsOnPage();
       buildDockMenuRows(menu, ctx);
       syncMenuBtnState(ctx.novelId);
     }
@@ -1525,7 +1472,7 @@
         var n = mergeFavsFromPack(pack);
         renderSheetBody();
         injectTitleBadges(getNovelIdFromUrl());
-        markListCards();
+        markListCardsOnPage();
         showToast({
           title: '书库已同步',
           msg: '收藏 +' + n.favCount + ' · 黑名单 +' + n.banCount
@@ -1857,7 +1804,7 @@
           else saveHistory({});
           renderSheetBody();
           injectTitleBadges(getNovelIdFromUrl());
-          markListCards();
+          markListCardsOnPage();
           showToast({ title: '清空完成', msg: '已清空全部' + name + '记录' });
         });
       };
@@ -1923,10 +1870,12 @@
         if (favs[id]) tags += '<span class="dm-dl-tag fav">已收藏</span>';
         if (bans[id]) tags += '<span class="dm-dl-tag ban">已拉黑</span>';
 
-        var st = getStatus(id);
+        // 已拉黑的条目不显示连载/完结、发布时间与「有更新」：
+        // 这些信息对拉黑的书没有意义，刷新范围也排除了黑名单。
+        var st = bans[id] ? null : getStatus(id);
         var stTxt = statusLabel(st);
         if (stTxt) tags += '<span class="dm-dl-tag ' + (stTxt === '已完结' ? 'fin' : 'ser') + '">' + stTxt + '</span>';
-        var updAdd = getUpdateAdd(id);
+        var updAdd = bans[id] ? 0 : getUpdateAdd(id);
         if (updAdd > 0) tags += '<span class="dm-dl-tag upd">有更新 +' + updAdd + '</span>';
         var upd = updateLabel(st);
 
@@ -1939,7 +1888,7 @@
           '<div class="dm-dl-item-main">' +
           '<div class="dm-dl-item-title" title="' + esc(timeTip) + '">' + esc(item.title || '未知标题') + '</div>' +
           '<div class="dm-dl-item-meta">' + tags +
-          (upd ? '<span>' + esc(upd) + '</span>' : '') +
+          (upd ? '<span class="dm-dl-tag time">' + esc(upd) + '</span>' : '') +
           '</div>' +
           '</div>' +
           '<div class="dm-dl-item-acts">' +
@@ -1976,7 +1925,7 @@
             else unmarkDownloaded(id);
             renderSheetBody();
             injectTitleBadges(getNovelIdFromUrl());
-            markListCards();
+            markListCardsOnPage();
           });
         };
         listWrap.appendChild(row);
@@ -1995,7 +1944,8 @@
 
   // ========== 徽章 ==========
   function injectTitleBadges(novelId) {
-    var h1 = document.querySelector('h1.detail-page__title, h1.dx-title, .detail-page__title, h1');
+    // 改版后书名是 <h1 class="jm-dt-title">；旧结构 detail-page__title / dx-title 保留兜底。
+    var h1 = document.querySelector('h1.jm-dt-title, h1.detail-page__title, h1.dx-title, .detail-page__title, .jm-dt-title, h1');
     var old1 = document.getElementById('dm-dl-title-badge');
     var old2 = document.getElementById('dm-dl-fav-badge');
     var old3 = document.getElementById('dm-dl-update-badge');
@@ -2038,7 +1988,15 @@
     }
   }
 
-  function markListCards() {
+  // cleanupOnly: 只清理上次注入的节点，不再新建。
+  // 章节页只需要清掉残留（避免二次 boot 叠加），不注入阅读条与状态徽章。
+  // 章节页只清理不注入：正文页不需要卡片阅读条、状态徽章、拉黑毛玻璃。
+  // 所有「用户操作后刷新列表」的调用点都走这里，避免在章节页重新注入。
+  function markListCardsOnPage() {
+    markListCards(/\/novel_chapter\//.test(location.pathname));
+  }
+
+  function markListCards(cleanupOnly) {
     var hist = loadHistory();
     var favs = loadFavs();
     var bans = loadBans();
@@ -2049,7 +2007,7 @@
     for (var i = 0; i < leftovers.length; i++) leftovers[i].remove();
     var bannedCards = document.querySelectorAll('.dm-dl-banned');
     for (var b = 0; b < bannedCards.length; b++) bannedCards[b].classList.remove('dm-dl-banned');
-
+    if (cleanupOnly) return;
     var links = document.querySelectorAll('a[href*="/novel/detail/"]');
     var seenCard = [];
     function cardSeen(el) {
@@ -2062,7 +2020,12 @@
       var m = (a.getAttribute('href') || '').match(/\/novel\/detail\/(\d+)/);
       if (!m) continue;
       var id = m[1];
-      var card = a.closest('li') || a.closest('article') || a.parentElement;
+      // 改版后卡片是 <div class="jm-card">，内含封面链接与 .jm-card__info；
+      // 旧结构是 li / article。逐级向上找到真正的卡片容器，避免退化到 a.parentElement（封面本体）。
+      var card = a.closest('.jm-card')
+        || a.closest('li')
+        || a.closest('article')
+        || a.parentElement;
       if (!card || cardSeen(card)) continue;
       seenCard.push(card);
 
@@ -2076,7 +2039,9 @@
       if (!hasDl && !hasFav && !hasBan) continue;
 
       var host;
-      var titleEl = card.querySelector('h2, h3');
+      // 改版后标题是 <h3 class="jm-card__title">，父节点为 .jm-card__top；
+      // 旧结构是卡片内的 h2 / h3。两者都靠 h2/h3 命中。
+      var titleEl = card.querySelector('.jm-card__title') || card.querySelector('h2, h3');
       if (titleEl && titleEl.parentNode) host = titleEl.parentNode;
       else {
         var titleLink = card.querySelector('a[href*="/novel/detail/"] h2, a[href*="/novel/detail/"] h3');
@@ -2093,7 +2058,9 @@
         return badge;
       }
 
-      if (hasDl || hasFav) {
+      // 已拉黑的书不采集状态：刷新范围本来就排除黑名单，
+      // 在这里写进 dm_dl_status_v1 只会留下永不更新也不会显示的脏记录。
+      if (!hasBan && (hasDl || hasFav)) {
         var cardStatus = readCardStatus(card);
         if (cardStatus.statusText || cardStatus.updateText) recordStatus(id, cardStatus);
       }
@@ -2108,8 +2075,12 @@
       }
       if (hasBan) veilBannedCard(card, titleEl);
 
-      var stText = statusLabel(getStatus(id));
-      if (stText) addCardBadge(stText === '已完结' ? 'fin' : 'ser', stText, last);
+      // 已拉黑的卡不再显示连载/完结：拉黑后封面与书名已被毛玻璃盖住，
+      // 再挂一个状态胶囊既没有阅读价值，也和「已拉黑」语义冲突。
+      if (!hasBan) {
+        var stText = statusLabel(getStatus(id));
+        if (stText) addCardBadge(stText === '已完结' ? 'fin' : 'ser', stText, last);
+      }
     }
   }
 
@@ -2126,7 +2097,8 @@
   function veilBannedCard(card, titleEl) {
     if (!card) return;
     card.classList.add('dm-dl-banned');
-    var poster = veilHost(card.querySelector('.poster'));
+    // 改版后封面是 <a class="jm-card__cover">，旧结构是 .poster。
+    var poster = veilHost(card.querySelector('.jm-card__cover') || card.querySelector('.poster'));
     if (!poster) {
       var img = card.querySelector('img');
       if (img) poster = veilHost(img.parentElement);
@@ -2137,7 +2109,7 @@
       cover.textContent = '已拉黑';
       poster.appendChild(cover);
     }
-    var title = titleEl || card.querySelector('h2, h3');
+    var title = titleEl || card.querySelector('.jm-card__title') || card.querySelector('h2, h3');
     title = veilHost(title);
     if (title && !title.querySelector(':scope > .dm-dl-veil')) {
       var name = document.createElement('div');
@@ -2149,7 +2121,7 @@
 
   function addReaderBar(card, id) {
     if (!card || !id) return;
-    var host = card.querySelector('.poster');
+    var host = card.querySelector('.jm-card__cover') || card.querySelector('.poster');
     if (!host) {
       var img = card.querySelector('img');
       if (img) host = img.parentElement;
@@ -2172,10 +2144,15 @@
   }
 
   // ========== 解析下载核心 ==========
+  // 2026-10 站点改版：dx-* / detail-page__* 体系整体换成 jm-*。
+  // 章节项为 <a class="jm-dt-ch" href="/novel_chapter/{nid}/{cid}.html">
+  //   <span class="jm-dt-ch__hd"><span class="jm-dt-ch__no">第1章</span></span>
+  //   <span class="jm-dt-ch__t">章节标题</span>
+  //   <span class="jm-dt-ch__d">2024-08-07</span></a>
   function parseChaptersIn(doc) {
     var selectors = [
-      'a.detail-page__catalog-item',
-      '.detail-page__catalog a[href*="novel_chapter"]',
+      'a.jm-dt-ch',
+      '.jm-dt-grid a[href*="novel_chapter"]',
       'a[href*="/novel_chapter/"]'
     ];
     var nodes = [];
@@ -2195,11 +2172,16 @@
       if (seen[cid]) continue;
       seen[cid] = true;
 
-      var badge = a.querySelector('.detail-page__chapter-badge');
-      var titleEl = a.querySelector('.detail-page__chapter-title');
+      // 新结构：__no 是「第N章」，__t 是真正标题。保留旧类名兜底，兼容未改版的镜像站。
+      var noEl = a.querySelector('.jm-dt-ch__no') || a.querySelector('.detail-page__chapter-badge');
+      var titleEl = a.querySelector('.jm-dt-ch__t') || a.querySelector('.detail-page__chapter-title');
+      var noText = noEl ? (noEl.textContent || '').trim() : '';
+      var titleText = titleEl ? (titleEl.textContent || '').trim() : '';
       var title = '';
-      if (badge) title += (badge.textContent || '').trim() + ' ';
-      if (titleEl) title += (titleEl.textContent || '').trim();
+      if (noText) title += noText + ' ';
+      // __t 有时会重复「第N章」前缀，去掉避免出现「第1章 第1章 xxx」
+      if (titleText && titleText !== noText) title += titleText;
+      title = title.replace(/\s+/g, ' ').trim();
       if (!title) title = (a.textContent || '').replace(/\s+/g, ' ').replace(/NEW/gi, '').trim();
 
       chapters.push({
@@ -2215,14 +2197,21 @@
 
   function parseChapters() { return parseChaptersIn(document); }
 
-  function readNovelTitleFromPage() {
+  // 站点改版后 data-novel-info 挂在 div.jm-wrap 上，不再是 main。
+  // 用属性选择器兜住两种结构，字段名（novel_id / novel_title / content_status）未变。
+  var NOVEL_INFO_SELECTOR = '[data-novel-info]';
+
+  function readNovelInfoDoc(doc) {
     try {
-      var main = document.querySelector('main[data-novel-info]');
-      if (main) {
-        var info = JSON.parse(main.getAttribute('data-novel-info') || '{}');
-        if (info && info.novel_title) return String(info.novel_title).trim();
-      }
-    } catch (e) {}
+      var host = (doc || document).querySelector(NOVEL_INFO_SELECTOR);
+      if (!host) return null;
+      return JSON.parse(host.getAttribute('data-novel-info') || '{}');
+    } catch (e) { return null; }
+  }
+
+  function readNovelTitleFromPage() {
+    var info = readNovelInfoDoc(document);
+    if (info && info.novel_title) return String(info.novel_title).trim();
     return '';
   }
 
@@ -2246,10 +2235,10 @@
   }
 
   function getNovelTitle() {
-    // 章节页的 h1 是章节名，书名以 main[data-novel-info].novel_title 为准
+    // 章节页的 h1 是章节名，书名以 [data-novel-info].novel_title 为准
     var fromInfo = readNovelTitleFromPage();
     if (fromInfo) return fromInfo;
-    var el = document.querySelector('h1.detail-page__title, h1.dx-title, .detail-page__title, h1');
+    var el = document.querySelector('h1.jm-dt-title, h1.detail-page__title, h1.dx-title, .jm-dt-title, .detail-page__title, h1');
     if (el) {
       var clone = el.cloneNode(true);
       var b1 = clone.querySelector('#dm-dl-title-badge');
@@ -2270,7 +2259,13 @@
     var lines = [];
     try {
       var doc = new DOMParser().parseFromString(html, 'text/html');
-      var nodes = doc.querySelectorAll('.article .line, div.line, .article p');
+      // 站点改版后正文是 <div class="article jm-rd-text" data-rd-text><p>…</p></div>
+      // 优先用语义属性；旧类名保留兜底，兼容未改版的镜像站。
+      var root = doc.querySelector('[data-rd-text]')
+        || doc.querySelector('.jm-rd-text')
+        || doc.querySelector('.article');
+      var nodes = root ? root.querySelectorAll('p') : [];
+      if (!nodes.length) nodes = doc.querySelectorAll('.article .line, div.line, .article p');
       for (var i = 0; i < nodes.length; i++) {
         var t = (nodes[i].textContent || '').replace(/\s+/g, ' ').trim();
         if (t) lines.push(t);
@@ -2580,7 +2575,7 @@
 
           downloadTxt(title, parts.join('\n'));
           injectTitleBadges(novelId);
-          markListCards();
+          markListCardsOnPage();
         })
         .catch(function (err) {
           showAlert({ title: '下载失败', content: err.message || String(err) });
@@ -2637,284 +2632,6 @@
     }
   }
 
-  // ========== 标签选择抽屉（替代站点超长弹窗） ==========
-  var tagPicker = {
-    mode: 'multi',
-    source: null,
-    items: [],
-    selected: {},
-    keyword: '',
-    bound: false
-  };
-
-  function hideSiteTagPopups() {
-    var nodes = document.querySelectorAll('.dx-middle-popup, .dx-shield-tag-box');
-    for (var i = 0; i < nodes.length; i++) nodes[i].classList.remove('is-open');
-  }
-
-  function parsePageUrlStore() {
-    try {
-      var raw = localStorage.getItem('page_url');
-      if (!raw) return {};
-      var obj = JSON.parse(raw);
-      return obj && typeof obj === 'object' ? obj : {};
-    } catch (e) { return {}; }
-  }
-
-  function selectedIdsFromContext(mode) {
-    var key = mode === 'shield' ? 'filter_tag' : 'tags';
-    var ids = {};
-    var qs = '';
-    try { qs = new URLSearchParams(location.search).get(key) || ''; } catch (e) { qs = ''; }
-    var stored = parsePageUrlStore()[key] || '';
-    var raw = qs || stored || '';
-    String(raw).split(',').forEach(function (id) {
-      id = String(id || '').trim();
-      if (id) ids[id] = true;
-    });
-    return ids;
-  }
-
-  function collectSiteTags(root) {
-    if (!root) return [];
-    var spans = root.querySelectorAll('.dx-tag-list span[data-value]');
-    var list = [];
-    var seen = {};
-    for (var i = 0; i < spans.length; i++) {
-      var span = spans[i];
-      var id = String(span.getAttribute('data-value') || '').trim();
-      if (!id || seen[id]) continue;
-      seen[id] = true;
-      list.push({
-        id: id,
-        name: (span.textContent || '').replace(/\s+/g, ' ').trim(),
-        el: span
-      });
-    }
-    return list;
-  }
-
-  var TAG_GROUP_ORDER = ['人物关系', '角色身份', '玩法性癖', '题材风格', '字母数字'];
-
-  function tagGroupKey(name) {
-    var n = String(name || '');
-    if (/^[0-9A-Za-z]/.test(n)) return '字母数字';
-    if (/父|母|女|子|公|翁|骨|姐|妹|兄|弟|姑|姨|舅|奶|婆|妻|妾|媳|家庭|乱伦|绿|叔|婶|嫂|情侣|师生|同学|邻居|岳母|丈|同居|婚/.test(n)) return '人物关系';
-    if (/百合|耽美|扶他|人妻|熟女|萝莉|御姐|少女|少妇|妓女|明星|老师|护士|警|媚|伪娘|人兽|雌|男娘/.test(n)) return '角色身份';
-    if (/调教|捆绑|催眠|凌辱|露出|道具|扩张|监禁|虐|奴|轮|兽|触手|产奶|榨|射|潮吹|肛|足|恋|强制|痴|睡|药|孕|公开|野战/.test(n)) return '玩法性癖';
-    return '题材风格';
-  }
-
-  function bindTagSheetActions() {
-    var search = document.getElementById('dm-dl-tag-search');
-    var clearBtn = document.getElementById('dm-dl-tag-clear');
-    var submitBtn = document.getElementById('dm-dl-tag-submit');
-    var body = document.getElementById('dm-dl-tag-body');
-    var sel = document.getElementById('dm-dl-tag-sel');
-    if (search) {
-      search.oninput = function () {
-        tagPicker.keyword = search.value || '';
-        renderTagSheetBody();
-      };
-    }
-    if (clearBtn) {
-      clearBtn.onclick = function () {
-        tagPicker.selected = {};
-        var ons = document.querySelectorAll('#dm-dl-tag-body .dm-dl-tag-chip.on');
-        for (var i = 0; i < ons.length; i++) ons[i].classList.remove('on');
-        renderTagSelected();
-      };
-    }
-    if (submitBtn) submitBtn.onclick = submitTagPicker;
-    if (body && !body._dmBound) {
-      body._dmBound = true;
-      body.addEventListener('click', function (e) {
-        var chip = e.target.closest('.dm-dl-tag-chip');
-        if (!chip) return;
-        toggleTagById(chip.getAttribute('data-id'));
-      });
-    }
-    if (sel && !sel._dmBound) {
-      sel._dmBound = true;
-      sel.addEventListener('click', function (e) {
-        var chip = e.target.closest('.dm-dl-tag-chip');
-        if (!chip) return;
-        toggleTagById(chip.getAttribute('data-id'));
-      });
-    }
-  }
-
-  function toggleTagById(id) {
-    if (!id) return;
-    if (tagPicker.selected[id]) delete tagPicker.selected[id];
-    else tagPicker.selected[id] = true;
-    var on = !!tagPicker.selected[id];
-    var nodes = document.querySelectorAll('#dm-dl-tag-sheet .dm-dl-tag-chip[data-id="' + id + '"]');
-    for (var i = 0; i < nodes.length; i++) nodes[i].classList.toggle('on', on);
-    renderTagSelected();
-  }
-
-  function renderTagSelected() {
-    var wrap = document.getElementById('dm-dl-tag-sel');
-    var count = document.getElementById('dm-dl-tag-count');
-    if (!wrap) return;
-    var html = '';
-    var n = 0;
-    for (var i = 0; i < tagPicker.items.length; i++) {
-      var it = tagPicker.items[i];
-      if (!tagPicker.selected[it.id]) continue;
-      n++;
-      html += '<button type="button" class="dm-dl-tag-chip on mini" data-id="' + esc(it.id) + '">' + esc(it.name) + ' ×</button>';
-    }
-    wrap.innerHTML = html;
-    if (count) count.textContent = '已选 ' + n;
-  }
-
-  function renderTagSheetBody() {
-    var body = document.getElementById('dm-dl-tag-body');
-    if (!body) return;
-    var q = String(tagPicker.keyword || '').trim().toLowerCase();
-    var groups = {};
-    var order = [];
-    for (var i = 0; i < tagPicker.items.length; i++) {
-      var it = tagPicker.items[i];
-      if (q && String(it.name).toLowerCase().indexOf(q) < 0 && String(it.id).indexOf(q) < 0) continue;
-      var key = tagGroupKey(it.name);
-      if (!groups[key]) {
-        groups[key] = [];
-        order.push(key);
-      }
-      groups[key].push(it);
-    }
-    order.sort(function (a, b) {
-      var ia = TAG_GROUP_ORDER.indexOf(a);
-      var ib = TAG_GROUP_ORDER.indexOf(b);
-      if (ia < 0) ia = 99;
-      if (ib < 0) ib = 99;
-      return ia - ib;
-    });
-
-    if (!order.length) {
-      body.innerHTML = '<div class="dm-dl-empty">' + (q ? '没有匹配的标签' : '没有可选项') + '</div>';
-      return;
-    }
-
-    var html = '';
-    for (var g = 0; g < order.length; g++) {
-      var gk = order[g];
-      var list = groups[gk];
-      html += '<div class="dm-dl-tag-group">' + esc(gk) + ' · ' + list.length + '</div><div class="dm-dl-tag-grid">';
-      for (var j = 0; j < list.length; j++) {
-        var item = list[j];
-        html += '<button type="button" class="dm-dl-tag-chip' + (tagPicker.selected[item.id] ? ' on' : '') + '" data-id="' + esc(item.id) + '">' + esc(item.name) + '</button>';
-      }
-      html += '</div>';
-    }
-    body.innerHTML = html;
-  }
-
-  function openTagPicker(mode) {
-    ensureDOM();
-    hideSiteTagPopups();
-    closeSheet();
-    tagPicker.mode = mode === 'shield' ? 'shield' : 'multi';
-    tagPicker.source = tagPicker.mode === 'shield'
-      ? document.querySelector('.dx-shield-tag-box')
-      : document.querySelector('.dx-middle-popup');
-    tagPicker.items = collectSiteTags(tagPicker.source);
-    if (!tagPicker.items.length) {
-      showToast({ title: '打不开标签', msg: '页面上还没有加载到标签列表' });
-      return;
-    }
-
-    tagPicker.selected = selectedIdsFromContext(tagPicker.mode);
-    tagPicker.items.forEach(function (it) {
-      if (it.el && it.el.classList.contains('selected')) tagPicker.selected[it.id] = true;
-    });
-    tagPicker.keyword = '';
-
-    var title = document.getElementById('dm-dl-tag-title');
-    var search = document.getElementById('dm-dl-tag-search');
-    if (title) title.textContent = tagPicker.mode === 'shield' ? '屏蔽标签' : '多选标签';
-    if (search) search.value = '';
-
-    var mask = document.getElementById('dm-dl-tag-mask');
-    if (mask) {
-      void mask.offsetWidth;
-      mask.classList.add('open');
-    }
-    document.body.style.overflow = 'hidden';
-    renderTagSelected();
-    var body = document.getElementById('dm-dl-tag-body');
-    if (body) body.innerHTML = '<div class="dm-dl-empty">加载标签…</div>';
-    setTimeout(renderTagSheetBody, 0);
-  }
-
-  function syncSelectedToSite() {
-    if (!tagPicker.source) return;
-    var spans = tagPicker.source.querySelectorAll('.dx-tag-list span[data-value]');
-    for (var i = 0; i < spans.length; i++) {
-      var span = spans[i];
-      var id = String(span.getAttribute('data-value') || '');
-      var on = !!tagPicker.selected[id];
-      span.classList.toggle('selected', on);
-      span.setAttribute('aria-pressed', on ? 'true' : 'false');
-    }
-  }
-
-  function submitTagPicker() {
-    syncSelectedToSite();
-    hideSiteTagPopups();
-    var submit = tagPicker.source && tagPicker.source.querySelector('.btn-submit');
-    closeTagSheet();
-    if (submit) {
-      submit.click();
-      return;
-    }
-    showToast({ title: '提交失败', msg: '没有找到站点原来的提交按钮' });
-  }
-
-  function isTagTrigger(target, mode) {
-    if (!target || !target.closest) return false;
-    if (target.closest('#dm-dl-root')) return false;
-    if (mode === 'multi') {
-      if (target.closest('.multi-select-btn')) return true;
-      var btn = target.closest('button');
-      if (btn && (btn.textContent || '').replace(/\s+/g, '') === '多选标签') return true;
-    } else {
-      if (target.closest('.shield-select-btn')) return true;
-      var btn2 = target.closest('button');
-      if (btn2 && (btn2.textContent || '').replace(/\s+/g, '') === '屏蔽标签') return true;
-    }
-    return false;
-  }
-
-  function bindTagPicker() {
-    if (tagPicker.bound) return;
-    if (!document.querySelector('.dx-middle-popup, .dx-shield-tag-box, .multi-select-btn, .shield-select-btn')) return;
-    tagPicker.bound = true;
-
-    document.addEventListener('click', function (e) {
-      if (isTagTrigger(e.target, 'multi')) {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        hideSiteTagPopups();
-        openTagPicker('multi');
-        return;
-      }
-      if (isTagTrigger(e.target, 'shield')) {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        hideSiteTagPopups();
-        openTagPicker('shield');
-      }
-    }, true);
-
-    hideSiteTagPopups();
-  }
-
   function updateLatestTip(novelId, currentId) {
     if (tipFetched) return;
     tipFetched = true;
@@ -2939,12 +2656,15 @@
 
   function boot() {
     ensureDOM();
+    // 判断当前页面类型；章节页只清理卡片装饰，不注入阅读条与徽章
+    var path = location.pathname;
+    var isChapterPage = /\/novel_chapter\//.test(path);
+
     // 二次 boot（800ms 兜底）时若正在下载，不重建 Dock，避免进度按钮被顶掉
     if (downloading) {
-      markListCards();
+      markListCardsOnPage();
       return;
     }
-    var path = location.pathname;
     var novelId = getNovelIdFromUrl() || readNovelIdFromPage();
 
     if (/\/novel\/detail\//.test(path)) {
@@ -2955,7 +2675,7 @@
       var chs = parseChapters();
       injectTitleBadges(novelId);
       buildDockUI({ mode: 'detail', novelId: novelId, chaptersCount: chs.length });
-    } else if (/\/novel_chapter\//.test(path)) {
+    } else if (isChapterPage) {
       var cm = path.match(/\/novel_chapter\/(\d+)\/(\d+)/);
       var chapterId = cm ? parseInt(cm[2], 10) : 0;
       buildDockUI({ mode: 'chapter', novelId: novelId, chaptersCount: 0 });
@@ -2964,8 +2684,8 @@
       buildDockUI({ mode: 'list' });
     }
 
-    markListCards();
-    bindTagPicker();
+    // 章节页只清残留：正文页不需要卡片阅读条、状态徽章和拉黑毛玻璃
+    markListCardsOnPage();
   }
 
   initWebdav();
