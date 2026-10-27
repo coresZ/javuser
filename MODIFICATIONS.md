@@ -14,6 +14,7 @@
 | 六 | dock/docs/integration/（跨脚本协议文档域） |
 | 七 | docs/superpowers/（设计 spec） |
 | 八 | .opencode/skills/（项目级 skills） |
+| 九 | websiteTool/（网页对象工具库） |
 
 ---
 
@@ -1771,3 +1772,31 @@
 **涉及文件与位置**：本目录 9 个 trellis-* 技能目录（删除）；`.opencode/skills/MODIFICATIONS.md`（本条记录 + 约束改写）
 
 **状态**：未提交，git 可查（全部为删除记录，可从历史恢复）
+
+---
+
+## 九、websiteTool/（网页对象工具库）
+
+### 目录约束
+
+- 本目录是单文件脚本 `网页对象工具库.user.js`（Greasy Fork [590111](https://greasyfork.org/scripts/590111)）+ 规则订阅源 `config/cores-ppk-rules-all.json`，无构建管线。
+- 产物头三段内联 CSS（style_default / style_refine / style_page）与代码耦合在单文件里；改样式须改产物内字符串，并遵守仓库滚动条规范（现状合规：`scrollbar-color: … transparent` + webkit track 显式透明，无 `color-scheme` 陷阱）。
+
+### 2026-10-26 · 工程化尝试：拆分 src 模块树 + esbuild 构建管线（**已应用户要求整体回退**）
+
+**功能**：把 v0.4.3 单文件产物（154 KB，内含 `// src/...` 模块边界注释的 esbuild bundle）还原为 `src/` 源码模块树 + esbuild 构建管线，产物与原版做了 AST 级等价验证；随后应用户要求删除本次 websiteTool/ 全部改动，脚本与目录结构还原为单文件状态。
+
+**回退内容**：
+- 还原 `网页对象工具库.user.js`（自字节级基线备份，SHA256 与工程化前一致：`7EFA2875…63FFE7`）
+- 删除本次新增：`src/**`（19 个源文件）、`scripts/{build,verify-statements,smoke}.mjs`、`package.json`、`package-lock.json`、`node_modules/`、`README.md`、`.tmp/`（基线备份与抽取 CSS）
+- 协议文件同步去失真：`AGENTS.md`（撤回「唯一构建管线例外」条款，小节九与文档落点改为单文件脚本表述）、根 `README.md`（仓库构成表与工作流回退）、本文件「全仓库项目约束」回退、索引行中性化；根 `README.md` 的一处协议指引修正（「改任何目录前先读根 MODIFICATIONS.md 对应小节」，指向已废除的子目录 MODIFICATIONS.md 制）保留
+
+**保留的方法论结论**（若未来重做工程化，直接照此执行，可少走弯路）：
+- 原 bundle 是 esbuild 产物（IIFE + 模块面包屑注释）；可按边界注释机械拆为 ~19 个 ESM 模块，CSS 逐字节抽出为 3 个 .css 文件（text loader 注入）。
+- 等价验证用「minify 归一化后逐 token diff」不可行（不同源标识符池导致压缩名不同），正确做法是 **AST 语句多重集比对**（acorn，顺序无关），归一化四类打包器差异：`void 0`≡`undefined`、单 quasis 模板串≡字符串、CSS 默认导入名 `style_xxx_default`≡`style_xxx`、esbuild 避免遮蔽全局 `confirm` 的局部重命名。
+- 关键构建参数：`--tree-shaking=false`（保留 `eventFromUI` 死代码，对齐原版）；`target: es2020`（es2018 会把 `catch {}` 降级展开）；`isSafeUrl` 双份定义会被 esbuild 改名 `isSafeUrl2`（原版两模块共享函数声明），须单点导出；`legal-comments=inline` 只保留 bang/license 注释，**普通中文注释会被任何版本 esbuild 剥离**——注释真相必须在 src 源文件。
+- jsdom 冒烟可行且有效（GM 桩 + shadow DOM 断言），基线 11/12 项（「ppk:rules 未写入」在全新页面预期失败）。
+
+**状态**：websiteTool/ 已还原为原始两文件（`config/cores-ppk-rules-all.json` + `网页对象工具库.user.js`），产物 SHA256 与工程化前一致；AGENTS.md / MODIFICATIONS.md / README.md 仅保留中性化描述与本条历史记录。未提交。
+
+---

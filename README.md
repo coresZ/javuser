@@ -2,7 +2,7 @@
 
 浏览器用户脚本（Tampermonkey / Greasemonkey）单仓库合集。已接入悬浮坞的脚本在 `dock/`，其余独立脚本留在根目录或各自子目录。
 
-> 接手先读本文件和根目录 `AGENTS.md`。改某个目录前先读该目录的 `MODIFICATIONS.md`。
+> 接手先读本文件和根目录 `AGENTS.md`。改任何目录前先读根目录 `MODIFICATIONS.md` 的对应小节。
 
 ## 仓库构成
 
