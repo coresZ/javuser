@@ -1,20 +1,23 @@
 {
   "version": 2,
-  "exportedAt": "2026-09-11T16:39:20.671Z",
+  "exportedAt": "2026-10-27T14:16:47.168Z",
   "name": "网页对象工具库配置",
   "hosts": [
-    "ugak.bhefwntk.cc",
     "18mh.net",
     "*.bhefwntk.cc",
+    "*.40ygo615.cc",
     "greasyfork.org",
-    "grok.com"
+    "grok.com",
+    "www.javlibrary.com",
+    "whos.tv",
+    "arrest.ffavkcyo.cc"
   ],
   "packs": [
     {
       "id": "p_mtx253zp_tsdriu",
       "name": "",
       "hosts": [
-        "ugak.bhefwntk.cc"
+        "*.bhefwntk.cc"
       ],
       "enabled": true,
       "rules": [
@@ -81,6 +84,24 @@
           "targetType": "region",
           "action": "hide",
           "enabled": true
+        },
+        {
+          "selector": ".jm-iconads__row",
+          "targetType": "image",
+          "action": "hide",
+          "enabled": true
+        },
+        {
+          "selector": ".swiper-slide",
+          "targetType": "image",
+          "action": "remove",
+          "enabled": true
+        },
+        {
+          "selector": "div.jm-hp-adbig div",
+          "targetType": "region",
+          "action": "hide",
+          "enabled": true
         }
       ]
     },
@@ -88,7 +109,8 @@
       "id": "p_mtx25tjh_bkbebm",
       "name": "",
       "hosts": [
-        "*.bhefwntk.cc"
+        "*.bhefwntk.cc",
+        "z3alb.40ygo615.cc"
       ],
       "enabled": true,
       "rules": [
@@ -117,11 +139,65 @@
       ],
       "enabled": true,
       "rules": []
+    },
+    {
+      "id": "p_mujrelpy_2bxhpr",
+      "name": "",
+      "hosts": [
+        "www.javlibrary.com"
+      ],
+      "enabled": true,
+      "rules": [
+        {
+          "selector": "#sidebanner1a",
+          "targetType": "link",
+          "action": "remove",
+          "enabled": true
+        },
+        {
+          "selector": "#topbanner1a",
+          "targetType": "table",
+          "action": "remove",
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "id": "p_mvc3uju5_d4w6co",
+      "name": "",
+      "hosts": [
+        "whos.tv"
+      ],
+      "enabled": true,
+      "rules": []
+    },
+    {
+      "id": "p_mvc939u0_he74et",
+      "name": "",
+      "hosts": [
+        "arrest.ffavkcyo.cc"
+      ],
+      "enabled": true,
+      "rules": [
+        {
+          "selector": "article.post img",
+          "targetType": "region",
+          "action": "hide",
+          "enabled": true
+        },
+        {
+          "selector": "div.txt-apps a",
+          "targetType": "link",
+          "action": "hide",
+          "enabled": true
+        }
+      ]
     }
   ],
   "siteEnabled": {
     "linux.do": false,
     "x.com": true,
-    "18mh.net": true
+    "18mh.net": true,
+    "z3alb.40ygo615.cc": true
   }
 }
