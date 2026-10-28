@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         18dm小说下载器
 // @namespace    http://tampermonkey.net/
-// @version      4.9.2
+// @version      4.9.3
 // @description  一键下载18dm/18mh小说为TXT · UI v2（Lobe 实色层 / Lucide 图标 / PowerGlitch 成功态）· 章节缓存 · 增量更新 · 收藏更新提醒 · 书目状态（连载/完结+更新时间）· 果核阅读器直连（书库/悬浮条/列表卡）· Dock 动作菜单 · 悬浮条拖拽磁吸 · 收藏/黑名单 WebDAV 同步
 // @author       you
 // @match        *://18dm.net/*
@@ -1776,7 +1776,8 @@
     if (exportBtn) {
       exportBtn.onclick = function () {
         var map = currentSheetTab === 'fav' ? loadFavs() : (currentSheetTab === 'ban' ? loadBans() : loadHistory());
-        var list = sortByTime(map);
+        // 导出顺序与列表一致：收藏按更新时间倒序，其余按记录时间倒序
+        var list = currentSheetTab === 'fav' ? sortFavorites(map) : sortByTime(map);
         if (!list.length) {
           showToast({ title: '导出失败', msg: '当前列表暂无数据' });
           return;
@@ -1832,7 +1833,9 @@
     var body = document.getElementById('dm-dl-sheet-body');
     if (!body) return;
     var map = currentSheetTab === 'fav' ? loadFavs() : (currentSheetTab === 'ban' ? loadBans() : loadHistory());
-    var list = sortByTime(map);
+    var statusMap = loadStatus();
+    // 收藏 tab 按「最近日期」倒序（更新时间优先，收藏时间兜底），其余 tab 仍按自身记录时间倒序
+    var list = currentSheetTab === 'fav' ? sortFavorites(map, statusMap) : sortByTime(map);
     var hist = loadHistory();
     var favs = loadFavs();
     var bans = loadBans();
@@ -1872,7 +1875,7 @@
 
         // 已拉黑的条目不显示连载/完结、发布时间与「有更新」：
         // 这些信息对拉黑的书没有意义，刷新范围也排除了黑名单。
-        var st = bans[id] ? null : getStatus(id);
+        var st = bans[id] ? null : (statusMap[String(id)] || null);
         var stTxt = statusLabel(st);
         if (stTxt) tags += '<span class="dm-dl-tag ' + (stTxt === '已完结' ? 'fin' : 'ser') + '">' + stTxt + '</span>';
         var updAdd = bans[id] ? 0 : getUpdateAdd(id);
@@ -1936,9 +1939,71 @@
     updateList('');
   }
 
+  // 时间字段可能是毫秒、秒级时间戳或 ISO 字符串（WebDAV 导入的旧数据），统一成毫秒再比较，
+  // 否则减法得到 NaN，sort 会静默保持原顺序，看起来就是「没排序」。
+  function toTimeMs(v) {
+    if (typeof v === 'number') {
+      if (!isFinite(v) || v <= 0) return 0;
+      return v < 1e12 ? v * 1000 : v;
+    }
+    var s = String(v == null ? '' : v).trim();
+    if (!s) return 0;
+    if (/^\d+$/.test(s)) return toTimeMs(parseInt(s, 10));
+    var t = Date.parse(s);
+    return isFinite(t) ? t : 0;
+  }
+
+  // 书目更新时间是文本（详情页 meta 行抓的「2025-06-29」；旧列表卡兜底可能是「3天前」），
+  // 只用来比大小，解析失败按 0 处理（交给收藏时间兜底）。
+  function parseUpdateMs(text) {
+    var s = String(text == null ? '' : text).trim();
+    if (!s) return 0;
+    var m = s.match(/(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})/);
+    if (m) {
+      var t = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10)).getTime();
+      return isFinite(t) ? t : 0;
+    }
+    if (s.indexOf('刚刚') >= 0) return Date.now();
+    m = s.match(/(\d+)\s*(分钟|小时|天|周|个月)前/);
+    if (m) {
+      var unit = m[2];
+      var ms = unit === '分钟' ? 60 * 1000
+        : unit === '小时' ? 60 * 60 * 1000
+        : unit === '天' ? 24 * 60 * 60 * 1000
+        : unit === '周' ? 7 * 24 * 60 * 60 * 1000
+        : 30 * 24 * 60 * 60 * 1000;
+      return Date.now() - parseInt(m[1], 10) * ms;
+    }
+    return 0;
+  }
+
   function sortByTime(map) {
     return Object.keys(map).map(function (k) { return map[k]; }).sort(function (a, b) {
-      return (b.time || 0) - (a.time || 0);
+      return toTimeMs(b.time) - toTimeMs(a.time);
+    });
+  }
+
+  /**
+   * 「已收藏」tab 的排序：按最近日期倒序，最新更新的在最上面。
+   * 排序键 = max(收藏时间, 书目更新时间)：
+   *   - 书目更新时间（status.updateText）让有新章节的书浮到顶部；
+   *   - 收藏时间保证刚收的书不会因为没有状态记录就沉到底部。
+   * 更新时间优先用本次传入的 statusMap，避免每条都重复 loadJSON。
+   */
+  function sortFavorites(map, statusMap) {
+    var list = Object.keys(map).map(function (k) { return map[k]; });
+    var st = statusMap || loadStatus();
+    var keys = {};
+    list.forEach(function (it) {
+      var id = String(it && it.id != null ? it.id : '');
+      var rec = id ? st[id] : null;
+      var upd = rec ? parseUpdateMs(rec.updateText) : 0;
+      keys[id] = Math.max(toTimeMs(it && it.time), upd);
+    });
+    return list.sort(function (a, b) {
+      var d = (keys[String(b && b.id != null ? b.id : '')] || 0) - (keys[String(a && a.id != null ? a.id : '')] || 0);
+      if (d) return d;
+      return String((a && a.title) || '').localeCompare(String((b && b.title) || ''));
     });
   }
 
