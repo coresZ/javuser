@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          网页对象工具库
 // @namespace     http://tampermonkey.net/
-// @version       0.4.6
+// @version       0.4.7
 // @description   取选任意网页元素，识别对象类型，绑定动作；支持远程规则订阅；导入导出全局存储
 // @author        cores
 // @match         *://*/*
@@ -59,6 +59,35 @@
     }
     return null;
   }
+  // 严格 CSP 站点（例：hills.im 响应头 `style-src 'self'`，无 unsafe-inline / nonce / hash）
+  // 会丢弃所有内联 <style>：元素能插进 DOM，但 `style.sheet` 为 null，一条规则都不生效，
+  // Shadow DOM 内的 <style> 同样被丢。结果是工具 UI 完全无样式（按钮不出现、面板文字堆在左上角）。
+  // CSSOM 构造的样式表（`new CSSStyleSheet()` + `adoptedStyleSheets`）不受 style-src 约束，
+  // 所以优先走这条路；不支持时再回落到 <style>（老 Safari / 老 Firefox）。
+  function canAdoptStyle(target) {
+    try {
+      if (typeof CSSStyleSheet !== "function" || typeof CSSStyleSheet.prototype.replaceSync !== "function") return false;
+      const proto = target === document ? Document.prototype : ShadowRoot.prototype;
+      return "adoptedStyleSheets" in proto;
+    } catch {
+      return false;
+    }
+  }
+  function adoptStyleSheet(target, css) {
+    if (canAdoptStyle(target)) {
+      try {
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync(css);
+        target.adoptedStyleSheets = [...target.adoptedStyleSheets, sheet];
+        return sheet;
+      } catch {}
+    }
+    const style = document.createElement("style");
+    style.textContent = css;
+    const host = target === document ? document.head || document.documentElement : target;
+    if (host) host.appendChild(style);
+    return style;
+  }
   function injectStyle(css) {
     const style = document.createElement("style");
     style.setAttribute("data-cores-style", "page");
@@ -83,6 +112,10 @@
   }
   var gm = {
     addStyle(css) {
+      // 先试 CSSOM 样式表（严格 CSP 站点唯一可行的注入方式），再退 GM_addStyle / <style>
+      if (canAdoptStyle(document)) {
+        try { return adoptStyleSheet(document, css); } catch {}
+      }
       const fn = gmApi("GM_addStyle");
       if (fn) {
         try { return fn(css); } catch {}
@@ -250,12 +283,9 @@
     ].join(";");
     if (!uiHost.shadowRoot) {
       uiShadow = uiHost.attachShadow({ mode: "open" });
-      const st = document.createElement("style");
-      st.textContent = style_default;
-      uiShadow.appendChild(st);
-      const st2 = document.createElement("style");
-      st2.textContent = style_refine;
-      uiShadow.appendChild(st2);
+      // 用 CSSOM 样式表，而非 <style>：严格 CSP 站点会丢弃 Shadow DOM 内的 <style>
+      adoptStyleSheet(uiShadow, style_default);
+      adoptStyleSheet(uiShadow, style_refine);
     } else {
       uiShadow = uiHost.shadowRoot;
     }

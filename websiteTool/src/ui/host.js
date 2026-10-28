@@ -34,12 +34,9 @@ function getUIShadow() {
   ].join(";");
   if (!uiHost.shadowRoot) {
     uiShadow = uiHost.attachShadow({ mode: "open" });
-    const st = document.createElement("style");
-    st.textContent = style_default;
-    uiShadow.appendChild(st);
-    const st2 = document.createElement("style");
-    st2.textContent = style_refine;
-    uiShadow.appendChild(st2);
+    // 用 CSSOM 样式表，而非 <style>：严格 CSP 站点会丢弃 Shadow DOM 内的 <style>
+    adoptStyleSheet(uiShadow, style_default);
+    adoptStyleSheet(uiShadow, style_refine);
   } else {
     uiShadow = uiHost.shadowRoot;
   }

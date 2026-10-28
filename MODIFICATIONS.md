@@ -1812,7 +1812,56 @@
 - 产物 `dist/网页对象工具库.user.js` 是 Greasy Fork 发布物，**已入库**（用户可直接安装，无需构建环境）。`.gitignore` 里对 `websiteTool/dist/` 做了目录级放行例外，其它目录的 `dist/` 仍被忽略。
 - **版本号唯一来源是 `package.json` 的 `version`**：`build.mjs` 读它并写入产物头部；`meta.header.js` 的 `@version` 只是占位，构建时被覆盖。升级用 `npm run version:bump` 后 `npm run build`，不要手工改多处。
 - 改样式须改 `styles/*.css` 再重建（不要直接改 `src/ui/styles.gen.js`，它是 AUTO-GENERATED），并遵守仓库滚动条规范（现状合规：`scrollbar-color: … transparent` + webkit track 显式透明，无 `color-scheme` 陷阱）。
+- **注入 CSS 一律走 `adoptStyleSheet()`（`src/utils/gm.js`）**，不要直接 `createElement("style")`：严格 CSP 站点（`style-src 'self'`，如 hills.im）会丢弃内联 `<style>`（含 Shadow DOM 内的），只有 CSSOM 构造样式表能生效。
 - 构建零依赖（仅 Node 内置模块），无 `node_modules` / lock 文件。
+
+### 2026-10-29 · 严格 CSP 站点样式失效修复（hills.im），版本 0.4.7
+
+**功能**：工具 UI 的样式注入改为 CSSOM 构造样式表（`new CSSStyleSheet()` + `adoptedStyleSheets`），修复在 `style-src 'self'` 站点上"悬浮按钮不出现、面板文字裸堆在页面左上角"的故障。
+
+**问题**：hills.im 响应头为 `content-security-policy: default-src 'self'; …; style-src 'self'`（无 `unsafe-inline` / nonce / hash）。内联 `<style>` 走 `style-src` 校验，被整份丢弃：元素能插入 DOM，但 `style.sheet === null`，一条规则都不生效；**Shadow DOM 内的 `<style>` 同样被丢**。原来的注入路径三处全部命中：
+- `src/main.js` 的 `gm.addStyle(style_page)` → `gm.js` 的 `injectStyle()`（`<style>`）
+- `src/ui/host.js` 给 `shadowRoot` 追加的两个 `<style>`（`style_default` / `style_refine`）
+- `gm.addStyle()` 优先调用的 `GM_addStyle` 同样是往页面插 `<style>`，在严格 CSP 下同样失效
+
+表现为宿主 `#cores-ppk-root` 无 `position:fixed`、无尺寸，shadow 内一切无样式 → 工具栏不渲染，`管理规则`/`远程规则` 等面板的文本以裸 DOM 顺序堆在页面左上角；控制台报 `Applying inline style violates the following Content Security Policy directive 'style-src 'self''`。
+
+**实测边界（在 hills.im 真实页面用 CDP 探测，非推断）**：
+| 方式 | 严格 CSP 下结果 |
+|---|---|
+| 插入 `<style>`（页面级 / Shadow 内） | ❌ `style.sheet === null`，样式不生效 |
+| `setAttribute('style', '…')` | ❌ 属性写入但不生效 |
+| `el.style.prop = …` / `el.style.cssText = …` / `el.style.setProperty()` | ✅ 生效（CSSOM 不经过 CSP 解析器） |
+| `new CSSStyleSheet()` + `document/shadowRoot.adoptedStyleSheets` | ✅ 生效（不受 `style-src` 约束） |
+| 改写已构造样式表内的 `rule.style.*` | ✅ 生效 |
+
+**修改内容**：
+- `src/utils/gm.js`：新增 `canAdoptStyle(target)` 与 `adoptStyleSheet(target, css)`（`target` 为 `document` 或 `ShadowRoot`），优先构造样式表并 `adoptedStyleSheets = [...现有, sheet]` 追加（不覆盖站点自建表），失败或浏览器不支持时回落到 `<style>`。`gm.addStyle()` 改为**先**走 `adoptStyleSheet(document, …)`，再退 `GM_addStyle`、`injectStyle`（顺序调整：原来是 `GM_addStyle` 优先，在严格 CSP 站点上会把唯一次机会浪费在被拦的路径上）。
+- `src/ui/host.js`：shadow 初始化处两个 `document.createElement("style")` 改为 `adoptStyleSheet(uiShadow, style_default)` / `adoptStyleSheet(uiShadow, style_refine)`，保持 default → refine 的层叠顺序。
+- 未改动：`el.style.xxx = …` 一类动态几何（工具栏拖拽/吸附、取选高亮框、浮动菜单定位、`hide` 动作的 `display:none`、复制用的 textarea）实测在严格 CSP 下正常工作，按"改动范围最小化"保持原样。
+- 版本 0.4.6 → 0.4.7（`package.json` 为唯一来源，`meta.header.js` 占位同步），重新构建产物。
+- 文档：`websiteTool/README.md` 新增「样式注入与严格 CSP」一节；根 `README.md` 版本表 v0.4.6 → v0.4.7。
+
+**验证**（本地起 Node 静态服务器，把 hills.im 的 HTML/CSS 反向代理到 `http://127.0.0.1:8899/hills` 并回放真实 CSP 头 `style-src 'self'`，再用 CDP 注入产物）：
+- 复刻环境自检：该页内联 `<style>` 的 `sheet === null`、注入 CSS 不生效 —— 与 hills.im 真实页面行为一致（真实页同样探测确认，且 header 有 `style-src 'self'`）。
+- 修复后：`document.adoptedStyleSheets.length = 1`、`shadowRoot.adoptedStyleSheets.length = 2`、shadow 内残留 `<style>` 元素 0 个。
+- 宿主 `position: fixed`、`pointer-events: none`；工具栏 rect `44×44`，距右/下各 20px（清空 `ppk:toolbarPos` 后实测 `921,636`，视口 `1000×700`/clientWidth `985`）；图标 svg `18×18`。
+- 面板背景 `rgb(255,252,248)`、`position: fixed`、圆角 `16px`；点击工具栏 → 菜单 `260×229 @ (690,399)`、背景/边框正常；点「管理规则」→ 面板 `classList` 含 `visible`、`pointer-events: auto`、`427×656`。
+- shadow 内无遗留裸文本节点，`static` 定位的面板数 0（旧故障的"文字堆左上角"不再出现）。
+- 页面自身无副作用：注入前后 207 个页面元素的 display/position/尺寸/颜色等计算样式零差异；`scrollHeight` 保持 6770。
+- `node --check dist/网页对象工具库.user.js` 通过；产物 0.4.7 / 19 模块 / 154.6 KB。
+
+**未验证**：
+- 未在真机 Tampermonkey 里安装 0.4.7 到 https://hills.im/zh-hans/ 实跑（本机浏览器无法从该页回环取脚本，改用同源同 CSP 的反向代理复刻验证）；Tampermonkey 沙箱内访问 `document.adoptedStyleSheets` 属标准 DOM 属性，预期一致，但未实测。
+- 未验证老浏览器（无 `adoptedStyleSheets`，如 Safari < 16.4）上的回落路径实际观感——该路径等同旧行为，在严格 CSP 站点上仍会失效（无更优解）。
+- 未提交。
+
+**涉及文件与位置**：
+- `websiteTool/src/utils/gm.js`：`canAdoptStyle()`、`adoptStyleSheet()`（新增，位于 `injectStyle()` 之前）、`gm.addStyle()` 注入顺序
+- `websiteTool/src/ui/host.js`：`getUIShadow()` 内 shadow 初始化分支
+- `websiteTool/package.json`、`websiteTool/meta.header.js`、`websiteTool/dist/网页对象工具库.user.js`：版本 0.4.7
+- `websiteTool/README.md`：新增「样式注入与严格 CSP」；构建示例版本号
+- `README.md`：仓库构成表 websiteTool 行版本号
 
 ### 2026-10-27 · 重新应用 src 构建管线，版本统一 0.4.6，dist 入库
 

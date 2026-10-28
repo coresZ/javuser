@@ -49,7 +49,7 @@
 npm run build
 
 # 指定版本号构建（临时覆盖 package.json 的 version）
-PPK_VERSION=0.4.6 npm run build
+PPK_VERSION=0.4.7 npm run build
 ```
 
 构建流程：
@@ -61,6 +61,18 @@ PPK_VERSION=0.4.6 npm run build
 **版本号以 `package.json` 的 `version` 为唯一来源**：`build.mjs` 每次构建都会把该值写入产物头部，`meta.header.js` 里的 `@version` 只是占位（构建时会被覆盖）。升级版本用 `npm run version:bump`，然后 `npm run build`，不要手工改多处。
 
 源码仍使用共享作用域（与原先单体脚本一致），避免大范围改 import/export 带来的行为回归；模块边界清晰，便于单独阅读与修改。
+
+## 样式注入与严格 CSP
+
+工具的所有样式都通过 `adoptStyleSheet()`（`src/utils/gm.js`）注入，优先使用 **CSSOM 构造样式表**：`new CSSStyleSheet()` + `root.adoptedStyleSheets`，只在浏览器不支持时才回落到 `<style>` 元素。
+
+原因：内联 `<style>` 走 `style-src` 校验，遇到只写 `style-src 'self'`（无 `unsafe-inline` / nonce / hash）的站点会被整份丢弃——元素虽插进 DOM，但 `style.sheet` 为 `null`，一条规则都不生效，**Shadow DOM 内的 `<style>` 一样被丢**。此时工具 UI 完全无样式：悬浮按钮不出现、面板文字裸堆在页面左上角。CSSOM 样式表不受 `style-src` 约束，是这类站点上唯一可行的注入方式。
+
+- 页面级样式（`styles/page.css`）→ `document.adoptedStyleSheets`
+- Shadow 内样式（`styles/default.css` + `styles/refine.css`）→ `shadowRoot.adoptedStyleSheets`
+- 动态几何（按钮位置、取选高亮框、浮动菜单）继续用 `el.style.xxx = ...`，属于 CSSOM 属性写入，不受 `style-src` 影响；真正会被拦的只有 `setAttribute('style', ...)` 这种整串解析，代码里不要用。
+- 若未来新增"注入 CSS"的代码路径，一律走 `adoptStyleSheet()`，不要再直接 `createElement("style")`。
+
 
 ## 安装
 

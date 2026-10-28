@@ -1,6 +1,6 @@
 {
   "name": "webpage-object-toolkit",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "网页对象工具库 — 取选任意网页元素，识别对象类型，绑定动作；支持远程规则订阅与导入导出",
   "private": true,
   "type": "module",

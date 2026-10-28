@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          网页对象工具库
 // @namespace     http://tampermonkey.net/
-// @version       0.4.6
+// @version       0.4.7
 // @description   取选任意网页元素，识别对象类型，绑定动作；支持远程规则订阅；导入导出全局存储
 // @author        cores
 // @match         *://*/*
