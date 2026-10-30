@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         18dm小说下载器
 // @namespace    http://tampermonkey.net/
-// @version      4.9.3
-// @description  一键下载18dm/18mh小说为TXT · UI v2（Lobe 实色层 / Lucide 图标 / PowerGlitch 成功态）· 章节缓存 · 增量更新 · 收藏更新提醒 · 书目状态（连载/完结+更新时间）· 果核阅读器直连（书库/悬浮条/列表卡）· Dock 动作菜单 · 悬浮条拖拽磁吸 · 收藏/黑名单 WebDAV 同步
+// @version      4.10.3
+// @description  一键下载18dm/18mh小说为TXT · UI v2（Lobe 实色层 / Lucide 图标 / PowerGlitch 成功态）· 章节缓存 · 增量更新 · 收藏更新提醒 · 书目状态（连载/完结+更新时间）· 果核阅读器直连（书库/悬浮条/列表卡）· Dock 动作菜单 · 悬浮条拖拽磁吸 · 收藏/黑名单 WebDAV 同步 · 书库同步云端 · 已上云状态 · 书库卡片布局 v4.3（上：书名|更新+icon；下：状态|打开⋯ / 拉黑右上删除）
 // @author       you
 // @match        *://18dm.net/*
 // @match        *://*.18dm.net/*
@@ -34,6 +34,7 @@
   var STATUS_KEY = 'dm_dl_status_v1';
   var UPD_KEY = 'dm_dl_updates_v1';
   var CONTENT_KEY = 'dm_dl_content_v1';
+  var CLOUD_KEY = 'dm_dl_cloud_v1';
   var DOCK_POS_KEY = 'dm_dl_dock_pos_v3';
   var downloading = false;
   var isCollapsed = false;
@@ -43,6 +44,7 @@
 
   var currentFileObj = null;
   var currentBlobUrl = null;
+  var lastGeneratedTxt = null; // { id, title, text, maxId }
 
   // ========== SVG 图标（统一尺寸与颜色） ==========
   var ICONS = {
@@ -59,7 +61,12 @@
     book: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>',
     more: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>',
     bell: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>',
-    share: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>'
+    share: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>',
+    clock: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+    star: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>',
+    cloudSync: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/><path d="M12 13v3"/><path d="m10 14.5 2 2 2-2"/></svg>',
+    trash: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>',
+    reader: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>'
   };
 
   function isIOS() {
@@ -188,24 +195,58 @@
       '#dm-dl-root *::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.22)!important;border-radius:99px!important;border:none!important}',
       '#dm-dl-root *::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.35)!important}',
       '.dm-dl-search{width:100%;padding:10px 12px;margin-bottom:10px;border-radius:var(--dm-r-sm);border:1px solid var(--dm-glass-border);background:rgba(0,0,0,0.25);color:var(--dm-text);font-size:13px}',
-      '.dm-dl-item{display:flex;gap:8px;align-items:flex-start;padding:11px 10px;border-radius:var(--dm-r-md);background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.05);margin-bottom:8px;transition:background .15s}',
-      '.dm-dl-item:hover{background:rgba(255,255,255,0.07)}',
+      /* 书库卡片 v4.1：标题行右上更新时间；收藏/同步仅图标(hover 显时间)；拉黑右上删除 */
+      '.dm-dl-item{display:flex;flex-direction:column;gap:6px;padding:11px 12px 9px;border-radius:var(--dm-r-md);background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);margin-bottom:8px;transition:background .15s,border-color .15s;position:relative}',
+      '.dm-dl-item:hover{background:rgba(255,255,255,0.07);border-color:rgba(255,255,255,0.1)}',
+      /* 拉黑 tab：单行标题 + 右上删除，无底栏 */
+      '.dm-dl-item.is-ban{gap:0;padding:8px 10px;margin-bottom:4px;border-radius:var(--dm-r-sm)}',
+      '.dm-dl-item.is-ban .dm-dl-item-title{font-size:13px;-webkit-line-clamp:1;font-weight:600;padding-right:4px}',
+      '.dm-dl-item.is-ban .dm-dl-item-top{align-items:center}',
+      '.dm-dl-item-top{display:flex;align-items:flex-start;gap:8px;min-width:0}',
       '.dm-dl-item-main{flex:1;min-width:0;cursor:pointer}',
-      '.dm-dl-item-title{font-size:13.5px;font-weight:600;color:#f1f3f4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px}',
-      // meta 行：所有子项都不收缩，宽度不够时整项换行，而不是把文字挤断
-      '.dm-dl-item-meta{font-size:11.5px;color:var(--dm-text-mute);display:flex;flex-wrap:wrap;gap:6px;align-items:center}',
-      '.dm-dl-item-meta>*{flex:0 0 auto;white-space:nowrap}',
-      '.dm-dl-tag{padding:1px 6px;border-radius:var(--dm-r-pill);font-size:10px;font-weight:600}',
+      '.dm-dl-item-title{font-size:14px;font-weight:650;color:#f1f3f4;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;padding-right:2px}',
+      /* 右上角：更新时间文字 + 收藏/同步图标同一行 */
+      '.dm-dl-item-side{flex:0 0 auto;max-width:48%;display:flex;align-items:center;justify-content:flex-end;gap:4px;padding-top:1px;min-width:0}',
+      '.dm-dl-item-upd{flex:0 1 auto;min-width:0;font-size:10.5px;color:var(--dm-text-mute);line-height:1.3;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.dm-dl-item-del{flex:0 0 auto;width:30px;height:30px;padding:0!important;border-radius:var(--dm-r-sm)!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;background:transparent!important;color:var(--dm-text-mute)!important;transition:background .15s,color .15s,transform .12s!important}',
+      '.dm-dl-item-del:hover{background:rgba(239,68,68,0.18)!important;color:#fca5a5!important}',
+      '.dm-dl-item-del:active{transform:scale(0.92)!important}',
+      '.dm-dl-item-del svg{display:block;width:14px;height:14px}',
+      /* 紧跟更新时间后的图标，hover 用 title 看时间 */
+      '.dm-dl-item-meta-icons{display:inline-flex;flex-shrink:0;gap:2px;align-items:center;color:var(--dm-text-mute);line-height:1}',
+      '.dm-dl-item-meta-icons .mi{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:5px;cursor:default;transition:background .12s,color .12s}',
+      '.dm-dl-item-meta-icons .mi:hover{background:rgba(255,255,255,0.08);color:var(--dm-text-dim)}',
+      '.dm-dl-item-meta-icons .mi svg{flex-shrink:0;opacity:0.9;width:12px;height:12px}',
+      /* 第二行：左状态标签 · 右 打开/⋯ */
+      '.dm-dl-item-foot{display:flex;align-items:center;gap:8px;min-width:0;padding-top:2px}',
+      '.dm-dl-item-tags{flex:1;min-width:0;display:flex;flex-wrap:wrap;gap:5px;align-items:center}',
+      '.dm-dl-tag{padding:2px 7px;border-radius:var(--dm-r-pill);font-size:10.5px;font-weight:600;line-height:1.4}',
       '.dm-dl-tag.dl{background:rgba(52,211,153,0.16);color:var(--dm-success)}',
       '.dm-dl-tag.fav{background:rgba(251,113,133,0.16);color:var(--dm-fav)}',
-      // 更新时间胶囊：与状态胶囊同款外观，避免裸 span 被 flex 挤压后掉行
       '.dm-dl-tag.time{background:rgba(255,255,255,0.06);color:var(--dm-text-dim);font-weight:500}',
-      '.dm-dl-item-acts{display:flex;gap:4px;flex:0 0 auto}',
-      '.dm-dl-mini{padding:7px 7px!important;border-radius:var(--dm-r-sm)!important;background:rgba(255,255,255,0.06)!important;color:var(--dm-text-dim)!important;font-size:12px!important;font-weight:500!important;transition:background .15s,color .15s,transform .12s!important}',
+      '.dm-dl-tag.cloud{background:rgba(56,189,248,0.18);color:#7dd3fc}',
+      '.dm-dl-item-acts{display:flex;gap:6px;align-items:center;flex:0 0 auto}',
+      '.dm-dl-mini{padding:6px 10px!important;border-radius:var(--dm-r-sm)!important;background:rgba(255,255,255,0.06)!important;color:var(--dm-text-dim)!important;font-size:12px!important;font-weight:600!important;text-align:center!important;transition:background .15s,color .15s,transform .12s!important;flex:0 0 auto}',
+      '.dm-dl-mini.go{min-width:52px}',
+      '.dm-dl-mini.more{width:32px;padding:6px 0!important;display:inline-flex!important;align-items:center!important;justify-content:center!important}',
+      '.dm-dl-mini.more svg{display:block}',
       '.dm-dl-mini:hover{background:rgba(255,255,255,0.12)!important;color:#fff!important}',
-      '.dm-dl-mini:active{transform:scale(0.94)!important}',
+      '.dm-dl-mini:active{transform:scale(0.96)!important}',
       '.dm-dl-mini.danger:hover{background:rgba(239,68,68,0.22)!important;color:#fca5a5!important}',
       '.dm-dl-mini.read:hover{background:rgba(59,130,246,0.22)!important;color:#93c5fd!important}',
+      '.dm-dl-mini.cloud-up:hover{background:rgba(56,189,248,0.22)!important;color:#7dd3fc!important}',
+      '.dm-dl-mini.go:hover{background:rgba(255,255,255,0.14)!important;color:#fff!important}',
+      /* 书库条目 ⋯ 气泡菜单 */
+      '.dm-dl-item-menu{position:fixed;z-index:2147483647;min-width:132px;padding:4px;border-radius:10px;',
+      'background:var(--dm-glass);border:1px solid var(--dm-glass-border);box-shadow:0 12px 28px rgba(0,0,0,0.55);',
+      'color:var(--dm-text)}',
+      '.dm-dl-item-menu-row{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:7px;',
+      'font-size:12.5px;font-weight:600;color:var(--dm-text);cursor:pointer;transition:background .12s;background:transparent;width:100%;text-align:left}',
+      '.dm-dl-item-menu-row:hover{background:rgba(255,255,255,0.1)}',
+      '.dm-dl-item-menu-row svg{flex-shrink:0;color:var(--dm-text-dim)}',
+      '.dm-dl-item-menu-row.danger{color:#fca5a5}',
+      '.dm-dl-item-menu-row.danger svg{color:#fca5a5}',
+      '.dm-dl-item-menu-row.danger:hover{background:rgba(239,68,68,0.18)}',
       '.dm-dl-ft{padding:10px 14px;border-top:1px solid rgba(255,255,255,0.06);display:flex;gap:8px}',
       '.dm-dl-ft button{flex:1;padding:9px 0;border-radius:var(--dm-r-sm);background:rgba(255,255,255,0.06);color:var(--dm-text-dim);font-size:12.5px;font-weight:500;transition:background .15s,color .15s,transform .12s}',
       '.dm-dl-ft button:hover{background:rgba(255,255,255,0.12);color:#fff}',
@@ -299,12 +340,13 @@
       '#dm-dl-main-btn .dm-dl-spinner{width:14px;height:14px;border:2px solid rgba(255,255,255,0.25);border-top-color:#fff;border-radius:50%;animation:dm-spin .7s linear infinite;flex-shrink:0}',
 
       /* 徽章 */
-      '#dm-dl-title-badge,#dm-dl-fav-badge,#dm-dl-update-badge,#dm-dl-ban-badge{display:inline-flex!important;align-items:center!important;gap:3px!important;',
+      '#dm-dl-title-badge,#dm-dl-fav-badge,#dm-dl-update-badge,#dm-dl-ban-badge,#dm-dl-cloud-badge{display:inline-flex!important;align-items:center!important;gap:3px!important;',
       'margin-left:6px!important;padding:2px 8px!important;border-radius:var(--dm-r-pill)!important;font-size:11.5px!important;font-weight:600!important;vertical-align:middle!important}',
       '#dm-dl-title-badge{background:rgba(52,211,153,0.15)!important;color:#2dd4a8!important;border:1px solid rgba(52,211,153,0.35)!important}',
       '#dm-dl-fav-badge{background:rgba(251,113,133,0.15)!important;color:var(--dm-fav)!important;border:1px solid rgba(251,113,133,0.35)!important}',
       '#dm-dl-update-badge{background:rgba(129,140,248,0.18)!important;color:#a5b4fc!important;border:1px solid rgba(129,140,248,0.4)!important}',
       '#dm-dl-ban-badge{background:rgba(161,161,170,0.18)!important;color:var(--dm-ban)!important;border:1px solid rgba(161,161,170,0.4)!important}',
+      '#dm-dl-cloud-badge{background:rgba(56,189,248,0.15)!important;color:#7dd3fc!important;border:1px solid rgba(56,189,248,0.4)!important}',
       '.dm-dl-card-badge{display:inline-flex!important;margin-left:6px!important;padding:1px 6px!important;border-radius:4px!important;font-size:10px!important;font-weight:600!important;vertical-align:middle!important;color:#fff!important}',
       '.dm-dl-card-badge.dl{background:#059669!important}',
       '.dm-dl-card-badge.fav{background:#e11d48!important}',
@@ -521,28 +563,41 @@
     var r = dock.getBoundingClientRect();
     var W = window.innerWidth || document.documentElement.clientWidth;
     var H = window.innerHeight || document.documentElement.clientHeight;
-    var elW = el.offsetWidth || 320;
-    // Dock 在左半屏 → 气泡左缘对齐 Dock 左缘；右半屏 → 右缘对齐 Dock 右缘。
-    // 无论哪侧都再夹取进视口，避免贴边时溢出屏幕外。
+    // 先清掉旧定位，避免 top/bottom 同时生效互相打架
+    el.style.top = 'auto';
+    el.style.bottom = 'auto';
+    el.style.left = 'auto';
+    el.style.right = 'auto';
+    // 强制一次布局，拿到真实宽高
+    var elW = el.offsetWidth || 280;
+    var elH = el.offsetHeight || 140;
+    if (maxH) elH = Math.min(elH, maxH);
     var onLeftHalf = (r.left + r.width / 2) < W / 2;
     var left = onLeftHalf ? r.left : (r.right - elW);
     left = Math.min(Math.max(8, left), Math.max(8, W - elW - 8));
-    el.style.top = 'auto';
-    el.style.right = 'auto';
     el.style.left = Math.round(left) + 'px';
-    var elH = el.offsetHeight || 120;
-    if (maxH) elH = Math.min(elH, maxH);
+    el.style.right = 'auto';
     var originX = onLeftHalf ? '0' : '100%';
-    if (r.top >= elH + 30) {
-      // 上方空间足够：贴 Dock 顶部向上弹出
-      el.style.bottom = Math.round(H - r.top + 10) + 'px';
+    var gap = 10;
+    // 优先贴在 Dock 上方；上方不够则翻到下方；都不够则夹在视口内
+    var aboveTop = r.top - gap - elH;
+    var belowTop = r.bottom + gap;
+    var top;
+    if (aboveTop >= 8) {
+      top = aboveTop;
       el.style.setProperty('transform-origin', originX + ' 100%', 'important');
-      if (maxH) el.style.setProperty('max-height', Math.max(160, Math.min(maxH, r.top - 18)) + 'px', 'important');
-    } else {
-      // 上方不够：翻转到 Dock 下方弹出
-      el.style.bottom = Math.round(H - r.bottom - 10) + 'px';
+    } else if (belowTop + elH <= H - 8) {
+      top = belowTop;
       el.style.setProperty('transform-origin', originX + ' 0', 'important');
-      if (maxH) el.style.setProperty('max-height', Math.max(160, Math.min(maxH, H - r.bottom - 18)) + 'px', 'important');
+    } else {
+      top = Math.max(8, Math.min(aboveTop > 0 ? aboveTop : belowTop, H - elH - 8));
+      el.style.setProperty('transform-origin', originX + ' 50%', 'important');
+    }
+    el.style.top = Math.round(top) + 'px';
+    el.style.bottom = 'auto';
+    if (maxH) {
+      var room = Math.max(120, Math.min(maxH, H - top - 12));
+      el.style.setProperty('max-height', room + 'px', 'important');
     }
   }
 
@@ -593,11 +648,19 @@
       mask._resolve = resolve;
       // PC：确认气泡锚定到 Dock；手机：维持底部抽屉
       var dlg = document.getElementById('dm-dl-dialog');
-      if (isFinePointer()) anchorPopoverToDock(dlg, 0);
-      else clearPopoverAnchor(dlg);
-      // 强制触发 reflow 再加 open，避免 PC 端偶发不显示
-      void mask.offsetWidth;
-      mask.classList.add('open');
+      if (isFinePointer()) {
+        clearPopoverAnchor(dlg);
+        void mask.offsetWidth;
+        mask.classList.add('open');
+        // open 后再量真实高度并定位，避免未渲染时高度为 0 导致位置错乱
+        requestAnimationFrame(function () {
+          anchorPopoverToDock(dlg, 0);
+        });
+      } else {
+        clearPopoverAnchor(dlg);
+        void mask.offsetWidth;
+        mask.classList.add('open');
+      }
     });
   }
 
@@ -626,10 +689,18 @@
       acts.appendChild(confirmBtn);
       mask._resolve = resolve;
       var dlg = document.getElementById('dm-dl-dialog');
-      if (isFinePointer()) anchorPopoverToDock(dlg, 0);
-      else clearPopoverAnchor(dlg);
-      void mask.offsetWidth;
-      mask.classList.add('open');
+      if (isFinePointer()) {
+        clearPopoverAnchor(dlg);
+        void mask.offsetWidth;
+        mask.classList.add('open');
+        requestAnimationFrame(function () {
+          anchorPopoverToDock(dlg, 0);
+        });
+      } else {
+        clearPopoverAnchor(dlg);
+        void mask.offsetWidth;
+        mask.classList.add('open');
+      }
     });
   }
 
@@ -650,6 +721,7 @@
   }
 
   function closeSheet() {
+    closeItemMoreMenu();
     var mask = document.getElementById('dm-dl-sheet-mask');
     if (mask) mask.classList.remove('open');
     clearPopoverAnchor(document.getElementById('dm-dl-sheet'));
@@ -685,6 +757,36 @@
   function saveStatus(map) { saveJSON(STATUS_KEY, map); }
   function getStatus(id) { return id ? (loadStatus()[String(id)] || null) : null; }
   function loadContentCache() { return loadJSON(CONTENT_KEY); }
+  function loadCloudMap() { return loadJSON(CLOUD_KEY); }
+  function saveCloudMap(map) { saveJSON(CLOUD_KEY, map); }
+  function getCloudRec(id) {
+    if (!id) return null;
+    return loadCloudMap()[String(id)] || null;
+  }
+  function recordCloudSync(id, info) {
+    if (!id || !info) return;
+    var map = loadCloudMap();
+    var key = String(id);
+    var prev = map[key] || {};
+    map[key] = {
+      id: key,
+      title: info.title || prev.title || '',
+      maxId: info.maxId != null ? info.maxId : (prev.maxId || 0),
+      count: info.count != null ? info.count : (prev.count || 0),
+      syncedAt: Date.now(),
+      syncedText: new Date().toLocaleString()
+    };
+    saveCloudMap(map);
+  }
+  function cloudTagHtml(id) {
+    var c = getCloudRec(id);
+    if (!c) return '';
+    var label = '已上云';
+    if (c.count) label += ' · ' + c.count + '章';
+    var tip = c.syncedText ? ('上次同步: ' + c.syncedText) : '';
+    if (c.maxId) tip += (tip ? ' · ' : '') + 'maxId ' + c.maxId;
+    return '<span class="dm-dl-tag cloud" title="' + esc(tip) + '">' + esc(label) + '</span>';
+  }
 
   // ========== 书目状态（连载/完结 + 更新时间） ==========
   function statusFromRaw(raw) {
@@ -1257,7 +1359,7 @@
     });
   }
 
-  var CACHE_MAX_NOVELS = 30;
+  var CACHE_MAX_NOVELS = 80;
   function getNovelCache(id) { return loadContentCache()[String(id)] || null; }
 
   function mergeNovelCache(id, title, items) {
@@ -1456,6 +1558,346 @@
     return WEBDAV;
   }
 
+
+  // ========== 书籍 TXT 上传到 WebDAV（meta 小文件对比 + 补章，不拉整本） ==========
+  function getWebdavConfig() {
+    try {
+      var raw = null;
+      try { if (typeof GM_getValue === 'function') raw = GM_getValue('dm_dl_webdav_v1', null); } catch (e) {}
+      if (raw == null || raw === '') {
+        try { raw = localStorage.getItem('dm_dl_webdav_v1'); } catch (e) {}
+      }
+      if (raw == null || raw === '') return null;
+      var obj = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (!obj || typeof obj !== 'object' || !obj.url) return null;
+      return obj;
+    } catch (e) { return null; }
+  }
+
+  function webdavAuthHeader(cfg) {
+    if (!cfg || !cfg.user) return {};
+    var token = btoa(unescape(encodeURIComponent(String(cfg.user) + ':' + String(cfg.pass || ''))));
+    return { Authorization: 'Basic ' + token };
+  }
+
+  function webdavBaseUrl(cfg) {
+    return String(cfg.url || '').replace(/\/?$/, '/');
+  }
+
+  function sanitizeBookFilename(title) {
+    return String(title || 'novel').replace(/[\/\\?*:|"<>]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120) || 'novel';
+  }
+
+  function bookTxtRel(title) {
+    return '18mh-books/' + sanitizeBookFilename(title) + '.txt';
+  }
+
+  function bookMetaRel(id) {
+    return '18mh-books/meta/' + String(id) + '.json';
+  }
+
+  function webdavMkcol(path) {
+    var cfg = getWebdavConfig();
+    if (!cfg) return Promise.reject(new Error('未配置 WebDAV'));
+    var url = webdavBaseUrl(cfg) + String(path || '').replace(/^\/+/, '').replace(/\/?$/, '/');
+    var headers = Object.assign({ 'Content-Type': 'application/xml' }, webdavAuthHeader(cfg));
+    return webdevRequest({
+      method: 'MKCOL',
+      url: url,
+      headers: headers,
+      timeout: 20000,
+      acceptStatuses: [201, 204, 405, 301, 302]
+    }).then(function () { return true; }).catch(function () { return false; });
+  }
+
+  function webdavPutRaw(relPath, data, contentType) {
+    var cfg = getWebdavConfig();
+    if (!cfg || !cfg.url) return Promise.reject(new Error('请先配置 WebDAV'));
+    var url = webdavBaseUrl(cfg) + String(relPath || '').replace(/^\/+/, '');
+    var headers = Object.assign({
+      'Content-Type': contentType || 'application/octet-stream'
+    }, webdavAuthHeader(cfg));
+    return webdevRequest({
+      method: 'PUT',
+      url: url,
+      headers: headers,
+      data: data,
+      timeout: 120000,
+      acceptStatuses: [200, 201, 204]
+    }).then(function () { return relPath; });
+  }
+
+  function webdavGetRaw(relPath) {
+    var cfg = getWebdavConfig();
+    if (!cfg || !cfg.url) return Promise.reject(new Error('请先配置 WebDAV'));
+    var url = webdavBaseUrl(cfg) + String(relPath || '').replace(/^\/+/, '');
+    var headers = Object.assign({}, webdavAuthHeader(cfg));
+    return webdevRequest({
+      method: 'GET',
+      url: url,
+      headers: headers,
+      timeout: 30000,
+      acceptStatuses: [200]
+    }).then(function (res) {
+      return (res && res.responseText != null) ? String(res.responseText) : '';
+    });
+  }
+
+  function webdavFileExists(relPath) {
+    var cfg = getWebdavConfig();
+    if (!cfg) return Promise.resolve(false);
+    var url = webdavBaseUrl(cfg) + String(relPath || '').replace(/^\/+/, '');
+    var headers = Object.assign({}, webdavAuthHeader(cfg));
+    return webdevRequest({
+      method: 'HEAD',
+      url: url,
+      headers: headers,
+      timeout: 15000,
+      acceptStatuses: [200, 204]
+    }).then(function () { return true; }).catch(function () { return false; });
+  }
+
+  /** 读取云端 meta（几百字节）。不存在则返回 null */
+  function webdavGetMeta(id) {
+    return webdavGetRaw(bookMetaRel(id)).then(function (raw) {
+      try {
+        var obj = JSON.parse(raw.replace(/^\uFEFF/, ''));
+        if (!obj || typeof obj !== 'object') return null;
+        return {
+          id: String(obj.id || id),
+          title: obj.title || '',
+          maxId: parseInt(obj.maxId, 10) || 0,
+          count: parseInt(obj.count, 10) || 0,
+          updatedAt: obj.updatedAt || ''
+        };
+      } catch (e) { return null; }
+    }).catch(function () { return null; });
+  }
+
+  function webdavPutMeta(id, meta) {
+    var payload = JSON.stringify({
+      id: String(id),
+      title: meta.title || '',
+      maxId: meta.maxId || 0,
+      count: meta.count || 0,
+      updatedAt: new Date().toISOString()
+    }, null, 2);
+    // 确保 18mh-books 与 meta 目录存在
+    return webdavMkcol('18mh-books').then(function () {
+      return webdavMkcol('18mh-books/meta');
+    }).then(function () {
+      return webdavPutRaw(bookMetaRel(id), payload, 'application/json; charset=utf-8');
+    });
+  }
+
+  function composeTxtFromChapters(id, title, chapterItems) {
+    var list = (chapterItems || []).slice().sort(function (a, b) { return a.id - b.id; });
+    if (!list.length) return null;
+    var maxId = list[list.length - 1].id;
+    var parts = [
+      title || ('小说 ' + id),
+      '导出时间: ' + new Date().toLocaleString(),
+      '小说ID: ' + id,
+      '章节数: ' + list.length,
+      'maxId: ' + maxId,
+      '────────────────────────────',
+      ''
+    ];
+    for (var i = 0; i < list.length; i++) {
+      var ch = list[i];
+      parts.push(ch.title || ('第' + ch.id + '章'));
+      parts.push('--------------------');
+      parts.push(ch.text != null ? String(ch.text) : '[本章内容缺失]');
+      parts.push('', '');
+    }
+    return { text: parts.join('\n'), maxId: maxId, count: list.length };
+  }
+
+  function buildTxtFromCache(id, title) {
+    var cache = getNovelCache(id);
+    if (!cache || !cache.chapters || typeof cache.chapters !== 'object') return null;
+    var ids = Object.keys(cache.chapters).map(function (k) { return parseInt(k, 10); }).filter(function (n) { return isFinite(n); }).sort(function (a, b) { return a - b; });
+    if (!ids.length) return null;
+    var items = ids.map(function (cid) {
+      var ch = cache.chapters[String(cid)];
+      return { id: cid, title: (ch && ch.title) || ('第' + cid + '章'), text: ch ? ch.text : null };
+    });
+    return composeTxtFromChapters(id, title || cache.title, items);
+  }
+
+  function fetchChaptersContent(chapters, progressTitle) {
+    var t0 = Date.now();
+    return mapPool(
+      chapters,
+      CONCURRENCY,
+      function (ch) {
+        return fetchChapter(ch).then(function (body) {
+          return { id: ch.id, title: ch.title, text: body };
+        });
+      },
+      function (done, all) {
+        var pct = Math.round((done / all) * 100);
+        var sec = ((Date.now() - t0) / 1000).toFixed(1);
+        showToast({
+          title: (progressTitle || '抓取章节') + ' ' + pct + '%',
+          msg: done + ' / ' + all + ' 章 · ' + sec + 's',
+          duration: 0
+        });
+      }
+    ).then(function (results) {
+      var items = [];
+      var fail = 0;
+      for (var i = 0; i < results.length; i++) {
+        var r = results[i];
+        if (r && r.ok && r.value) items.push(r.value);
+        else fail++;
+      }
+      return { items: items, fail: fail };
+    });
+  }
+
+  /** 上传 TXT + 同步写入 meta（对比只读 meta，不拉整本） */
+  function webdavPutBookAndMeta(id, title, pack) {
+    var fname = sanitizeBookFilename(title);
+    var txtRel = bookTxtRel(title);
+    return webdavMkcol('18mh-books').then(function () {
+      return webdavPutRaw(txtRel, '\uFEFF' + pack.text, 'text/plain; charset=utf-8');
+    }).then(function () {
+      return webdavPutMeta(id, {
+        title: title,
+        maxId: pack.maxId,
+        count: pack.count
+      });
+    }).then(function () { return txtRel; });
+  }
+
+  /**
+   * 智能同步：用 meta（几百字节）对比站点，缺章则抓取并 PUT 全书 + 更新 meta。
+   * 不会为了对比而去下载整本云端 TXT。
+   */
+  function syncBookToCloud(id, title) {
+    id = String(id || '').trim();
+    if (!id) {
+      showToast({ title: '无法同步', msg: '缺少书籍 ID' });
+      return Promise.resolve();
+    }
+    var cfg = getWebdavConfig();
+    if (!cfg || !cfg.url) {
+      showToast({ title: '请先配置 WebDAV', msg: '打开云同步面板填写地址与账号' });
+      openWebdavPanel();
+      return Promise.resolve();
+    }
+    var bookTitle = title || ('小说 ' + id);
+
+    showToast({ title: '对比站点与云端…', msg: '「' + bookTitle + '」（仅读 meta）', duration: 0 });
+
+    return fetchChapterList(id).then(function (siteChapters) {
+      if (!siteChapters || !siteChapters.length) throw new Error('站点无章节列表');
+      var siteMax = siteChapters[siteChapters.length - 1].id;
+      var siteCount = siteChapters.length;
+
+      return webdavGetMeta(id).then(function (meta) {
+        var cloudMax = meta ? (meta.maxId || 0) : 0;
+        var cloudCount = meta ? (meta.count || 0) : 0;
+        var hasMeta = !!meta;
+
+        var msg = '站点 ' + siteCount + ' 章(maxId ' + siteMax + ') · 云端 ' +
+          (hasMeta ? (cloudCount + ' 章(maxId ' + cloudMax + ')') : '无 meta');
+
+        if (hasMeta && cloudMax >= siteMax) {
+          recordCloudSync(id, {
+            title: (meta && meta.title) || bookTitle,
+            maxId: cloudMax,
+            count: cloudCount || siteCount
+          });
+          showToast({ title: '云端已是最新', msg: msg });
+          try { renderSheetBody(); injectTitleBadges(id); } catch (e) {}
+          return null;
+        }
+
+        var missing = siteChapters.filter(function (c) { return c.id > cloudMax; });
+        showToast({
+          title: hasMeta ? ('补齐云端 +' + missing.length + ' 章') : '首次上传全书',
+          msg: msg,
+          duration: 0
+        });
+
+        // 本地缓存能覆盖的章不重复抓
+        var cache = getNovelCache(id);
+        var haveMap = {};
+        if (cache && cache.chapters) {
+          Object.keys(cache.chapters).forEach(function (k) {
+            var n = parseInt(k, 10);
+            if (isFinite(n) && cache.chapters[k] && cache.chapters[k].text != null) {
+              haveMap[n] = cache.chapters[k];
+            }
+          });
+        }
+
+        var needFetch = siteChapters.filter(function (c) { return !haveMap[c.id]; });
+        var fetchPromise = needFetch.length
+          ? fetchChaptersContent(needFetch, hasMeta ? '补抓章节' : '抓取全书')
+          : Promise.resolve({ items: [], fail: 0 });
+
+        return fetchPromise.then(function (res) {
+          var byId = {};
+          Object.keys(haveMap).forEach(function (k) {
+            byId[k] = { id: parseInt(k, 10), title: haveMap[k].title, text: haveMap[k].text };
+          });
+          (res.items || []).forEach(function (it) { byId[it.id] = it; });
+
+          var allItems = siteChapters.map(function (c) {
+            return byId[c.id] || { id: c.id, title: c.title, text: '[本章内容缺失]' };
+          });
+          var missingBody = allItems.filter(function (it) {
+            return !it.text || it.text === '[本章内容缺失]';
+          });
+          if (missingBody.length === allItems.length) throw new Error('未能获取任何章节正文');
+
+          if (res.items && res.items.length) mergeNovelCache(id, bookTitle, res.items);
+          try {
+            markDownloaded(
+              id, bookTitle, siteCount,
+              siteCount - missingBody.length, missingBody.length,
+              absUrl('/novel/detail/' + id), siteMax
+            );
+          } catch (e) {}
+
+          var pack = composeTxtFromChapters(id, bookTitle, allItems);
+          lastGeneratedTxt = { id: id, title: bookTitle, text: pack.text, maxId: pack.maxId };
+
+          showToast({
+            title: '正在上传到云…',
+            msg: '「' + bookTitle + '」· ' + pack.count + ' 章\n(TXT + meta)',
+            duration: 0
+          });
+          return webdavPutBookAndMeta(id, bookTitle, pack).then(function (path) {
+            recordCloudSync(id, {
+              title: bookTitle,
+              maxId: pack.maxId,
+              count: pack.count
+            });
+            var tip = hasMeta
+              ? ('已补齐 +' + missing.length + ' 章 → ' + pack.count + ' 章')
+              : ('已上传全书 ' + pack.count + ' 章');
+            showToast({ title: '云端已更新', msg: tip + '\n' + path + '\nmeta: ' + bookMetaRel(id) });
+            try { renderSheetBody(); injectTitleBadges(id); } catch (e) {}
+            return path;
+          });
+        });
+      });
+    }).catch(function (err) {
+      showToast({
+        title: '同步失败',
+        msg: (err && err.message) ? err.message : String(err)
+      });
+    });
+  }
+
+  function uploadBookToCloud(id, title) {
+    return syncBookToCloud(id, title);
+  }
+
   function openWebdavPanel() {
     var api = initWebdav();
     if (!api) {
@@ -1463,7 +1905,7 @@
       return;
     }
     api.openPanel({
-      description: '同步收藏和黑名单，不含下载记录。',
+      description: '同步收藏和黑名单。书库「同步」用 meta 对比补章，不拉整本 TXT。',
       // 双保险：面板保存时同步落一份到 18mh 自己的存储（与收藏同路径）
       onSave: function (s) {
         try { saveJSON('dm_dl_webdav_v1', s); } catch (e) {}
@@ -1829,7 +2271,105 @@
     }
   }
 
+
+  var itemMoreMenuEl = null;
+  var itemMoreMenuCloser = null;
+
+  function closeItemMoreMenu() {
+    if (itemMoreMenuCloser) {
+      try { document.removeEventListener('pointerdown', itemMoreMenuCloser, true); } catch (e) {}
+      itemMoreMenuCloser = null;
+    }
+    if (itemMoreMenuEl) {
+      try { itemMoreMenuEl.remove(); } catch (e) {}
+      itemMoreMenuEl = null;
+    }
+  }
+
+  function openItemMoreMenu(anchor, opts) {
+    closeItemMoreMenu();
+    opts = opts || {};
+    var menu = document.createElement('div');
+    menu.className = 'dm-dl-item-menu';
+    menu.setAttribute('role', 'menu');
+
+    function addRow(label, icon, cls, onClick) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'dm-dl-item-menu-row' + (cls ? ' ' + cls : '');
+      btn.innerHTML = (icon || '') + '<span>' + esc(label) + '</span>';
+      btn.onclick = function (e) {
+        e.stopPropagation();
+        closeItemMoreMenu();
+        if (onClick) onClick();
+      };
+      menu.appendChild(btn);
+    }
+
+    if (!opts.isBanTab) {
+      addRow('打开详情', ICONS.arrow, '', function () {
+        location.href = opts.url;
+      });
+    }
+    if (opts.canRead) {
+      addRow('阅读', ICONS.reader || ICONS.book, '', function () {
+        openReader(readerUrlById(opts.id));
+      });
+      addRow('同步云端', ICONS.cloud, '', function () {
+        uploadBookToCloud(opts.id, opts.title || ('小说 ' + opts.id));
+      });
+    }
+    if (opts.isBanTab) {
+      addRow('打开详情', ICONS.arrow, '', function () {
+        location.href = opts.url;
+      });
+    }
+    addRow('删除', ICONS.trash, 'danger', function () {
+      showConfirm({
+        title: '移除记录',
+        content: '确定从列表中移除「' + (opts.title || opts.id) + '」吗？',
+        danger: true,
+        confirmText: '移除'
+      }).then(function (ok) {
+        if (!ok) return;
+        if (currentSheetTab === 'fav') removeFavorite(opts.id);
+        else if (currentSheetTab === 'ban') removeBan(opts.id);
+        else unmarkDownloaded(opts.id);
+        renderSheetBody();
+        injectTitleBadges(getNovelIdFromUrl());
+        markListCardsOnPage();
+      });
+    });
+
+    var root = document.getElementById('dm-dl-root') || document.body;
+    root.appendChild(menu);
+    itemMoreMenuEl = menu;
+
+    // 定位：优先锚点下方，不够则翻上；夹进视口
+    var ar = anchor.getBoundingClientRect();
+    var W = window.innerWidth || document.documentElement.clientWidth;
+    var H = window.innerHeight || document.documentElement.clientHeight;
+    var mw = menu.offsetWidth || 132;
+    var mh = menu.offsetHeight || 120;
+    var left = Math.min(Math.max(8, ar.right - mw), W - mw - 8);
+    var top = ar.bottom + 6;
+    if (top + mh > H - 8) top = Math.max(8, ar.top - mh - 6);
+    menu.style.left = Math.round(left) + 'px';
+    menu.style.top = Math.round(top) + 'px';
+
+    itemMoreMenuCloser = function (ev) {
+      if (!itemMoreMenuEl) return;
+      if (itemMoreMenuEl.contains(ev.target)) return;
+      if (anchor.contains && anchor.contains(ev.target)) return;
+      closeItemMoreMenu();
+    };
+    setTimeout(function () {
+      document.addEventListener('pointerdown', itemMoreMenuCloser, true);
+    }, 0);
+  }
+
   function renderSheetBody() {
+    closeItemMoreMenu();
     var body = document.getElementById('dm-dl-sheet-body');
     if (!body) return;
     var map = currentSheetTab === 'fav' ? loadFavs() : (currentSheetTab === 'ban' ? loadBans() : loadHistory());
@@ -1868,69 +2408,125 @@
         var row = document.createElement('div');
         row.className = 'dm-dl-item';
 
+        var isBanTab = currentSheetTab === 'ban';
+        var canRead = currentSheetTab === 'fav' || currentSheetTab === 'dl';
+        if (isBanTab) row.classList.add('is-ban');
+
+        // 拉黑 tab：只保留标题 + 右上删除，不堆标签/时间/底栏
+        if (isBanTab) {
+          row.innerHTML =
+            '<div class="dm-dl-item-top">' +
+            '<div class="dm-dl-item-main">' +
+            '<div class="dm-dl-item-title" title="' + esc(item.title || '') + '">' + esc(item.title || '未知标题') + '</div>' +
+            '</div>' +
+            '<button type="button" class="dm-dl-item-del" title="取消拉黑" aria-label="删除">' + ICONS.trash + '</button>' +
+            '</div>';
+          var banMain = row.querySelector('.dm-dl-item-main');
+          if (banMain) {
+            banMain.onclick = function () {
+              location.href = item.url || absUrl('/novel/detail/' + id);
+            };
+          }
+          var delBtn = row.querySelector('.dm-dl-item-del');
+          if (delBtn) {
+            delBtn.onclick = function (e) {
+              e.stopPropagation();
+              showConfirm({
+                title: '取消拉黑',
+                content: '确定从黑名单移除「' + (item.title || id) + '」吗？',
+                danger: true,
+                confirmText: '移除'
+              }).then(function (ok) {
+                if (!ok) return;
+                removeBan(id);
+                renderSheetBody();
+                injectTitleBadges(getNovelIdFromUrl());
+                markListCardsOnPage();
+              });
+            };
+          }
+          listWrap.appendChild(row);
+          return;
+        }
+
         var tags = '';
         if (hist[id]) tags += '<span class="dm-dl-tag dl">已下载</span>';
         if (favs[id]) tags += '<span class="dm-dl-tag fav">已收藏</span>';
         if (bans[id]) tags += '<span class="dm-dl-tag ban">已拉黑</span>';
 
-        // 已拉黑的条目不显示连载/完结、发布时间与「有更新」：
-        // 这些信息对拉黑的书没有意义，刷新范围也排除了黑名单。
         var st = bans[id] ? null : (statusMap[String(id)] || null);
         var stTxt = statusLabel(st);
         if (stTxt) tags += '<span class="dm-dl-tag ' + (stTxt === '已完结' ? 'fin' : 'ser') + '">' + stTxt + '</span>';
         var updAdd = bans[id] ? 0 : getUpdateAdd(id);
         if (updAdd > 0) tags += '<span class="dm-dl-tag upd">有更新 +' + updAdd + '</span>';
+        if (!bans[id]) tags += cloudTagHtml(id);
         var upd = updateLabel(st);
+        var cloudRec = bans[id] ? null : getCloudRec(id);
 
-        var canRead = currentSheetTab === 'fav' || currentSheetTab === 'dl';
+        // 右上角同一行：更新时间文字 + 收藏/下载/云同步图标（仅 icon，hover 看时间）
+        var updRight = upd ? esc(upd) : '';
+        var metaIcons = '';
+        if (item.timeText) {
+          var tTitle = currentSheetTab === 'fav' ? ('收藏于 ' + item.timeText) : ('下载于 ' + item.timeText);
+          var tIcon = currentSheetTab === 'fav' ? ICONS.star : ICONS.clock;
+          metaIcons += '<span class="mi" title="' + esc(tTitle) + '">' + tIcon + '</span>';
+        }
+        if (cloudRec && cloudRec.syncedText) {
+          metaIcons += '<span class="mi" title="' + esc('云同步 ' + cloudRec.syncedText) + '">' + ICONS.cloudSync + '</span>';
+        }
+        var sideHtml = '';
+        if (updRight || metaIcons) {
+          sideHtml =
+            '<div class="dm-dl-item-side">' +
+            (updRight ? '<div class="dm-dl-item-upd" title="' + updRight + '">' + updRight + '</div>' : '') +
+            (metaIcons ? '<div class="dm-dl-item-meta-icons">' + metaIcons + '</div>' : '') +
+            '</div>';
+        }
 
-        var timeTip = item.timeText
-          ? ((currentSheetTab === 'fav' ? '收藏于 ' : (currentSheetTab === 'ban' ? '拉黑于 ' : '下载于 ')) + item.timeText)
-          : '';
-        row.innerHTML =
-          '<div class="dm-dl-item-main">' +
-          '<div class="dm-dl-item-title" title="' + esc(timeTip) + '">' + esc(item.title || '未知标题') + '</div>' +
-          '<div class="dm-dl-item-meta">' + tags +
-          (upd ? '<span class="dm-dl-tag time">' + esc(upd) + '</span>' : '') +
-          '</div>' +
-          '</div>' +
+        var actsHtml =
           '<div class="dm-dl-item-acts">' +
           '<button type="button" class="dm-dl-mini go">打开</button>' +
-          (canRead ? '<button type="button" class="dm-dl-mini read">阅读</button>' : '') +
-          '<button type="button" class="dm-dl-mini danger rm">删除</button>' +
+          '<button type="button" class="dm-dl-mini more" title="更多" aria-label="更多">' + ICONS.more + '</button>' +
           '</div>';
 
-        row.querySelector('.dm-dl-item-main').onclick = function () {
-          location.href = item.url || absUrl('/novel/detail/' + id);
-        };
-        row.querySelector('.go').onclick = function (e) {
-          e.stopPropagation();
-          location.href = item.url || absUrl('/novel/detail/' + id);
-        };
-        var readBtn = row.querySelector('.read');
-        if (readBtn) {
-          readBtn.onclick = function (e) {
-            e.stopPropagation();
-            openReader(readerUrlById(id));
+        row.innerHTML =
+          '<div class="dm-dl-item-top">' +
+          '<div class="dm-dl-item-main">' +
+          '<div class="dm-dl-item-title" title="' + esc(item.title || '') + '">' + esc(item.title || '未知标题') + '</div>' +
+          '</div>' +
+          sideHtml +
+          '</div>' +
+          '<div class="dm-dl-item-foot">' +
+          '<div class="dm-dl-item-tags">' + (tags || '') + '</div>' +
+          actsHtml +
+          '</div>';
+
+        var mainEl = row.querySelector('.dm-dl-item-main');
+        if (mainEl) {
+          mainEl.onclick = function () {
+            location.href = item.url || absUrl('/novel/detail/' + id);
           };
         }
-        row.querySelector('.rm').onclick = function (e) {
-          e.stopPropagation();
-          showConfirm({
-            title: '移除记录',
-            content: '确定从列表中移除「' + (item.title || id) + '」吗？',
-            danger: true,
-            confirmText: '移除'
-          }).then(function (ok) {
-            if (!ok) return;
-            if (currentSheetTab === 'fav') removeFavorite(id);
-            else if (currentSheetTab === 'ban') removeBan(id);
-            else unmarkDownloaded(id);
-            renderSheetBody();
-            injectTitleBadges(getNovelIdFromUrl());
-            markListCardsOnPage();
-          });
-        };
+        var goBtn = row.querySelector('.go');
+        if (goBtn) {
+          goBtn.onclick = function (e) {
+            e.stopPropagation();
+            location.href = item.url || absUrl('/novel/detail/' + id);
+          };
+        }
+        var moreBtn = row.querySelector('.more');
+        if (moreBtn) {
+          moreBtn.onclick = function (e) {
+            e.stopPropagation();
+            openItemMoreMenu(moreBtn, {
+              id: id,
+              title: item.title || id,
+              url: item.url || absUrl('/novel/detail/' + id),
+              canRead: canRead,
+              isBanTab: false
+            });
+          };
+        }
         listWrap.appendChild(row);
       });
     }
@@ -2015,10 +2611,12 @@
     var old2 = document.getElementById('dm-dl-fav-badge');
     var old3 = document.getElementById('dm-dl-update-badge');
     var old4 = document.getElementById('dm-dl-ban-badge');
+    var old5 = document.getElementById('dm-dl-cloud-badge');
     if (old1) old1.remove();
     if (old2) old2.remove();
     if (old3) old3.remove();
     if (old4) old4.remove();
+    if (old5) old5.remove();
     if (!h1 || !novelId) return;
 
     var rec = getRecord(novelId);
@@ -2050,6 +2648,17 @@
       bb.id = 'dm-dl-ban-badge';
       bb.textContent = '已拉黑';
       h1.appendChild(bb);
+    }
+
+    var cloudRec = getCloudRec(novelId);
+    if (cloudRec) {
+      var cb = document.createElement('span');
+      cb.id = 'dm-dl-cloud-badge';
+      cb.textContent = cloudRec.count
+        ? ('☁ 已上云 · ' + cloudRec.count + '章')
+        : '☁ 已上云';
+      if (cloudRec.syncedText) cb.title = '上次同步: ' + cloudRec.syncedText;
+      h1.appendChild(cb);
     }
   }
 
@@ -2310,10 +2919,12 @@
       var b2 = clone.querySelector('#dm-dl-fav-badge');
       var b3 = clone.querySelector('#dm-dl-update-badge');
       var b4 = clone.querySelector('#dm-dl-ban-badge');
+      var b5 = clone.querySelector('#dm-dl-cloud-badge');
       if (b1) b1.remove();
       if (b2) b2.remove();
       if (b3) b3.remove();
       if (b4) b4.remove();
+      if (b5) b5.remove();
       var t = (clone.textContent || '').trim();
       if (t) return t;
     }
@@ -2638,7 +3249,13 @@
             );
           }
 
-          downloadTxt(title, parts.join('\n'));
+          var fullText = parts.join('\n');
+          var lastMax = 0;
+          try {
+            if (fullChapters && fullChapters.length) lastMax = fullChapters[fullChapters.length - 1].id;
+          } catch (e) {}
+          lastGeneratedTxt = { id: String(novelId || ''), title: title, text: fullText, maxId: lastMax };
+          downloadTxt(title, fullText);
           injectTitleBadges(novelId);
           markListCardsOnPage();
         })
